@@ -1,0 +1,17 @@
+{
+  "name": "HyperMove",
+  "description": "An agent-callable consolidation surface for n-payment.",
+  "url": "https://hypermove.dev",
+  "version": "0.1.0",
+  "capabilities": {
+    "tools": ["payment.x402", "reputation.read"],
+    "transports": ["http+sse", "http+json-rpc"]
+  },
+  "endpoints": {
+    "mcp": "https://hypermove.dev/api/mcp",
+    "manifest": "https://hypermove.dev/.well-known/webmcp.json",
+    "bundles": "https://hypermove.dev/bundles.json"
+  },
+  "license": "MIT",
+  "source": "https://github.com/phamdat721101"
+}

@@ -1,0 +1,113 @@
+# ====================================================================
+# .gitignore — hypermove-app
+# Sections: deps · build · caches · tests · credentials · logs · OS · IDE
+# ====================================================================
+
+# --- dependencies -----------------------------------------------------
+node_modules/
+.pnp.*
+.yarn/
+jspm_packages/
+
+# --- build + compiled output -----------------------------------------
+.next/
+out/
+build/
+dist/
+*.tsbuildinfo
+.swc/
+.turbo/
+
+# --- bundler + framework caches --------------------------------------
+.cache/
+.parcel-cache/
+.vercel/
+.netlify/
+.serverless/
+.eslintcache
+.stylelintcache
+
+# --- test + coverage --------------------------------------------------
+coverage/
+.nyc_output/
+*.lcov
+
+# --- credentials + secrets (NEVER commit) ----------------------------
+# Environment files: ignore every variant except documented examples.
+.env
+.env.*
+*.env
+!.env.example
+!.env.sample
+
+# Private keys, certificates, keystores
+*.pem
+*.key
+*.p12
+*.pfx
+*.cer
+*.crt
+*.csr
+*.jks
+*.keystore
+
+# Service-account / token blobs commonly leaked
+secrets/
+credentials/
+service-account.json
+serviceAccountKey.json
+gha-creds-*.json
+.npmrc
+.netrc
+
+# SSH / GPG (defensive — never want these in the repo)
+id_rsa
+id_ecdsa
+id_ed25519
+id_*.pub
+.ssh/
+.gnupg/
+
+# Cloud CLI credentials accidentally placed in repo
+.aws/credentials
+.aws/config
+gcloud-key.json
+
+# --- logs -------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# --- generated archives + temp files ---------------------------------
+*.zip
+*.tar
+*.tar.gz
+*.7z
+tmp/
+temp/
+.tmp/
+
+# --- OS junk ----------------------------------------------------------
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+$RECYCLE.BIN/
+
+# --- editors / IDE ----------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.swp
+*.swo
+*~
+*.bak
+
+# --- misc -------------------------------------------------------------
+node_repl_history
+.tern-port
+.fleet/

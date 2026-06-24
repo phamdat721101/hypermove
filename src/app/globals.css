@@ -1,0 +1,78 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html {
+    color-scheme: dark;
+  }
+  body {
+    @apply bg-background text-on-surface font-sans antialiased;
+    background-image:
+      radial-gradient(at 20% 10%, rgba(124, 58, 237, 0.18) 0px, transparent 50%),
+      radial-gradient(at 80% 80%, rgba(34, 211, 238, 0.08) 0px, transparent 50%);
+    background-attachment: fixed;
+  }
+  ::selection {
+    @apply bg-primary-container text-white;
+  }
+  /* Tighten heading hierarchy globally */
+  h1, h2, h3, h4 {
+    @apply font-sans text-on-surface;
+  }
+}
+
+@layer components {
+  /* The single glassmorphic panel definition. Reused everywhere. */
+  .glass-panel {
+    @apply bg-surface-container-low/50 border border-outline-variant/30 backdrop-blur-glass;
+  }
+  .neon-hover {
+    @apply transition-all duration-200;
+  }
+  .neon-hover:hover {
+    @apply -translate-y-px shadow-neon-purple;
+  }
+  .btn-primary {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg
+      bg-primary-container px-6 py-2.5 text-body-sm font-semibold text-white
+      shadow-neon-purple-strong transition-colors
+      hover:bg-inverse-primary active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed;
+  }
+  .btn-ghost {
+    @apply inline-flex items-center justify-center gap-2 rounded-lg
+      border border-outline-variant/40 bg-surface-container/40 px-6 py-2.5
+      text-body-sm font-semibold text-on-surface backdrop-blur-glass
+      transition-colors hover:bg-surface-container-high hover:border-primary-container/60;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-md px-2 py-1
+      text-label-mono font-medium uppercase tracking-wider;
+  }
+  .terminal-frame {
+    @apply rounded-xl overflow-hidden glass-panel shadow-neon-purple;
+  }
+}
+
+@layer utilities {
+  .gradient-text-purple-cyan {
+    @apply text-transparent bg-clip-text bg-gradient-to-r from-primary to-secondary;
+  }
+  .scrollbar-thin {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(124, 58, 237, 0.4) transparent;
+  }
+  .scrollbar-thin::-webkit-scrollbar { width: 6px; height: 6px; }
+  .scrollbar-thin::-webkit-scrollbar-thumb {
+    background: rgba(124, 58, 237, 0.4);
+    border-radius: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

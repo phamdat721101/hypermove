@@ -1,0 +1,49 @@
+{
+  "name": "hypermove-app",
+  "version": "0.1.0",
+  "private": true,
+  "description": "hypermove.dev — make any web3 dApp agent-callable in 3 lines of HTML. Funded under GOAT AI Builder Grants.",
+  "scripts": {
+    "dev": "next dev -p 3003",
+    "build": "next build",
+    "start": "next start -p 3003",
+    "test": "vitest run --reporter=verbose",
+    "test:watch": "vitest",
+    "report": "node scripts/report.mjs",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "next": "14.2.18",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "@next/mdx": "14.2.18",
+    "@mdx-js/loader": "3.0.1",
+    "@mdx-js/react": "3.0.1",
+    "pg": "8.13.1"
+  },
+  "devDependencies": {
+    "typescript": "5.4.5",
+    "@types/react": "18.3.3",
+    "@types/react-dom": "18.3.0",
+    "@types/node": "20.14.0",
+    "@types/mdx": "2.0.13",
+    "@types/pg": "8.11.10",
+    "tailwindcss": "3.4.4",
+    "postcss": "8.4.39",
+    "autoprefixer": "10.4.19",
+    "vitest": "1.6.0",
+    "@vitest/coverage-v8": "1.6.0",
+    "@testing-library/react": "16.0.0",
+    "@testing-library/jest-dom": "6.4.6",
+    "jsdom": "24.1.0"
+  },
+  "_dep_justifications": {
+    "pg": "Node.js Postgres driver. Drives Supabase registry storage at /api/v1/register. Single peer; ~50KB; mature.",
+    "@next/mdx": "Required for /docs/* MDX content. Official Next.js plugin.",
+    "@testing-library/react": "Required for component tests under /tests/components. Industry standard."
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

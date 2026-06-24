@@ -1,0 +1,73 @@
+{
+  "version": "0.1",
+  "updated_at": "2026-06-24",
+  "publisher": "hypermove.dev",
+  "license": "MIT",
+  "bundles": [
+    {
+      "id": "x402-base-starter",
+      "name": "x402 Base Starter",
+      "tagline": "Minimal Hono + n-payment paywall for Base.",
+      "description": "The shortest path from zero to a paid HTTP endpoint. Single route, EIP-3009 settlement on Base mainnet or Sepolia testnet.",
+      "stack": ["hono", "n-payment", "viem"],
+      "chains": ["base-mainnet", "base-sepolia"],
+      "protocols": ["x402", "eip-3009"],
+      "default_price_micro_usdc": 10000,
+      "files": ["server.ts", "package.json", "Dockerfile", "README.md"],
+      "size_kb": 9,
+      "difficulty": "beginner"
+    },
+    {
+      "id": "x402-multi-chain",
+      "name": "Multi-chain USDC paywall",
+      "tagline": "Auto-route x402 settlement across Base + Arbitrum + Optimism.",
+      "description": "One middleware, three chains. Cheapest-route selection plus Wormhole NTT fallback for cross-chain USDC.",
+      "stack": ["hono", "n-payment", "viem"],
+      "chains": ["base-mainnet", "arbitrum-mainnet", "optimism-mainnet"],
+      "protocols": ["x402", "eip-3009", "wormhole-ntt", "circle-gateway"],
+      "default_price_micro_usdc": 10000,
+      "files": ["server.ts", "package.json", "Dockerfile", "README.md", "chains.ts"],
+      "size_kb": 13,
+      "difficulty": "intermediate"
+    },
+    {
+      "id": "btc-treasury-agent",
+      "name": "BTC-as-treasury agent",
+      "tagline": "Lock PegBTC, borrow USDC just-in-time, pay, repay, unlock.",
+      "description": "Capital stays in BTC until the moment it's spent. Uses GOAT Network PegBTC lending + OWS vault for vault-bound signing.",
+      "stack": ["n-payment", "viem"],
+      "chains": ["goat-mainnet"],
+      "protocols": ["x402", "peg-btc", "ows"],
+      "default_price_micro_usdc": 5000,
+      "files": ["agent.ts", "package.json", "Dockerfile", "README.md"],
+      "size_kb": 11,
+      "difficulty": "intermediate"
+    },
+    {
+      "id": "paid-mcp-server",
+      "name": "Paid MCP server",
+      "tagline": "Sell any function as a paid MCP tool, callable by Claude / Cursor / Bedrock.",
+      "description": "createPaidMcpServer wraps your handler in a JSON-RPC 2.0 MCP surface with x402-USDC billing built in.",
+      "stack": ["n-payment", "@modelcontextprotocol/sdk"],
+      "chains": ["base-mainnet", "goat-mainnet"],
+      "protocols": ["x402", "eip-3009"],
+      "default_price_micro_usdc": 10000,
+      "files": ["server.ts", "package.json", "Dockerfile", "README.md"],
+      "size_kb": 10,
+      "difficulty": "intermediate"
+    },
+    {
+      "id": "xrpl-rlusd-merchant",
+      "name": "XRPL RLUSD merchant",
+      "tagline": "Receive RLUSD on XRPL with auto-created trustline.",
+      "description": "x402 paywall settled in Ripple USD on XRPL. Trustline auto-bootstrap; mainnet or testnet.",
+      "stack": ["hono", "n-payment", "xrpl"],
+      "chains": ["xrpl-mainnet"],
+      "protocols": ["xrpl-x402", "rlusd"],
+      "default_price_micro_usdc": 10000,
+      "files": ["server.ts", "package.json", "Dockerfile", "README.md"],
+      "size_kb": 12,
+      "difficulty": "advanced"
+    }
+  ]
+}

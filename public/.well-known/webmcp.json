@@ -1,0 +1,27 @@
+{
+  "version": "0.3",
+  "name": "hypermove.dev",
+  "description": "The HyperMove consolidation surface — independent, MIT-licensed.",
+  "homepage": "https://hypermove.dev",
+  "license": "MIT",
+  "endpoints": {
+    "mcp": "/api/mcp",
+    "bundles": "/bundles.json"
+  },
+  "tools": [
+    {
+      "name": "payment.x402",
+      "description": "Pay $0.01 USDC to call /api/paid-endpoint and demonstrate the x402 contract live.",
+      "monetize": {
+        "priceMicroUsdc": 10000,
+        "asset": "USDC",
+        "chain": "base-sepolia"
+      }
+    },
+    {
+      "name": "reputation.read",
+      "description": "Read an agent's on-chain reputation score (ERC-8004)."
+    }
+  ],
+  "signature": null
+}
