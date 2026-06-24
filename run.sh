@@ -249,29 +249,25 @@ cmd_smoke() {
     err "WWW-Authenticate header missing or wrong"
     failed=$((failed+1))
   fi
-  log "/api/v1/register email-bundle flow"
-  local reg_body reg_code
-  reg_body=$(curl -s -X POST "http://localhost:$APP_PORT/api/v1/register" \
-    -H 'content-type: application/json' \
-    -d '{"email":"smoke@hypermove.dev","bundle_id":"x402-base-starter"}')
-  if printf '%s' "$reg_body" | grep -qE '"ok":true|"error":"persist_failed"'; then
-    if printf '%s' "$reg_body" | grep -q '"ok":true'; then
-      ok "register persisted submission: $(printf '%s' "$reg_body" | head -c 120)"
-    else
-      warn "register endpoint OK but DB unreachable (expected without IPv6); body: $(printf '%s' "$reg_body" | head -c 120)"
-    fi
+  log "/portal bundle-request form (Server Action)"
+  local portal_html
+  portal_html=$(curl -s "http://localhost:$APP_PORT/portal")
+  if printf '%s' "$portal_html" | grep -q 'Request bundle'; then
+    ok "/portal renders bundle catalog + email request form"
   else
-    err "/api/v1/register returned neither ok nor persist_failed (body: $reg_body)"
+    err "/portal HTML missing 'Request bundle' CTA"
     failed=$((failed+1))
   fi
-  reg_code=$(curl -s -o /dev/null -w '%{http_code}' -X POST "http://localhost:$APP_PORT/api/v1/register" \
-    -H 'content-type: application/json' \
-    -d '{"email":"not-an-email","bundle_id":"x402-base-starter"}')
-  if [[ "$reg_code" == "400" ]]; then
-    ok "register rejects bad email with HTTP 400"
+  if printf '%s' "$portal_html" | grep -q 'data-tool-name\|bundle-card\|x402-base-starter'; then
+    ok "/portal lists at least one bundle from public/bundles.json"
   else
-    err "register accepted bad email (got $reg_code, want 400)"
-    failed=$((failed+1))
+    # Check for any bundle id from the catalog as fallback
+    if printf '%s' "$portal_html" | grep -qE 'x402-(base|multi)|btc-treasury|paid-mcp|xrpl-rlusd'; then
+      ok "/portal lists at least one bundle from public/bundles.json"
+    else
+      err "/portal HTML missing bundle catalog entries"
+      failed=$((failed+1))
+    fi
   fi
   log "/api/agent SSE stream"
   local sse_ctype sse_body

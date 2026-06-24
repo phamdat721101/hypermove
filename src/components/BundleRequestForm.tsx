@@ -1,10 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useTransition } from 'react';
+import { registerBundleRequest } from '@/app/portal/actions';
 
 type Status =
   | { kind: 'idle' }
-  | { kind: 'sending' }
   | { kind: 'ok'; message: string; id: number | null }
   | { kind: 'error'; message: string };
 
@@ -12,29 +12,43 @@ interface Props {
   bundleId: string;
 }
 
+const HINT_MESSAGES: Record<string, string> = {
+  invalid_email:        'Email looks malformed — double-check the address.',
+  email_too_long:       'Email is too long (max 254 chars).',
+  unknown_bundle:       'That bundle is no longer in the catalog. Please refresh.',
+  persist_failed:       'Couldn\u2019t save your request — please try again.',
+  // Persistence hints
+  dns_unreachable:      'Database host not reachable. (admin: check DATABASE_URL host)',
+  connection_refused:   'Database refused connection. (admin: check port + firewall)',
+  connection_timeout:   'Database timed out. (admin: check network + pool size)',
+  auth_failed:          'Database auth failed. (admin: check password)',
+  tenant_not_found:     'Wrong Supabase pooler shard or region. (admin: verify pooler URL)',
+  tls_failed:           'TLS handshake failed. (admin: check ssl settings)',
+  schema_error:         'Schema mismatch. (admin: re-run migrations)',
+};
+
+function messageFor(error: string | undefined, hint: string | undefined): string {
+  if (hint && HINT_MESSAGES[hint]) return HINT_MESSAGES[hint];
+  if (error && HINT_MESSAGES[error]) return HINT_MESSAGES[error];
+  return error ?? 'Request failed.';
+}
+
 export default function BundleRequestForm({ bundleId }: Props) {
   const [email, setEmail] = useState('');
   const [status, setStatus] = useState<Status>({ kind: 'idle' });
+  const [pending, startTransition] = useTransition();
 
-  const submit = async (e: React.FormEvent) => {
+  const submit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!email.trim()) return;
-    setStatus({ kind: 'sending' });
-    try {
-      const res = await fetch('/api/v1/register', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ email: email.trim(), bundle_id: bundleId }),
-      });
-      const json = await res.json();
+    startTransition(async () => {
+      const res = await registerBundleRequest({ email: email.trim(), bundleId });
       if (!res.ok) {
-        setStatus({ kind: 'error', message: json.error ?? 'request_failed' });
+        setStatus({ kind: 'error', message: messageFor(res.error, res.hint) });
         return;
       }
-      setStatus({ kind: 'ok', message: json.message ?? 'Registered.', id: json.id ?? null });
-    } catch (err) {
-      setStatus({ kind: 'error', message: String(err) });
-    }
+      setStatus({ kind: 'ok', message: res.message ?? 'Registered.', id: res.id ?? null });
+    });
   };
 
   if (status.kind === 'ok') {
@@ -65,8 +79,8 @@ export default function BundleRequestForm({ bundleId }: Props) {
         aria-label="Email"
         className="flex-1 rounded-md border border-outline-variant/40 bg-surface-container-lowest px-3 py-2 font-mono text-body-sm text-on-surface focus:border-primary-container focus:outline-none"
       />
-      <button type="submit" disabled={status.kind === 'sending'} className="btn-primary">
-        {status.kind === 'sending' ? 'Sending…' : 'Request bundle →'}
+      <button type="submit" disabled={pending} className="btn-primary">
+        {pending ? 'Sending…' : 'Request bundle →'}
       </button>
       {status.kind === 'error' && (
         <span role="alert" className="basis-full text-label-mono text-error">

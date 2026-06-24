@@ -39,7 +39,7 @@
     "jsdom": "24.1.0"
   },
   "_dep_justifications": {
-    "pg": "Node.js Postgres driver. Drives Supabase registry storage at /api/v1/register. Single peer; ~50KB; mature.",
+    "pg": "Node.js Postgres driver. Drives Supabase registry storage via Server Action in src/app/portal/actions.ts. Single peer; ~50KB; mature.",
     "@next/mdx": "Required for /docs/* MDX content. Official Next.js plugin.",
     "@testing-library/react": "Required for component tests under /tests/components. Industry standard."
   },

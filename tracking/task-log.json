@@ -42,6 +42,12 @@
     { "id": "35", "sprint": "S2.1", "prd_refs": ["upgrade"], "title": "Update tests + run full ship pipeline",                       "est_h": 0.8, "actual_h": 0.7, "status": "done" },
     { "id": "36", "sprint": "S2.1", "prd_refs": ["upgrade"], "title": "Hide AgentChatPanel from homepage (keep component for future)", "est_h": 0.1, "actual_h": 0.1, "status": "done" },
     { "id": "37", "sprint": "S2.1", "prd_refs": ["upgrade"], "title": "Brand kit: logo in TopNav + Footer + favicon + apple-icon",     "est_h": 0.4, "actual_h": 0.3, "status": "done" },
-    { "id": "38", "sprint": "S2.1", "prd_refs": ["upgrade"], "title": ".gitignore upgrade: build + caches + credentials + secrets",   "est_h": 0.3, "actual_h": 0.3, "status": "done" }
+    { "id": "38", "sprint": "S2.1", "prd_refs": ["upgrade"], "title": ".gitignore upgrade: build + caches + credentials + secrets",   "est_h": 0.3, "actual_h": 0.3, "status": "done" },
+    { "id": "39", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "Reverted Supabase-anon-key refactor (chose connection-string approach)", "est_h": 0.3, "actual_h": 0.3, "status": "done" },
+    { "id": "40", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "Server Action: src/app/portal/actions.ts (replaces /api/v1/register)",  "est_h": 0.5, "actual_h": 0.4, "status": "done" },
+    { "id": "41", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "BundleRequestForm: useTransition + direct Server Action call",         "est_h": 0.3, "actual_h": 0.3, "status": "done" },
+    { "id": "42", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "Drop /api/v1/register route + safeHeaders() for test-env tolerance",   "est_h": 0.2, "actual_h": 0.2, "status": "done" },
+    { "id": "43", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "Tests + run.sh smoke updated to Server Action contract",               "est_h": 0.4, "actual_h": 0.3, "status": "done" },
+    { "id": "44", "sprint": "S2.2", "prd_refs": ["bugfix"],  "title": "Fix persist_failed: switch to Supavisor pooler (aws-1/ap-southeast-1) + hint classifier", "est_h": 0.6, "actual_h": 0.5, "status": "done" }
   ]
 }

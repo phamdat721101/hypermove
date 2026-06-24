@@ -7,16 +7,15 @@ const read = (p: string) => fs.readFileSync(path.join(ROOT, p), 'utf8');
 const exists = (p: string) => fs.existsSync(path.join(ROOT, p));
 
 describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
-  it('every S2/S2.1 route file exists', () => {
+  it('every S2/S2.2 route file exists', () => {
     const required = [
       'src/app/api/agent/route.ts',
       'src/app/api/paid-endpoint/route.ts',
       'src/app/api/mcp/route.ts',
       'src/app/api/revenue/route.ts',
-      'src/app/api/v1/register/route.ts',
       'src/app/portal/page.tsx',
+      'src/app/portal/actions.ts',
       'src/components/LiveAgentDemo.tsx',
-      'src/components/AgentChatPanel.tsx',
       'src/components/CodeExamplePicker.tsx',
       'src/components/RevenueAndReceipt.tsx',
       'src/components/BundleRequestForm.tsx',
@@ -93,26 +92,15 @@ describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
     if (original !== undefined) process.env.DATABASE_URL = original;
   });
 
-  it('/api/v1/register rejects bad email + unknown bundle', async () => {
-    const { POST } = await import('@/app/api/v1/register/route');
-    // Bad email
-    const r1 = await POST(
-      new Request('http://localhost/api/v1/register', {
-        method: 'POST',
-        body: JSON.stringify({ email: 'not-an-email', bundle_id: 'x402-base-starter' }),
-      }) as any,
-    );
-    expect(r1.status).toBe(400);
-    expect((await r1.json()).error).toBe('invalid_email');
+  it('registerBundleRequest Server Action rejects bad email + unknown bundle', async () => {
+    const { registerBundleRequest } = await import('@/app/portal/actions');
 
-    // Unknown bundle
-    const r2 = await POST(
-      new Request('http://localhost/api/v1/register', {
-        method: 'POST',
-        body: JSON.stringify({ email: 'a@b.co', bundle_id: 'does-not-exist' }),
-      }) as any,
-    );
-    expect(r2.status).toBe(400);
-    expect((await r2.json()).error).toBe('unknown_bundle');
+    const r1 = await registerBundleRequest({ email: 'not-an-email', bundleId: 'x402-base-starter' });
+    expect(r1.ok).toBe(false);
+    expect(r1.error).toBe('invalid_email');
+
+    const r2 = await registerBundleRequest({ email: 'a@b.co', bundleId: 'does-not-exist' });
+    expect(r2.ok).toBe(false);
+    expect(r2.error).toBe('unknown_bundle');
   });
 });

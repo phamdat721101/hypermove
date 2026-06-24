@@ -75,7 +75,33 @@ export interface RegistryResult {
   id?: number;
   /** Set when DATABASE_URL is missing — request is accepted but not persisted. */
   noopReason?: string;
+  /** Raw error message (server-only — never sent to the client verbatim). */
   error?: string;
+  /** Stable, sanitized hint surfaced to the UI. */
+  hint?: ErrorHint;
+}
+
+export type ErrorHint =
+  | 'dns_unreachable'        // ENOTFOUND / EAI_AGAIN — wrong host or no IPv6 route
+  | 'connection_refused'     // ECONNREFUSED — host wrong port or firewalled
+  | 'connection_timeout'     // ETIMEDOUT
+  | 'auth_failed'            // password/role wrong
+  | 'tenant_not_found'       // Supavisor: project ref/shard/region mismatch
+  | 'tls_failed'
+  | 'schema_error'
+  | 'unknown';
+
+function classifyError(err: unknown): ErrorHint {
+  const msg = String((err as { message?: string })?.message ?? err);
+  const code = (err as { code?: string })?.code ?? '';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return 'dns_unreachable';
+  if (code === 'ECONNREFUSED')                       return 'connection_refused';
+  if (code === 'ETIMEDOUT' || /timeout/i.test(msg))  return 'connection_timeout';
+  if (/tenant.*not found/i.test(msg))                return 'tenant_not_found';
+  if (/password|auth/i.test(msg))                    return 'auth_failed';
+  if (/tls|ssl|certificate/i.test(msg))              return 'tls_failed';
+  if (/syntax|relation|column/i.test(msg))           return 'schema_error';
+  return 'unknown';
 }
 
 export async function insertRegistryRequest(req: RegistryRequest): Promise<RegistryResult> {
@@ -94,7 +120,11 @@ export async function insertRegistryRequest(req: RegistryRequest): Promise<Regis
     );
     return { ok: true, id: rows[0]?.id };
   } catch (err) {
-    return { ok: false, error: String(err) };
+    const hint = classifyError(err);
+    // Log to server console for Vercel/Hetzner logs. Safe — no password leak.
+    // eslint-disable-next-line no-console
+    console.error(`[registry] insert failed hint=${hint}`, err);
+    return { ok: false, error: String(err), hint };
   } finally {
     client?.release();
   }

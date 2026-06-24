@@ -44,19 +44,35 @@ The `/api/paid-endpoint` paywall always emits the real `HTTP 402 + WWW-Authentic
 
 ## Registry storage
 
-`/portal` email-bundle requests are persisted to Postgres (Supabase project on `db.boopiufnqyrwzvyrjens.supabase.co`). The schema is auto-created idempotently on first write — see `src/lib/db.ts`. Configure via `DATABASE_URL` in `.env.local`.
+`/portal` email-bundle requests are persisted to Postgres (Supabase project `boopiufnqyrwzvyrjens`) via a Next.js Server Action (`src/app/portal/actions.ts`). The schema is auto-created idempotently on first write — see `src/lib/db.ts`. Configure via `DATABASE_URL` in `.env.local`.
 
-### Networking note
+### Use the Supavisor pooler URL, not the direct host
 
-Supabase's **direct** Postgres host (`db.<project>.supabase.co`) is IPv6-only on free tier. `src/lib/db.ts` calls `dns.setDefaultResultOrder('ipv6first')` so this works on Vercel and most cloud VPS providers (they have IPv6 routing).
+Supabase's **direct** Postgres host (`db.<project>.supabase.co:5432`) is IPv6-only on free tier — and Vercel's serverless runtime + most ISPs don't route IPv6 reliably. Always use the **Supavisor Transaction Pooler** URL.
 
-On an IPv4-only network (e.g. some local ISPs), switch to the **transaction pooler** URL from your Supabase dashboard. Format:
-
+Format:
 ```
-postgresql://postgres.<project-ref>:<password>@aws-0-<region>.pooler.supabase.com:6543/postgres
+postgresql://postgres.<project-ref>:<password>@<shard>-<region>.pooler.supabase.com:6543/postgres
 ```
 
-Drop that into `DATABASE_URL` and the writer works over IPv4.
+Concrete example for project `boopiufnqyrwzvyrjens` (shard `aws-1`, region `ap-southeast-1`):
+```
+postgresql://postgres.boopiufnqyrwzvyrjens:<password>@aws-1-ap-southeast-1.pooler.supabase.com:6543/postgres
+```
+
+To get the right URL for your project: Supabase Dashboard → **Project Settings → Database → Connection pooling → Transaction**.
+
+### Diagnosing `persist_failed` errors
+
+When the Server Action returns `persist_failed`, the UI shows a hint code mapped via `BundleRequestForm`'s `HINT_MESSAGES` table. Server-side, `db.ts` logs the underlying pg error (visible in Vercel/Hetzner logs):
+
+| Hint code           | Likely fix                                                                              |
+|---------------------|----------------------------------------------------------------------------------------- |
+| `dns_unreachable`   | Wrong host in `DATABASE_URL`, or you're using the IPv6-only direct host on IPv4 network. Switch to pooler URL. |
+| `tenant_not_found`  | Wrong shard (`aws-0` vs `aws-1`) or wrong region in the pooler URL.                     |
+| `auth_failed`       | Password rotated, or `postgres.<project-ref>` tenant prefix missing from the username.  |
+| `connection_refused`| Pooler port is `6543` (not `5432`) for Transaction mode.                                |
+| `tls_failed`        | Provider requires `ssl=true`; `db.ts` enables `rejectUnauthorized:false` automatically when host contains `supabase`. |
 
 ## Deploy
 
