@@ -154,14 +154,57 @@ export interface GeneratedMCP {
 export interface GeneratedMCPResult {
   ok: boolean;
   id?: number;
+  slug?: string;
   noopReason?: string;
   error?: string;
   hint?: ErrorHint;
 }
 
+/** Check if URL already scanned — return existing record if so. */
+export async function findMCPByUrl(sourceUrl: string): Promise<{ id: number; slug: string; manifest: object; serverCode: string } | null> {
+  const p = getPool();
+  if (!p) return null;
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    const { rows } = await client.query<{ id: number; mcp_name: string; manifest: object; server_code: string }>(
+      `SELECT id, mcp_name, manifest, server_code FROM hypermove_generated_mcps WHERE source_url = $1 LIMIT 1`,
+      [sourceUrl],
+    );
+    if (rows.length === 0) return null;
+    return { id: rows[0].id, slug: rows[0].mcp_name, manifest: rows[0].manifest, serverCode: rows[0].server_code };
+  } catch {
+    return null;
+  } finally {
+    client?.release();
+  }
+}
+
+/** Find MCP by slug — used by the hosted MCP route. */
+export async function findMCPBySlug(slug: string): Promise<{ id: number; manifest: object; serverCode: string; sourceUrl: string } | null> {
+  const p = getPool();
+  if (!p) return null;
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    const { rows } = await client.query<{ id: number; manifest: object; server_code: string; source_url: string }>(
+      `SELECT id, manifest, server_code, source_url FROM hypermove_generated_mcps WHERE mcp_name = $1 LIMIT 1`,
+      [slug],
+    );
+    if (rows.length === 0) return null;
+    return { id: rows[0].id, manifest: rows[0].manifest, serverCode: rows[0].server_code, sourceUrl: rows[0].source_url };
+  } catch {
+    return null;
+  } finally {
+    client?.release();
+  }
+}
+
 export async function insertGeneratedMCP(req: GeneratedMCP): Promise<GeneratedMCPResult> {
   const p = getPool();
-  if (!p) return { ok: true, noopReason: 'no_database_url' };
+  if (!p) return { ok: true, slug: req.mcpName, noopReason: 'no_database_url' };
 
   let client: PoolClient | null = null;
   try {
@@ -173,7 +216,7 @@ export async function insertGeneratedMCP(req: GeneratedMCP): Promise<GeneratedMC
        RETURNING id`,
       [req.sourceUrl, req.mcpName, JSON.stringify(req.manifest), req.serverCode, req.host ?? null],
     );
-    return { ok: true, id: rows[0]?.id };
+    return { ok: true, id: rows[0]?.id, slug: req.mcpName };
   } catch (err) {
     const hint = classifyError(err);
     console.error(`[generated-mcp] insert failed hint=${hint}`, err);

@@ -145,9 +145,12 @@ export default function GeneratePage() {
             ) : (
               <ul className="space-y-1">
                 {result.manifest.tools.map((t) => (
-                  <li key={t.name} className="glass-panel rounded px-3 py-2 flex justify-between items-center">
-                    <span className="font-mono text-sm text-primary">{t.name}</span>
-                    <span className="text-xs text-on-surface-variant">{t.serverCompatible ? '✓ server' : 'browser'}</span>
+                  <li key={t.name} className="glass-panel rounded px-3 py-2">
+                    <div className="flex justify-between items-center">
+                      <span className="font-mono text-sm text-primary">{t.name}</span>
+                      <span className="text-xs text-on-surface-variant">{t.serverCompatible ? '✓ server' : 'browser'}</span>
+                    </div>
+                    {t.description && <p className="mt-1 text-xs text-on-surface-variant">{t.description}</p>}
                   </li>
                 ))}
               </ul>

@@ -1,6 +1,6 @@
 import type { NextRequest } from 'next/server';
 import { scanUrl, generateMCPManifest, emitMCPServer, generateMCPConfig } from '@/lib/scanner';
-import { insertGeneratedMCP } from '@/lib/db';
+import { findMCPByUrl, insertGeneratedMCP } from '@/lib/db';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -28,19 +28,33 @@ export async function POST(req: NextRequest) {
     return Response.json({ error: 'Invalid URL. Must be http:// or https://' }, { status: 400 });
   }
 
+  const resolvedHost = host || DEFAULT_HOST;
+
+  // Deduplicate: if URL already scanned, return cached result
+  const existing = await findMCPByUrl(parsed.toString());
+  if (existing) {
+    const mcpConfig = generateMCPConfig(existing.manifest as any, resolvedHost);
+    return Response.json({
+      scan: null,
+      manifest: existing.manifest,
+      serverCode: existing.serverCode,
+      mcpConfig,
+      saved: { id: existing.id, slug: existing.slug, cached: true },
+    });
+  }
+
   try {
     const scanResult = await scanUrl(parsed.toString());
     const manifest = generateMCPManifest(scanResult, { name });
     const serverCode = emitMCPServer(manifest);
-    const mcpConfig = generateMCPConfig(manifest, host || DEFAULT_HOST);
+    const mcpConfig = generateMCPConfig(manifest, resolvedHost);
 
-    // Persist to Supabase (non-blocking — don't fail the response if DB is down)
     const dbResult = await insertGeneratedMCP({
       sourceUrl: parsed.toString(),
       mcpName: manifest.name,
       manifest,
       serverCode,
-      host: host || DEFAULT_HOST,
+      host: resolvedHost,
     });
 
     return Response.json({
@@ -48,7 +62,7 @@ export async function POST(req: NextRequest) {
       manifest,
       serverCode,
       mcpConfig,
-      saved: dbResult.ok ? { id: dbResult.id } : { error: dbResult.noopReason || 'db_error' },
+      saved: dbResult.ok ? { id: dbResult.id, slug: dbResult.slug } : { error: dbResult.noopReason || 'db_error' },
     });
   } catch (err) {
     return Response.json({ error: 'Scan failed', detail: (err as Error).message }, { status: 500 });

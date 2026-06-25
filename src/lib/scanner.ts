@@ -122,13 +122,15 @@ const DETECTORS: DetectorRule[] = [
     description: 'Execute a token swap on a DEX',
     serverCompatible: false,
     anyOf: {
-      patterns: ['swap', 'exactInputSingle', 'swapExactTokens', 'UniswapV[23]', 'PancakeRouter'],
+      patterns: ['swap', 'exactInputSingle', 'swapExactTokens', 'UniswapV[23]', 'PancakeRouter', 'SushiSwap', '1inch', 'paraswap'],
       addressesLower: [
         '0x68b3465833fb72a70ecdf485e0e4c7bd8665fc45', // Uniswap Universal Router
         '0xe592427a0aece92de3edee1f18e0157c05861564', // Uniswap V3 Router
         '0x10ed43c718714eb63d5aa57b78b54704e256024e', // PancakeSwap Router
+        '0x1111111254eeb25477b68fb85ed929f73a960582', // 1inch Router v5
+        '0xd9e1ce17f2641f24ae83637ab66a2cca9c378b9f', // SushiSwap Router
       ],
-      imports: ['@uniswap/sdk', '@uniswap/v3-sdk', '@pancakeswap/sdk'],
+      imports: ['@uniswap/sdk', '@uniswap/v3-sdk', '@pancakeswap/sdk', '@1inch/sdk', '@paraswap/sdk'],
     },
   },
   {
@@ -154,11 +156,13 @@ const DETECTORS: DetectorRule[] = [
     description: 'Deposit collateral into a lending protocol',
     serverCompatible: false,
     anyOf: {
-      patterns: ['supply\\(', 'deposit\\(', 'lend', 'aave.*pool', 'compound.*cToken'],
+      patterns: ['supply\\(', 'deposit\\(', 'lend', 'aave.*pool', 'compound.*cToken', 'borrow\\(', 'repay\\(', 'morpho', 'collateral'],
       addressesLower: [
         '0x87870bca3f3fd6335c3f4ce8392d69350b4fa4e2', // Aave V3 Pool (Ethereum)
+        '0xa17581a9e3356d9a858b789d68b4d866e593ae94', // Compound V3 (USDC)
+        '0xbbbbbbbbbb9cc5e90e3b3af64bdaf62c37eeffcb', // Morpho Blue
       ],
-      imports: ['@aave/contract-helpers', '@compound-finance/compound-js'],
+      imports: ['@aave/contract-helpers', '@compound-finance/compound-js', '@morpho-org/blue-sdk'],
     },
   },
   {
@@ -187,8 +191,12 @@ const DETECTORS: DetectorRule[] = [
     description: 'Stake tokens for yield/governance',
     serverCompatible: false,
     anyOf: {
-      patterns: ['stake\\(', 'staking', 'validator', 'delegate\\(', 'unstake'],
-      imports: ['@lido-sdk/constants'],
+      patterns: ['stake\\(', 'staking', 'validator', 'delegate\\(', 'unstake', 'stETH', 'wstETH', 'requestWithdrawals', 'submitWithReferral'],
+      addressesLower: [
+        '0xae7ab96520de3a18e5e111b5eaab095312d7fe84', // Lido stETH
+        '0x7f39c581f595b53c5cb19bd0b3f8da6c935e2ca0', // Lido wstETH
+      ],
+      imports: ['@lido-sdk/constants', '@lidofinance/lido-ethereum-sdk'],
     },
   },
   {
@@ -475,12 +483,8 @@ export async function scanUrl(url: string): Promise<ScanResult> {
   const primitives = DETECTORS.map((d) => runDetector(d, corpus));
   const walletAdapter = detectWalletAdapter(corpus);
   const chains = detectChains(corpus);
-
-  // DOM parsing — structured crawl data
   const domFeatures = parseDom(html, url);
-
-  // Convert DOM features into generic tools
-  const genericTools = domToTools(domFeatures);
+  const genericTools = domToTools(domFeatures, html);
 
   return {
     url, scannedAt: new Date().toISOString(), durationMs: Date.now() - start,
@@ -489,8 +493,10 @@ export async function scanUrl(url: string): Promise<ScanResult> {
 }
 
 /** Convert parsed DOM features into generic tool definitions. */
-function domToTools(dom: DomFeatures): GenericTool[] {
+function domToTools(dom: DomFeatures, html: string): GenericTool[] {
   const tools: GenericTool[] = [];
+
+  // Forms with fields → tools
   for (const form of dom.forms) {
     const name = form.id || form.ariaLabel || (form.action ? `form_${form.action.replace(/\W+/g, '_').slice(0, 50)}` : null);
     if (!name || form.fields.length === 0) continue;
@@ -502,10 +508,82 @@ function domToTools(dom: DomFeatures): GenericTool[] {
     }
     tools.push({ name, description: form.ariaLabel || `Form: ${form.method} ${form.action || '/'}`, inputSchema: { type: 'object', properties, required } });
   }
+
+  // Buttons with data-action → tools
   for (const btn of dom.buttons) {
     if (!btn.dataAction) continue;
     tools.push({ name: btn.dataAction.slice(0, 64), description: btn.text || btn.ariaLabel || btn.dataAction, inputSchema: { type: 'object', properties: {} } });
   }
+
+  // Product/service cards: detect sections with heading + description + external link
+  if (tools.length === 0) {
+    const cards = extractProductCards(html);
+    for (const card of cards) {
+      tools.push(card);
+    }
+  }
+
+  return tools;
+}
+
+/** Extract product/service cards from HTML — pattern: heading + description + CTA link */
+function extractProductCards(html: string): GenericTool[] {
+  const tools: GenericTool[] = [];
+
+  // Remove footer content to avoid picking up nav headings (Overview, Resources, etc.)
+  const bodyWithoutFooter = html.replace(/<footer[\s\S]*?<\/footer>/gi, '');
+
+  const cardRe = /<(?:h[23])[^>]*>([\s\S]*?)<\/(?:h[23])>/gi;
+  const seen = new Set<string>();
+  let match: RegExpExecArray | null;
+
+  while ((match = cardRe.exec(bodyWithoutFooter)) && tools.length < 15) {
+    const titleRaw = match[1]!.replace(/<[^>]*>/g, '').trim();
+    if (!titleRaw || titleRaw.length < 3 || titleRaw.length > 80) continue;
+
+    const slug = titleRaw.replace(/\W+/g, '_').toLowerCase().slice(0, 50);
+    if (seen.has(slug)) continue;
+    seen.add(slug);
+
+    // Look ahead ~3000 chars for description, APR, and link
+    const after = bodyWithoutFooter.slice(match.index, match.index + 3000);
+
+    // Description: find <p> with real content (>50 chars, not a badge/label)
+    const pMatches = [...after.matchAll(/<p[^>]*>([\s\S]*?)<\/p>/gi)];
+    let desc = '';
+    for (const pm of pMatches) {
+      let text = pm[1]!.replace(/<[^>]*>/g, '').trim();
+      // Strip leading badge-like fragments (risk labels, user types)
+      text = text.replace(/^(?:Lowest-risk|Low|Medium|High|All Users|Active Traders|Institutions|Sovereigns[^.]*|Beginner|Intermediate|Advanced)+/i, '').trim();
+      if (text.length > 50) { desc = text.slice(0, 200); break; }
+    }
+
+    // APR/APY value
+    const aprMatch = after.match(/(\d+(?:\.\d+)?)\s*%/);
+    const apr = aprMatch ? aprMatch[0] : '';
+    const aprType = /APY/i.test(after.slice(0, 500)) ? 'APY' : 'APR';
+
+    // CTA link (https:// external URL)
+    const linkMatch = after.match(/<a[^>]*href=["'](https?:\/\/[^"']+)["'][^>]*>/i);
+    const url = linkMatch?.[1];
+
+    // Build rich description
+    const parts = [desc || titleRaw];
+    if (apr) parts.push(`Estimated ${aprType}: ${apr}`);
+    const description = parts.join('. ');
+
+    tools.push({
+      name: slug,
+      description,
+      inputSchema: {
+        type: 'object',
+        properties: {
+          ...(url ? { url: { type: 'string', description: 'Product URL', const: url } } : {}),
+        },
+      },
+    });
+  }
+
   return tools;
 }
 
@@ -605,14 +683,14 @@ server.listen(PORT, () => console.log('MCP Server running on port ' + PORT + ' �
 
 /**
  * Generate MCP config JSON that user pastes into Claude/Cursor/Kiro.
- * Takes the server host (IP or domain) and returns the config block.
+ * Points to the hosted endpoint on our server — no self-deploy needed.
  */
 export function generateMCPConfig(manifest: MCPManifest, host: string): Record<string, unknown> {
-  const url = host.startsWith('http') ? host : `http://${host}:3002`;
+  const base = host.startsWith('http') ? host : `http://${host}:3003`;
   return {
     mcpServers: {
       [manifest.name]: {
-        url,
+        url: `${base}/api/mcp/${manifest.name}`,
         transport: 'http',
         description: manifest.description,
         tools: manifest.tools.map((t) => t.name),
