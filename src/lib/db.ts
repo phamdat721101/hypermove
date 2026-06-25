@@ -37,6 +37,17 @@ CREATE TABLE IF NOT EXISTS hypermove_registry_requests (
 );
 CREATE INDEX IF NOT EXISTS idx_hmrr_email        ON hypermove_registry_requests(email);
 CREATE INDEX IF NOT EXISTS idx_hmrr_requested_at ON hypermove_registry_requests(requested_at DESC);
+
+CREATE TABLE IF NOT EXISTS hypermove_generated_mcps (
+  id            BIGSERIAL PRIMARY KEY,
+  source_url    TEXT NOT NULL,
+  mcp_name      TEXT NOT NULL,
+  manifest      JSONB NOT NULL,
+  server_code   TEXT NOT NULL,
+  host          TEXT,
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_hgm_created_at ON hypermove_generated_mcps(created_at DESC);
 `;
 
 let pool: Pool | null = null;
@@ -124,6 +135,48 @@ export async function insertRegistryRequest(req: RegistryRequest): Promise<Regis
     // Log to server console for Vercel/Hetzner logs. Safe — no password leak.
     // eslint-disable-next-line no-console
     console.error(`[registry] insert failed hint=${hint}`, err);
+    return { ok: false, error: String(err), hint };
+  } finally {
+    client?.release();
+  }
+}
+
+// ─── Generated MCP persistence ──────────────────────────────────────────────
+
+export interface GeneratedMCP {
+  sourceUrl: string;
+  mcpName: string;
+  manifest: object;
+  serverCode: string;
+  host?: string;
+}
+
+export interface GeneratedMCPResult {
+  ok: boolean;
+  id?: number;
+  noopReason?: string;
+  error?: string;
+  hint?: ErrorHint;
+}
+
+export async function insertGeneratedMCP(req: GeneratedMCP): Promise<GeneratedMCPResult> {
+  const p = getPool();
+  if (!p) return { ok: true, noopReason: 'no_database_url' };
+
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO hypermove_generated_mcps (source_url, mcp_name, manifest, server_code, host)
+       VALUES ($1, $2, $3, $4, $5)
+       RETURNING id`,
+      [req.sourceUrl, req.mcpName, JSON.stringify(req.manifest), req.serverCode, req.host ?? null],
+    );
+    return { ok: true, id: rows[0]?.id };
+  } catch (err) {
+    const hint = classifyError(err);
+    console.error(`[generated-mcp] insert failed hint=${hint}`, err);
     return { ok: false, error: String(err), hint };
   } finally {
     client?.release();

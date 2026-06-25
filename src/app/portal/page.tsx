@@ -14,6 +14,22 @@ export default async function PortalPage() {
 
   return (
     <div className="mx-auto max-w-container px-margin-mobile py-16 md:px-margin-desktop md:py-20">
+      {/* ─── CTA: Generate from URL (the flow NIM requested) ─── */}
+      <div className="mb-12 rounded-xl border border-primary/30 bg-primary/5 p-6">
+        <h2 className="text-xl font-bold text-on-surface">
+          🆕 Generate MCP from any URL
+        </h2>
+        <p className="mt-2 text-sm text-on-surface-variant">
+          Paste a dApp link → scan → get a JSON MCP document for AI agents. No coding needed.
+        </p>
+        <a
+          href="/portal/generate"
+          className="mt-4 inline-block rounded-lg bg-primary px-6 py-2.5 font-medium text-on-primary hover:opacity-90"
+        >
+          Open Generator →
+        </a>
+      </div>
+
       <header className="mb-10">
         <span className="chip border border-outline-variant/40 bg-surface-container-high/40 text-on-surface-variant">
           Portal · bundle catalog · v{catalog.version}
