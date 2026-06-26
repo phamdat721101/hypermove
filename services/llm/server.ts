@@ -37,7 +37,7 @@ async function callLlm(content: string): Promise<string> {
     const res = await fetch(`https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/invoke`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ anthropic_version: '2023-06-01', max_tokens: 2000, messages: [{ role: 'user', content: `${SYSTEM_PROMPT}\n\n---\n${content.slice(0, 15000)}` }] }),
+      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 2000, messages: [{ role: 'user', content: `${SYSTEM_PROMPT}\n\n---\n${content.slice(0, 15000)}` }] }),
     });
     const data = await res.json() as { content?: Array<{ text?: string }> };
     return data.content?.[0]?.text || '';
