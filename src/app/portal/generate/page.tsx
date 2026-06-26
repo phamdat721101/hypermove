@@ -25,10 +25,11 @@ export default function GeneratePage() {
     setError('');
     setStep('scanning');
     try {
-      const res = await fetch('/api/scan', {
+      const llmApi = process.env.NEXT_PUBLIC_LLM_API_URL || 'http://localhost:3001';
+      const res = await fetch(`${llmApi}/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), host: host.trim() || undefined }),
+        body: JSON.stringify({ url: url.trim(), host: host.trim() || undefined, wallet: undefined }),
       });
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Scan failed'); setStep('input'); return; }

@@ -26,6 +26,78 @@ For regular sites: extract forms, search, purchase flows, account actions.
 
 Return 1-15 tools. Quality > quantity. Raw JSON array only, no markdown fences.`;
 
+// ─── Crawl logic ─────────────────────────────────────────────────────────────
+
+interface CrawlData { url: string; title: string; description: string; text: string; headings: string[]; buttons: string[]; links: string[]; forms: string[]; scriptHints: string[] }
+
+async function crawlUrl(url: string): Promise<CrawlData> {
+  const html = await fetchPage(url);
+  if (!html) return { url, title: '', description: '', text: '', headings: [], buttons: [], links: [], forms: [], scriptHints: [] };
+
+  // Extract text content (strip tags)
+  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').trim();
+  const desc = html.match(/meta[^>]*name=["']description["'][^>]*content=["']([^"']+)/i)?.[1] || '';
+  const text = html.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 8000);
+
+  // Headings
+  const headings: string[] = [];
+  const hRe = /<h[1-4][^>]*>([\s\S]*?)<\/h[1-4]>/gi;
+  let hm; while ((hm = hRe.exec(html)) && headings.length < 30) { const t = hm[1]!.replace(/<[^>]*>/g, '').trim(); if (t.length > 2 && t.length < 100) headings.push(t); }
+
+  // Buttons
+  const buttons: string[] = [];
+  const bRe = /<button[^>]*>([\s\S]*?)<\/button>/gi;
+  let bm; while ((bm = bRe.exec(html)) && buttons.length < 20) { const t = bm[1]!.replace(/<[^>]*>/g, '').trim().slice(0, 60); if (t.length > 1) buttons.push(t); }
+
+  // Links
+  const links: string[] = [];
+  const lRe = /<a[^>]*href=["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi;
+  let lm; while ((lm = lRe.exec(html)) && links.length < 30) { links.push(`${lm[2]!.replace(/<[^>]*>/g, '').trim()} → ${lm[1]}`); }
+
+  // Forms
+  const forms: string[] = [];
+  const fRe = /<form[^>]*>([\s\S]*?)<\/form>/gi;
+  let fm; while ((fm = fRe.exec(html)) && forms.length < 10) { const inputs = fm[1]!.match(/name=["']([^"']+)/gi)?.map(m => m.slice(6, -1)) || []; if (inputs.length) forms.push(inputs.join(', ')); }
+
+  // JS keyword hints
+  const scriptUrls: string[] = [];
+  const sRe = /<script[^>]*src=["']([^"']+)["']/gi;
+  let sm; while ((sm = sRe.exec(html)) && scriptUrls.length < 3) { try { scriptUrls.push(new URL(sm[1]!, url).toString()); } catch {} }
+  let jsText = '';
+  for (const su of scriptUrls) { jsText += await fetchPage(su); }
+  const keywords = ['swap', 'stake', 'deposit', 'withdraw', 'borrow', 'lend', 'bridge', 'claim', 'vote', 'transfer', 'approve', 'mint', 'connect'];
+  const scriptHints = keywords.filter(k => (html + jsText).toLowerCase().includes(k));
+
+  return { url, title, description: desc, text, headings, buttons, links, forms, scriptHints };
+}
+
+async function fetchPage(url: string): Promise<string> {
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8000);
+    const res = await fetch(url, { signal: controller.signal, headers: { 'user-agent': 'Mozilla/5.0 hypermove-crawler/0.2' }, redirect: 'follow' });
+    clearTimeout(timer);
+    if (!res.ok) return '';
+    return (await res.text()).slice(0, 5 * 1024 * 1024);
+  } catch { return ''; }
+}
+
+function formatCrawlForLlm(crawl: CrawlData): string {
+  const s: string[] = [];
+  s.push(`## URL: ${crawl.url}`);
+  s.push(`## Title: ${crawl.title}`);
+  if (crawl.description) s.push(`## Description: ${crawl.description}`);
+  if (crawl.headings.length) s.push(`## Headings:\n${crawl.headings.map(h => `- ${h}`).join('\n')}`);
+  s.push(`## Page text:\n${crawl.text.slice(0, 4000)}`);
+  if (crawl.buttons.length) s.push(`## Buttons:\n${crawl.buttons.map(b => `- ${b}`).join('\n')}`);
+  if (crawl.links.length) s.push(`## Links:\n${crawl.links.slice(0, 20).map(l => `- ${l}`).join('\n')}`);
+  if (crawl.forms.length) s.push(`## Forms (field names):\n${crawl.forms.map(f => `- ${f}`).join('\n')}`);
+  if (crawl.scriptHints.length) s.push(`## JS keywords: ${crawl.scriptHints.join(', ')}`);
+  return s.join('\n\n');
+}
+
+// ─── LLM call ────────────────────────────────────────────────────────────────
+
 async function callLlm(content: string): Promise<string> {
   const provider = process.env.LLM_PROVIDER || 'bedrock';
 
@@ -94,7 +166,73 @@ const server = createServer(async (req, res) => {
     return;
   }
 
-  // POST / → LLM analyze (existing)
+  // POST /scan → full pipeline: crawl + LLM + generate
+  if (req.method === 'POST' && (url === '/scan' || url === '/api/scan')) {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    let body: { url?: string; wallet?: string; host?: string };
+    try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+
+    if (!body.url) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing url' })); return; }
+
+    try {
+      // 1. Crawl
+      const crawlData = await crawlUrl(body.url);
+
+      // 2. LLM analyze
+      const content = formatCrawlForLlm(crawlData);
+      const raw = await callLlm(content);
+      const jsonMatch = raw.match(/\[[\s\S]*\]/);
+      let tools: Array<{ name: string; description: string; inputSchema?: unknown }> = [];
+      if (jsonMatch) {
+        tools = JSON.parse(jsonMatch[0]);
+      }
+      const cleanTools = tools.slice(0, 15).map(t => ({
+        name: String(t.name).replace(/\W+/g, '_').toLowerCase().slice(0, 64),
+        description: t.description || t.name,
+        inputSchema: t.inputSchema || { type: 'object', properties: {} },
+        serverCompatible: true,
+      }));
+
+      // 3. Generate manifest
+      const hostname = new URL(body.url).hostname.replace(/^www\./, '');
+      const slug = `${hostname}-mcp`.replace(/[^a-z0-9-]/g, '-');
+      const baseHost = body.host || `http://localhost:${PORT}`;
+      const walletAddr = body.wallet || '0x0000000000000000000000000000000000000000';
+      const manifest = {
+        name: slug,
+        version: '0.1.0',
+        description: `Agent-callable tools extracted from ${body.url}`,
+        tools: cleanTools,
+        generatedAt: new Date().toISOString(),
+        sourceUrl: body.url,
+      };
+
+      // 4. Generate MCP config
+      const mcpConfig = {
+        mcpServers: {
+          [slug]: {
+            url: `${baseHost}/${walletAddr}/${slug}`,
+            transport: 'http',
+            description: manifest.description,
+            tools: cleanTools.map(t => t.name),
+          },
+        },
+      };
+
+      // 5. Register for hosting
+      mcpStore.set(`${walletAddr}/${slug}`, manifest);
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ manifest, mcpConfig, crawlData: { url: crawlData.url, title: crawlData.title, toolCount: cleanTools.length } }));
+    } catch (err) {
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Scan failed', detail: (err as Error).message }));
+    }
+    return;
+  }
+
+  // POST / or /api/llm → LLM analyze only (legacy)
   if (req.method === 'POST' && (url === '/' || url === '/api/llm')) {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
