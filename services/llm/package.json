@@ -1,0 +1,12 @@
+{
+  "name": "hypermove-llm-service",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "tsx server.ts",
+    "dev": "tsx watch server.ts"
+  },
+  "dependencies": {
+    "tsx": "^4.7.0"
+  }
+}

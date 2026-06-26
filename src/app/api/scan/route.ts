@@ -9,36 +9,27 @@ const DEFAULT_HOST = process.env.MCP_HOST || 'localhost';
 
 export async function POST(req: NextRequest) {
   let body: { url?: string; name?: string; host?: string };
-  try {
-    body = await req.json();
-  } catch {
-    return Response.json({ error: 'Invalid JSON body' }, { status: 400 });
-  }
+  try { body = await req.json(); } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
   const { url, name, host } = body;
-  if (!url || typeof url !== 'string') {
-    return Response.json({ error: 'Missing "url" field' }, { status: 400 });
-  }
+  if (!url || typeof url !== 'string') return Response.json({ error: 'Missing "url"' }, { status: 400 });
 
   let parsed: URL;
   try {
     parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error();
-  } catch {
-    return Response.json({ error: 'Invalid URL. Must be http:// or https://' }, { status: 400 });
-  }
+  } catch { return Response.json({ error: 'Invalid URL' }, { status: 400 }); }
 
   const resolvedHost = host || DEFAULT_HOST;
 
-  // Deduplicate: if URL already scanned, return cached result
+  // Dedup: check if already scanned
   const existing = await findMCPByUrl(parsed.toString());
   if (existing) {
-    const mcpConfig = generateMCPConfig(existing.manifest as any, resolvedHost);
     return Response.json({
       scan: null,
       manifest: existing.manifest,
       serverCode: existing.serverCode,
-      mcpConfig,
+      mcpConfig: generateMCPConfig(existing.manifest as any, resolvedHost),
       saved: { id: existing.id, slug: existing.slug, cached: true },
     });
   }
@@ -49,6 +40,7 @@ export async function POST(req: NextRequest) {
     const serverCode = emitMCPServer(manifest);
     const mcpConfig = generateMCPConfig(manifest, resolvedHost);
 
+    // Save to DB
     const dbResult = await insertGeneratedMCP({
       sourceUrl: parsed.toString(),
       mcpName: manifest.name,
@@ -58,7 +50,7 @@ export async function POST(req: NextRequest) {
     });
 
     return Response.json({
-      scan: scanResult,
+      scan: { url: scanResult.url, durationMs: scanResult.durationMs, toolCount: scanResult.tools.length, crawlData: scanResult.crawlData },
       manifest,
       serverCode,
       mcpConfig,

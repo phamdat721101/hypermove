@@ -2,36 +2,15 @@
 
 import { useState } from 'react';
 
-interface DetectedPrimitive {
-  name: string;
-  detected: boolean;
-  confidence: number;
-  evidence: string[];
-}
-
 interface ScanResponse {
-  scan: {
-    url: string;
-    durationMs: number;
-    primitives: DetectedPrimitive[];
-    walletAdapter: string;
-    chains: number[];
-    genericTools: Array<{ name: string; description: string }>;
-  };
-  manifest: {
-    name: string;
-    version: string;
-    description: string;
-    tools: Array<{ name: string; description: string; serverCompatible: boolean }>;
-    chains: number[];
-    walletAdapter: string;
-    sourceUrl: string;
-  };
+  scan: { url: string; durationMs: number; toolCount: number } | null;
+  manifest: { name: string; version: string; description: string; tools: Array<{ name: string; description: string; inputSchema: unknown }>; sourceUrl: string };
   serverCode: string;
   mcpConfig: Record<string, unknown>;
+  saved?: { id?: number; slug?: string; cached?: boolean };
 }
 
-type Step = 'input' | 'scanning' | 'preview' | 'done';
+type Step = 'input' | 'scanning' | 'result';
 
 export default function GeneratePage() {
   const [url, setUrl] = useState('');
@@ -54,7 +33,7 @@ export default function GeneratePage() {
       const data = await res.json();
       if (!res.ok) { setError(data.error || 'Scan failed'); setStep('input'); return; }
       setResult(data);
-      setStep('preview');
+      setStep('result');
     } catch (e) {
       setError((e as Error).message);
       setStep('input');
@@ -67,11 +46,18 @@ export default function GeneratePage() {
     setTimeout(() => setCopied(''), 2000);
   }
 
-  function downloadFile(content: string, filename: string) {
-    const blob = new Blob([content], { type: 'text/plain' });
+  async function handleDownloadZip() {
+    if (!result) return;
+    const res = await fetch('/api/download', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: result.manifest.sourceUrl, manifest: result.manifest, serverCode: result.serverCode, host: host.trim() || undefined }),
+    });
+    if (!res.ok) return;
+    const blob = await res.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = filename;
+    a.download = `${result.manifest.name}.zip`;
     a.click();
   }
 
@@ -82,138 +68,98 @@ export default function GeneratePage() {
           Generate MCP Server <span className="gradient-text-purple-cyan">from any URL</span>
         </h1>
         <p className="mt-2 text-on-surface-variant">
-          Paste URL → scan → get a deployable MCP server + config for your AI agent.
+          Paste URL → we crawl everything → AI analyzes → you get an MCP server.
         </p>
       </header>
 
-      {/* ─── Step 1: Input ─── */}
+      {/* Input */}
       {step === 'input' && (
         <div className="space-y-4">
-          <input
-            type="url"
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-            placeholder="https://app.uniswap.org"
-            className="w-full rounded-lg border border-outline-variant/40 bg-surface-container px-4 py-3 text-on-surface placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none"
-          />
-          <input
-            type="text"
-            value={host}
-            onChange={(e) => setHost(e.target.value)}
-            placeholder="Server IP/domain (e.g. 54.123.45.67 or mcp.yourdomain.com)"
-            className="w-full rounded-lg border border-outline-variant/40 bg-surface-container px-4 py-3 text-on-surface placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none"
-          />
-          <button
-            onClick={handleScan}
-            disabled={!url.trim()}
-            className="w-full rounded-lg bg-primary px-6 py-3 font-medium text-on-primary disabled:opacity-50"
-          >
+          <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+            placeholder="https://yield.goat.network" className="w-full rounded-lg border border-outline-variant/40 bg-surface-container px-4 py-3 text-on-surface placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none" />
+          <input type="text" value={host} onChange={(e) => setHost(e.target.value)}
+            placeholder="Server IP/domain for MCP config (leave empty for hosted)"
+            className="w-full rounded-lg border border-outline-variant/40 bg-surface-container px-4 py-3 text-on-surface placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none" />
+          <button onClick={handleScan} disabled={!url.trim()} className="w-full rounded-lg bg-primary px-6 py-3 font-medium text-on-primary disabled:opacity-50">
             Scan & Generate
           </button>
           {error && <p className="text-sm text-error">{error}</p>}
-          <p className="text-xs text-on-surface-variant">
-            Enter the IP/domain of your Lightsail server for the MCP config. Leave empty for localhost.
-          </p>
         </div>
       )}
 
-      {/* ─── Scanning ─── */}
+      {/* Scanning */}
       {step === 'scanning' && (
         <div className="flex items-center gap-3 py-12">
           <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <span className="text-on-surface-variant">Scanning {url}...</span>
+          <span className="text-on-surface-variant">Crawling & analyzing {url}...</span>
         </div>
       )}
 
-      {/* ─── Preview & Results ─── */}
-      {(step === 'preview' || step === 'done') && result && (
+      {/* Result */}
+      {step === 'result' && result && (
         <div className="space-y-6">
           {/* Summary */}
           <div className="glass-panel rounded-lg p-4 flex items-center justify-between">
             <span className="text-sm text-on-surface-variant">
-              {result.scan.durationMs}ms · {result.manifest.tools.length} tools · {result.scan.walletAdapter} · chains: {result.scan.chains.join(', ') || '—'}
+              {result.scan?.durationMs || 0}ms · {result.manifest.tools.length} tools
+              {result.saved?.cached && ' · (cached)'}
             </span>
             <button onClick={() => { setStep('input'); setResult(null); }} className="text-xs text-secondary hover:underline">Reset</button>
           </div>
 
-          {/* Detected tools */}
+          {/* Tools */}
           <div>
-            <h2 className="text-lg font-semibold text-on-surface mb-2">Detected Tools</h2>
+            <h2 className="text-lg font-semibold text-on-surface mb-2">Detected Tools ({result.manifest.tools.length})</h2>
             {result.manifest.tools.length === 0 ? (
-              <p className="text-on-surface-variant">No tools detected. Try a different dApp URL.</p>
+              <p className="text-on-surface-variant">No tools detected.</p>
             ) : (
               <ul className="space-y-1">
                 {result.manifest.tools.map((t) => (
                   <li key={t.name} className="glass-panel rounded px-3 py-2">
-                    <div className="flex justify-between items-center">
-                      <span className="font-mono text-sm text-primary">{t.name}</span>
-                      <span className="text-xs text-on-surface-variant">{t.serverCompatible ? '✓ server' : 'browser'}</span>
-                    </div>
-                    {t.description && <p className="mt-1 text-xs text-on-surface-variant">{t.description}</p>}
+                    <span className="font-mono text-sm text-primary">{t.name}</span>
+                    <p className="mt-0.5 text-xs text-on-surface-variant">{t.description}</p>
                   </li>
                 ))}
               </ul>
             )}
           </div>
 
-          {/* ─── MCP Config (the key output NIM wants) ─── */}
+          {/* MCP Config */}
           <div>
-            <h2 className="text-lg font-semibold text-on-surface mb-2">📋 MCP Config (paste into Claude/Cursor/Kiro)</h2>
+            <h2 className="text-lg font-semibold text-on-surface mb-2">📋 MCP Config</h2>
             <pre className="rounded-lg bg-surface-container p-4 text-xs text-on-surface overflow-auto max-h-48">
               {JSON.stringify(result.mcpConfig, null, 2)}
             </pre>
-            <button
-              onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'config')}
-              className="mt-2 rounded border border-primary px-4 py-1.5 text-sm text-primary hover:bg-primary/10"
-            >
+            <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'config')}
+              className="mt-2 rounded border border-primary px-4 py-1.5 text-sm text-primary hover:bg-primary/10">
               {copied === 'config' ? '✓ Copied!' : 'Copy Config'}
             </button>
           </div>
 
-          {/* ─── Server file download ─── */}
-          <div>
-            <h2 className="text-lg font-semibold text-on-surface mb-2">🖥️ MCP Server (deploy to Lightsail)</h2>
-            <p className="text-sm text-on-surface-variant mb-2">
-              Download this file → upload to your server → run <code className="font-mono text-secondary">npx tsx webmcp-server.ts</code>
-            </p>
-            <div className="flex gap-2">
-              <button
-                onClick={() => downloadFile(result.serverCode, 'webmcp-server.ts')}
-                className="rounded border border-secondary px-4 py-1.5 text-sm text-secondary hover:bg-secondary/10"
-              >
-                Download webmcp-server.ts
+          {/* Deploy options */}
+          <div className="space-y-3">
+            <h2 className="text-lg font-semibold text-on-surface">🚀 Deploy</h2>
+            <div className="flex gap-3 flex-wrap">
+              <button onClick={handleDownloadZip} className="rounded-lg bg-secondary px-5 py-2.5 text-sm font-medium text-on-primary hover:opacity-90">
+                Download ZIP (self-host)
               </button>
-              <button
-                onClick={() => copyText(result.serverCode, 'server')}
-                className="rounded border border-outline-variant/40 px-4 py-1.5 text-sm text-on-surface-variant hover:bg-surface-container"
-              >
-                {copied === 'server' ? '✓ Copied!' : 'Copy Code'}
+              <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'hosted')}
+                className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-on-primary hover:opacity-90">
+                {copied === 'hosted' ? '✓ Copied!' : 'Host for me → Copy Config'}
               </button>
             </div>
+            <p className="text-xs text-on-surface-variant">
+              <strong>Self-host:</strong> Download ZIP, run on your server. <strong>Host for me:</strong> Already hosted — copy MCP config into your IDE.
+            </p>
           </div>
 
-          {/* ─── Manifest JSON ─── */}
+          {/* Raw manifest */}
           <details className="text-sm">
-            <summary className="cursor-pointer text-on-surface-variant hover:text-on-surface">
-              Raw webmcp.json manifest
-            </summary>
+            <summary className="cursor-pointer text-on-surface-variant hover:text-on-surface">Raw manifest JSON</summary>
             <pre className="mt-2 rounded-lg bg-surface-container p-4 text-xs overflow-auto max-h-64">
               {JSON.stringify(result.manifest, null, 2)}
             </pre>
           </details>
-
-          {/* ─── Deploy instructions ─── */}
-          <div className="glass-panel rounded-lg p-4 text-sm text-on-surface-variant">
-            <strong>Deploy steps:</strong>
-            <ol className="mt-2 list-decimal pl-5 space-y-1">
-              <li>Upload <code>webmcp-server.ts</code> to your Lightsail instance</li>
-              <li>Install: <code>npm init -y && npm i tsx</code></li>
-              <li>Run: <code>PORT=3002 npx tsx webmcp-server.ts</code></li>
-              <li>Copy the MCP config above into your IDE settings (Claude/Cursor/Kiro)</li>
-              <li>Your agent will auto-discover tools via JSON-RPC</li>
-            </ol>
-          </div>
         </div>
       )}
     </div>
