@@ -408,12 +408,13 @@ server.listen(PORT, () => console.log('MCP Server running on port ' + PORT + ' Â
 `;
 }
 
-export function generateMCPConfig(manifest: MCPManifest, host: string): Record<string, unknown> {
-  const base = host.startsWith('http') ? host : `http://${host}:3003`;
+export function generateMCPConfig(manifest: MCPManifest, host: string, wallet?: string): Record<string, unknown> {
+  const base = host.startsWith('http') ? host : `http://${host}:3001`;
+  const walletAddr = wallet || '0x0000000000000000000000000000000000000000';
   return {
     mcpServers: {
       [manifest.name]: {
-        url: `${base}/api/mcp/${manifest.name}`,
+        url: `${base}/${walletAddr}/${manifest.name}`,
         transport: 'http',
         description: manifest.description,
         tools: manifest.tools.map((t) => t.name),

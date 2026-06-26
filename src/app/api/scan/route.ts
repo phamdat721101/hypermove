@@ -8,10 +8,10 @@ export const dynamic = 'force-dynamic';
 const DEFAULT_HOST = process.env.MCP_HOST || 'localhost';
 
 export async function POST(req: NextRequest) {
-  let body: { url?: string; name?: string; host?: string };
+  let body: { url?: string; name?: string; host?: string; wallet?: string };
   try { body = await req.json(); } catch { return Response.json({ error: 'Invalid JSON' }, { status: 400 }); }
 
-  const { url, name, host } = body;
+  const { url, name, host, wallet } = body;
   if (!url || typeof url !== 'string') return Response.json({ error: 'Missing "url"' }, { status: 400 });
 
   let parsed: URL;
@@ -29,7 +29,7 @@ export async function POST(req: NextRequest) {
       scan: null,
       manifest: existing.manifest,
       serverCode: existing.serverCode,
-      mcpConfig: generateMCPConfig(existing.manifest as any, resolvedHost),
+      mcpConfig: generateMCPConfig(existing.manifest as any, resolvedHost, wallet),
       saved: { id: existing.id, slug: existing.slug, cached: true },
     });
   }
@@ -38,7 +38,7 @@ export async function POST(req: NextRequest) {
     const scanResult = await scanUrl(parsed.toString());
     const manifest = generateMCPManifest(scanResult, { name });
     const serverCode = emitMCPServer(manifest);
-    const mcpConfig = generateMCPConfig(manifest, resolvedHost);
+    const mcpConfig = generateMCPConfig(manifest, resolvedHost, wallet);
 
     // Save to DB
     const dbResult = await insertGeneratedMCP({

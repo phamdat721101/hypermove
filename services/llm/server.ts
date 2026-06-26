@@ -73,19 +73,29 @@ async function callLlm(content: string): Promise<string> {
 const server = createServer(async (req, res) => {
   // CORS
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
+  const url = req.url || '/';
+
   // Health
-  if (req.method === 'GET' && req.url === '/health') {
+  if (req.method === 'GET' && url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, provider: process.env.LLM_PROVIDER || 'bedrock' }));
     return;
   }
 
-  // POST /api/llm
-  if (req.method === 'POST') {
+  // Hosted MCP: GET /<wallet>/<slug> → manifest, POST /<wallet>/<slug> → JSON-RPC
+  const mcpMatch = url.match(/^\/([^/]+)\/([^/]+)\/?$/);
+  if (mcpMatch) {
+    const [, wallet, slug] = mcpMatch;
+    await handleHostedMcp(req, res, wallet!, slug!);
+    return;
+  }
+
+  // POST / → LLM analyze (existing)
+  if (req.method === 'POST' && (url === '/' || url === '/api/llm')) {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     let body: { content?: string };
@@ -114,8 +124,82 @@ const server = createServer(async (req, res) => {
     return;
   }
 
+  // POST /register → save MCP for hosted serving
+  if (req.method === 'POST' && url === '/register') {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    let body: { wallet?: string; slug?: string; manifest?: unknown };
+    try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+    if (!body.wallet || !body.slug || !body.manifest) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing wallet, slug, or manifest' })); return; }
+    mcpStore.set(`${body.wallet}/${body.slug}`, body.manifest);
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, url: `/${body.wallet}/${body.slug}` }));
+    return;
+  }
+
   res.writeHead(404); res.end('Not found');
 });
+
+// ─── In-memory MCP store (replace with DB for production) ────────────────────
+const mcpStore = new Map<string, unknown>();
+
+async function handleHostedMcp(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, wallet: string, slug: string) {
+  const key = `${wallet}/${slug}`;
+  const manifest = mcpStore.get(key) as { name?: string; version?: string; tools?: Array<{ name: string; description: string; inputSchema: unknown }> } | undefined;
+
+  if (!manifest) {
+    res.writeHead(404, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'MCP not found', path: `/${wallet}/${slug}` }));
+    return;
+  }
+
+  // GET → return manifest
+  if (req.method === 'GET') {
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify(manifest, null, 2));
+    return;
+  }
+
+  // POST → JSON-RPC
+  if (req.method === 'POST') {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    let body: { jsonrpc: string; id: any; method: string; params?: any };
+    try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
+      return;
+    }
+
+    const tools = manifest.tools || [];
+    let result: unknown;
+    switch (body.method) {
+      case 'initialize':
+        result = { protocolVersion: '2024-11-05', serverInfo: { name: manifest.name, version: manifest.version || '0.1.0' }, capabilities: { tools: {} } };
+        break;
+      case 'tools/list':
+        result = { tools: tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) };
+        break;
+      case 'tools/call': {
+        const name = body.params?.name;
+        const args = body.params?.arguments ?? {};
+        const tool = tools.find(t => t.name === name);
+        if (!tool) { result = undefined; res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `Unknown tool: ${name}` } })); return; }
+        result = { content: [{ type: 'text', text: JSON.stringify({ tool: name, args, status: 'stub' }) }] };
+        break;
+      }
+      default:
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `Unknown method: ${body.method}` } }));
+        return;
+    }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
+    return;
+  }
+
+  res.writeHead(405); res.end('Method not allowed');
+}
 
 server.listen(PORT, () => {
   console.log(`LLM service running on port ${PORT}`);
