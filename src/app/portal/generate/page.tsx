@@ -13,7 +13,7 @@ type Step = 'input' | 'scanning' | 'result';
 
 export default function GeneratePage() {
   const [url, setUrl] = useState('');
-  const [wallet, setWallet] = useState('');
+  const [description, setDescription] = useState('');
   const [step, setStep] = useState<Step>('input');
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [error, setError] = useState('');
@@ -50,7 +50,7 @@ export default function GeneratePage() {
       const res = await fetch(`${llmApi}/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), wallet: wallet.trim() || undefined }),
+        body: JSON.stringify({ url: url.trim() }),
       });
       const data = await res.json();
       clearInterval(interval);
@@ -91,12 +91,15 @@ export default function GeneratePage() {
 
       <div className="mx-auto max-w-3xl px-4 pt-12 pb-20 sm:px-6">
         {/* Header */}
-        <div className="text-center mb-10">
-          <h1 className="font-display text-3xl font-bold text-white sm:text-4xl">
+        <div className="mb-10">
+          <span className="inline-block rounded-full border border-gray-700 bg-gray-800/50 px-3 py-1 text-xs font-mono text-gray-400 uppercase tracking-wider">
+            Portal · MCP Generator
+          </span>
+          <h1 className="mt-4 font-display text-4xl font-bold text-white sm:text-5xl">
             Generate MCP Server
           </h1>
-          <p className="mt-3 text-gray-400">
-            Paste a URL → AI crawls & analyzes → you get a deployable MCP server
+          <p className="mt-4 max-w-2xl text-gray-400">
+            Paste a URL → AI crawls & analyzes → you get a deployable MCP server + config for your AI agent.
           </p>
         </div>
 
@@ -114,8 +117,8 @@ export default function GeneratePage() {
                 />
               </div>
               <input
-                type="text" value={wallet} onChange={(e) => setWallet(e.target.value)}
-                placeholder="Wallet address 0x... (optional)"
+                type="text" value={description} onChange={(e) => setDescription(e.target.value)}
+                placeholder="Description (optional) — e.g. BTC yield aggregator"
                 className="w-full rounded-lg border border-gray-700 bg-gray-950 px-4 py-3 text-white placeholder:text-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition"
               />
               <button
@@ -204,6 +207,20 @@ export default function GeneratePage() {
                 <span>{copied === 'hosted' ? '✓ Copied!' : 'Host for me → Copy'}</span>
               </button>
             </div>
+            <p className="text-xs text-gray-500">
+              <strong className="text-gray-300">Self-host:</strong> Download ZIP, run on your server.{' '}
+              <strong className="text-gray-300">Host for me:</strong> Already hosted — copy MCP config into your IDE.
+            </p>
+
+            {/* Raw manifest */}
+            <details className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+              <summary className="px-5 py-3 text-sm font-medium text-gray-400 cursor-pointer hover:text-white transition-colors">
+                Raw manifest JSON
+              </summary>
+              <pre className="px-5 pb-4 text-xs text-gray-400 font-mono overflow-auto max-h-64">
+                {JSON.stringify(result.manifest, null, 2)}
+              </pre>
+            </details>
           </div>
         )}
       </div>

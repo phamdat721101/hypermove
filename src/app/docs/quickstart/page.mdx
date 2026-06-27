@@ -1,0 +1,90 @@
+export const metadata = { title: 'Quickstart — Your first paid agent call in 5 minutes', description: 'n-payment SDK only. Copy-paste five blocks.' };
+
+# Quickstart — 5 min
+
+> Goal: a running paywall and an agent that pays $0.01 USDC to call it.
+> Built on [n-payment@0.29.1](https://www.npmjs.com/package/n-payment) — single peer dep on `viem`. Open-source · MIT.
+
+## Step 1 — Install (20 sec)
+
+```bash
+mkdir my-paid-agent && cd my-paid-agent
+npm init -y
+npm install n-payment viem hono
+```
+
+## Step 2 — Provider: paywall (90 sec)
+
+```ts
+// server.ts
+import { createPaywall } from 'n-payment/middleware';
+import { Hono } from 'hono';
+
+const app = new Hono();
+app.use('*', createPaywall({
+  payTo: process.env.PAY_TO as `0x${string}`,
+  chain: 'goat-mainnet',
+  asset: 'USDC',
+  routes: {
+    '/api/forecast': { priceMicroUsdc: 10_000n },   // $0.01
+  },
+}));
+app.get('/api/forecast', (c) => c.json({ city: 'Hanoi', temp: 31 }));
+export default app;
+```
+
+Verify the 402 contract:
+
+```bash
+curl -i http://localhost:3000/api/forecast
+# → HTTP/1.1 402 Payment Required
+# → WWW-Authenticate: x402-USDC realm="…", price="10000", chain="goat-mainnet"
+```
+
+## Step 3 — Consumer: pay (60 sec)
+
+```ts
+// agent.ts
+import { createPaymentClient } from 'n-payment';
+
+const client = createPaymentClient({
+  chains: ['goat-mainnet'],
+  ows: { wallet: 'my-agent' },
+  policy: { maxPerTransaction: 100_000n },
+});
+
+const res = await client.fetchWithPayment('http://localhost:3000/api/forecast');
+console.log(res.status, await res.json());
+// → 200 { city: 'Hanoi', temp: 31 }
+```
+
+The SDK handles the 402 → sign → retry round-trip in one call. Keys never leave the OWS vault.
+
+## Step 4 — Paid MCP server (60 sec)
+
+```ts
+// paid-mcp.ts
+import { createPaidMcpServer, paidTool } from 'n-payment/agent';
+
+const server = createPaidMcpServer({
+  name: 'MyAgentService',
+  payTo: '0xYourAddress',
+  chain: 'goat-mainnet',
+  tools: [
+    paidTool({
+      name: 'forecast',
+      description: 'Get weather forecast',
+      price: 10_000n,           // $0.01 USDC
+      handler: async ({ city }) => ({ city, temp: 22 }),
+    }),
+  ],
+});
+await server.listen(3000);
+```
+
+## You're done
+
+- ✅ Real `HTTP 402` paywall via `n-payment/middleware`
+- ✅ `fetchWithPayment()` that pays $0.01 USDC
+- ✅ Vault-bound signing — your agent never touches a private key
+- ✅ 27 chains · 14 protocols — see [n-payment docs](/docs/n-payment)

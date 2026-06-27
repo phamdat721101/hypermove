@@ -4,28 +4,69 @@ import Link from 'next/link';
 import { useState } from 'react';
 import { Zap, ArrowRight, Shield, Cpu, RefreshCcw, Terminal, Layers, CheckCircle } from 'lucide-react';
 
+const tabs = [
+  { id: 'declarative', label: 'Declarative · 3 lines', desc: 'Zero JS framework lock-in.', code: `<form data-tool-name="payment.send"
+      data-tool-description="Send USDC to an Ethereum address">
+  <input name="to" data-tool-format="address" required />
+  <input name="amount" type="number" required />
+  <button>Send</button>
+</form>
+
+<script type="module">
+  import { initWeb3WebMCP } from 'https://esm.sh/@phamnim/web3-webmcp';
+  await initWeb3WebMCP({ adapter: 'wagmi' });
+</script>` },
+  { id: 'imperative', label: 'Imperative · 5 lines', desc: 'Full type checking.', code: `import { initWeb3WebMCP, registerWeb3Tool, primitives } from '@phamnim/web3-webmcp';
+import { createPaymentClient } from 'n-payment';
+
+const client = createPaymentClient({ chains: ['goat-mainnet'], ows: { wallet: 'my-agent' } });
+await initWeb3WebMCP({ adapter: 'wagmi', paymentClient: client });
+registerWeb3Tool({
+  ...primitives.payment.x402,
+  monetize: { priceMicroUsdc: 1000n, payTo: '0xYourAddress', chainId: 2345 },
+});` },
+  { id: 'modeB', label: 'Mode B · 1 line', desc: 'We host the MCP proxy.', code: `<!-- Add to your <head>. That's literally the entire integration. -->
+<script src="https://hypermove.dev/h/your-domain.com/webmcp.js" defer></script>` },
+];
+
+function CodeTabs() {
+  const [active, setActive] = useState('declarative');
+  const tab = tabs.find((t) => t.id === active)!;
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/40 overflow-hidden">
+      <div className="flex border-b border-gray-800">
+        {tabs.map((t) => (
+          <button key={t.id} onClick={() => setActive(t.id)}
+            className={`flex-1 px-4 py-3 text-xs font-medium transition-colors ${active === t.id ? 'text-indigo-400 bg-gray-800/50 border-b-2 border-indigo-500' : 'text-gray-500 hover:text-gray-300'}`}>
+            {t.label}
+          </button>
+        ))}
+      </div>
+      <div className="p-5">
+        <p className="text-xs text-gray-500 mb-3">{tab.desc}</p>
+        <pre className="text-xs text-gray-400 font-mono overflow-auto max-h-48">{tab.code}</pre>
+      </div>
+    </div>
+  );
+}
+
 export default function HomePage() {
-  const [terminalLines, setTerminalLines] = useState<string[]>([]);
+  const [terminalLines, setTerminalLines] = useState<Array<{ label: string; detail?: string; kind: string }>>([]);
   const [terminalState, setTerminalState] = useState<'idle' | 'running' | 'done'>('idle');
 
   const runDemo = () => {
     if (terminalState !== 'idle') return;
     setTerminalState('running');
     setTerminalLines([]);
-    const lines = [
-      '$ hypermove scan https://yield.goat.network',
-      '📡 Crawling HTML + JS bundles...',
-      '⚙ Parsing page structure & content...',
-      '🤖 AI analyzing actions & tools...',
-      '✔ 9 tools detected (deposit, stake, lend, borrow...)',
-      '✔ MCP Server generated!',
-      '🚀 Hosted at https://hypermove.duckdns.org/0x.../yield-goat-network-mcp',
-    ];
-    let i = 0;
-    const interval = setInterval(() => {
-      if (i < lines.length) { setTerminalLines((p) => [...p, lines[i]]); i++; }
-      else { clearInterval(interval); setTerminalState('done'); }
-    }, 600);
+    const src = new EventSource('/api/agent');
+    src.addEventListener('frame', (ev: MessageEvent) => {
+      try {
+        const frame = JSON.parse(ev.data);
+        setTerminalLines((prev) => [...prev, frame]);
+      } catch {}
+    });
+    src.addEventListener('end', () => { setTerminalState('done'); src.close(); });
+    src.addEventListener('error', () => { setTerminalState('done'); src.close(); });
   };
 
   return (
@@ -36,16 +77,16 @@ export default function HomePage() {
       <div className="mx-auto max-w-7xl px-4 pt-16 pb-20 sm:px-6 lg:px-8 text-center">
         <span className="inline-flex items-center space-x-1.5 rounded-full bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-400 border border-indigo-500/20">
           <Zap className="h-3.5 w-3.5" />
-          <span>Powered by AI · Works with Claude, Cursor, Kiro</span>
+          <span>n-payment v0.29.1 · open-source · MIT</span>
         </span>
         <h1 className="mt-4 font-display text-5xl font-extrabold tracking-tight text-white sm:text-6xl md:text-7xl">
-          Turn Any Website Into An <br />
+          Make any web3 dApp <br />
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
-            AI-Agent Tool
+            agent-callable in 3 lines of HTML.
           </span>
         </h1>
         <p className="mx-auto mt-6 max-w-3xl text-lg text-gray-400 leading-relaxed">
-          Paste a URL. Our AI crawls the page, detects every action, and generates an MCP server — in seconds. Your AI agent connects immediately.
+          <code className="font-mono text-indigo-400">hypermove.dev</code> is the single destination where any web3 dApp becomes agent-callable and starts earning USDC per agent call in five minutes. The homepage IS the demo — watch an AI agent pay the page $0.01 in real time.
         </p>
 
         <div className="mt-10 flex flex-wrap justify-center gap-4">
@@ -60,34 +101,84 @@ export default function HomePage() {
         </div>
       </div>
 
+      {/* Stats */}
+      <div className="mx-auto max-w-7xl px-4 pb-16 sm:px-6 lg:px-8">
+        <div className="grid grid-cols-3 gap-8 max-w-2xl mx-auto text-center">
+          <div>
+            <p className="font-mono text-3xl font-bold text-indigo-400">27</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider mt-1">Chains</p>
+          </div>
+          <div>
+            <p className="font-mono text-3xl font-bold text-indigo-400">14</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider mt-1">Protocols</p>
+          </div>
+          <div>
+            <p className="font-mono text-3xl font-bold text-indigo-400">5 min</p>
+            <p className="text-xs text-gray-500 uppercase tracking-wider mt-1">To first paid call</p>
+          </div>
+        </div>
+      </div>
+
       {/* Terminal Demo */}
       <div className="mx-auto max-w-4xl px-4 pb-20">
         <div className="rounded-xl border border-gray-800 bg-gray-950 overflow-hidden shadow-2xl shadow-indigo-500/5">
+          {/* Terminal header */}
           <div className="flex items-center justify-between border-b border-gray-800 px-4 py-3">
-            <div className="flex space-x-2">
-              <div className="h-3 w-3 rounded-full bg-red-500/70" />
-              <div className="h-3 w-3 rounded-full bg-yellow-500/70" />
-              <div className="h-3 w-3 rounded-full bg-green-500/70" />
+            <div className="flex items-center space-x-3">
+              <div className="flex space-x-2">
+                <div className="h-3 w-3 rounded-full bg-red-500/70" />
+                <div className="h-3 w-3 rounded-full bg-yellow-500/70" />
+                <div className="h-3 w-3 rounded-full bg-green-500/70" />
+              </div>
+              <span className="text-xs text-gray-400 font-mono uppercase tracking-wider">agent.sh · live demo</span>
             </div>
-            <span className="text-xs text-gray-500 font-mono">terminal</span>
+            <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+              terminalState === 'done' ? 'border-green-500/40 text-green-400' : 
+              terminalState === 'running' ? 'border-indigo-500/40 text-indigo-400' : 
+              'border-gray-600 text-gray-400'
+            }`}>
+              {terminalState === 'done' ? '✓ PAID' : terminalState === 'running' ? 'STREAMING' : 'READY'}
+            </span>
+          </div>
+
+          {/* Terminal body */}
+          <div className="p-5 font-mono text-sm min-h-[280px] max-h-[320px] overflow-y-auto">
+            <p className="text-gray-500">
+              <span className="text-green-400">~</span> <span className="text-indigo-400">$</span> agent run --target hypermove.dev
+            </p>
+            {terminalLines.length > 0 && (
+              <div className="mt-3 flex flex-col gap-1.5">
+                {terminalLines.map((frame, i) => (
+                  <div key={i}>
+                    <p className={`${
+                      frame.kind === 'paywall.200' || frame.kind === 'done' ? 'text-green-400' :
+                      frame.kind === 'paywall.402' ? 'text-yellow-400' :
+                      frame.kind === 'revenue.tick' ? 'text-emerald-400' :
+                      'text-gray-300'
+                    }`}>
+                      <span className="text-indigo-400">›</span> {frame.label}
+                    </p>
+                    {frame.detail && <p className="ml-4 text-gray-600 text-xs">{frame.detail}</p>}
+                  </div>
+                ))}
+              </div>
+            )}
+            {terminalState === 'running' && <span className="inline-block w-2 h-4 bg-indigo-400 animate-pulse mt-2" />}
+          </div>
+
+          {/* Terminal footer */}
+          <div className="flex items-center justify-between border-t border-gray-800 px-4 py-3">
+            <div className="text-xs text-gray-500 font-mono uppercase tracking-wider">
+              Revenue ticker <span className="text-green-400 text-lg font-bold ml-2">${terminalState === 'done' ? '0.01' : '0.00'}</span>
+              <span className="ml-2">· {terminalState === 'done' ? '1' : '0'} calls</span>
+            </div>
             <button
               onClick={terminalState === 'idle' ? runDemo : () => { setTerminalLines([]); setTerminalState('idle'); }}
-              className="flex items-center space-x-1 text-xs text-gray-400 hover:text-white transition-colors"
+              disabled={terminalState === 'running'}
+              className="rounded-lg border border-gray-700 px-4 py-1.5 text-xs font-medium text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-50 transition-colors"
             >
-              <Terminal className="h-3.5 w-3.5" />
-              <span>{terminalState === 'idle' ? 'Run demo' : terminalState === 'running' ? 'Running...' : 'Reset'}</span>
+              {terminalState === 'done' ? '↻ Replay' : terminalState === 'running' ? 'Running…' : '▶ Run agent'}
             </button>
-          </div>
-          <div className="p-5 font-mono text-sm min-h-[240px]">
-            {terminalLines.length === 0 && (
-              <p className="text-gray-600">Click &quot;Run demo&quot; to see HyperMove in action...</p>
-            )}
-            {terminalLines.map((line, i) => (
-              <p key={i} className={`${line.startsWith('$') ? 'text-indigo-400' : line.startsWith('✔') || line.startsWith('🚀') ? 'text-green-400' : 'text-gray-400'} leading-7`}>
-                {line}
-              </p>
-            ))}
-            {terminalState === 'running' && <span className="inline-block w-2 h-4 bg-indigo-400 animate-pulse" />}
           </div>
         </div>
       </div>
@@ -130,14 +221,12 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Final CTA */}
-      <div className="mx-auto max-w-3xl px-4 pb-24 text-center">
-        <h2 className="font-display text-3xl font-bold text-white mb-4">Ready to make your site agent-callable?</h2>
-        <Link href="/portal/generate" className="inline-flex items-center space-x-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-8 py-3.5 text-sm font-semibold text-white shadow-lg shadow-indigo-500/10 transition-all">
-          <span>Try it free — paste any URL</span>
-          <ArrowRight className="h-4 w-4" />
-        </Link>
+      {/* Code Examples — tabbed */}
+      <div className="mx-auto max-w-4xl px-4 pb-20 sm:px-6 lg:px-8">
+        <h2 className="text-center font-display text-3xl font-bold text-white mb-8">Three integrations. Pick one — start in five minutes.</h2>
+        <CodeTabs />
       </div>
+
     </div>
   );
 }

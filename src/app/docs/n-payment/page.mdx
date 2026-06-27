@@ -1,0 +1,110 @@
+export const metadata = { title: 'n-payment — Agent payments in 5 lines', description: 'fetchWithPayment(), createPaywall(), 27 chains, 14 protocols. MIT-licensed.' };
+
+# n-payment
+
+> **n-payment@0.29.1** on npm — collapses x402 + ERC-8004 + BTC lending + OWS signing into one call.
+> Single peer dependency: `viem`. Dual CJS/ESM output. MIT-licensed.
+
+## Three principles
+
+1. **Agents never touch a private key.** OWS vault holds keys and enforces per-tx policy.
+2. **BTC is the treasury; USDC is borrowed just-in-time.** Lock PegBTC → borrow → pay → repay → unlock.
+3. **Five lines, not five hundred.** `fetchWithPayment()` unifies the lifecycle.
+
+## Consumer — fetchWithPayment()
+
+```ts
+// agent.ts
+import { createPaymentClient } from 'n-payment';
+
+const client = createPaymentClient({
+  chains: ['goat-mainnet', 'base-mainnet'],
+  ows: { wallet: 'my-agent' },
+  policy: {
+    maxPerTransaction: 100_000n,    // $0.10 cap per call
+    maxPerDay: 10_000_000n,         // $10.00 daily cap
+    treasury: 'BTC',                // PegBTC-collateralized
+    rateLimit: { maxRequests: 100, windowMs: 60_000 },
+  },
+});
+
+const res = await client.fetchWithPayment('https://hypermove.dev/api/paid-endpoint');
+console.log(await res.json());      // 200 OK, paid in ~1.2s
+```
+
+Under the hood:
+
+1. GET the target URL → server returns HTTP 402 + WWW-Authenticate: x402-USDC.
+2. Vault checks policy (spend cap, chain allowlist, token allowlist).
+3. If treasury: 'BTC', the lending adapter locks PegBTC + borrows the exact USDC.
+4. EIP-3009 authorize signature is produced inside the OWS vault.
+5. The client retries with X-Payment header → server returns 200.
+
+## Provider — createPaywall()
+
+```ts
+// server.ts
+import { createPaywall } from 'n-payment/middleware';
+import { Hono } from 'hono';
+
+const app = new Hono();
+app.use('*', createPaywall({
+  payTo: '0xYourAddress',
+  chain: 'goat-mainnet',
+  asset: 'USDC',
+  routes: {
+    '/api/paid-endpoint': { priceMicroUsdc: 10_000n },  // $0.01/call
+  },
+}));
+app.get('/api/paid-endpoint', (c) => c.json({ ok: true }));
+export default app;
+```
+
+One middleware call. Works with Express, Hono, Fastify, or raw fetch.
+
+## Paid MCP Server
+
+```ts
+// paid-mcp-server.ts
+import { createPaidMcpServer, paidTool } from 'n-payment/agent';
+
+const server = createPaidMcpServer({
+  name: 'MyAgentService',
+  payTo: '0xYourAddress',
+  chain: 'goat-mainnet',
+  tools: [
+    paidTool({
+      name: 'forecast',
+      description: 'Get weather forecast',
+      price: 10_000n,
+      handler: async ({ city }) => ({ city, temp: 22 }),
+    }),
+  ],
+});
+await server.listen(3000);
+```
+
+## 14-protocol matrix
+
+| Protocol | Coverage | Chains |
+|---|---|---|
+| x402 | HTTP 402 handshake | GOAT, Base, Arb, Optimism |
+| EIP-3009 | Authorized USDC transfer | Base, Arb, Polygon |
+| MPP | Multi-Party split | GOAT, Base |
+| Stellar Channels | Sub-cent micropayments | Stellar |
+| Wormhole NTT | Native Token Transfers | Base, Solana, Sui |
+| Circle Gateway | USDC mint/burn | Base, Solana |
+| RLUSD | Ripple USD stablecoin | XRPL, Base |
+| XRPL x402 | XRPL-native MPT paywall | XRPL |
+| ERC-8004 | Agent identity + reputation | Base, Celo |
+| Aave V3 GHO | Idle USDC treasury yield | Base, Arb |
+| OWS Vault | Vault-bound signing | all 27 chains |
+| PegBTC Lending | JIT USDC from BTC | GOAT |
+| Flare FXRP | Bridged XRP gas + asset | Flare |
+| Initia VIP | Validator-incentive settle | Initia |
+
+## Links
+
+- [npm · n-payment](https://www.npmjs.com/package/n-payment)
+- [GitHub](https://github.com/phamdat721101)
+- [Book a demo](https://calendly.com/phamdat721101/30min)

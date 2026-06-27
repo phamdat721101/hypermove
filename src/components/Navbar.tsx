@@ -2,12 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutGrid, Zap, FileText, BookOpen, CreditCard } from 'lucide-react';
+import { LayoutGrid, Zap, BookOpen, CreditCard } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Product', icon: Zap },
-  { href: '/portal/generate', label: 'Portal', icon: LayoutGrid },
-  { href: '/portal', label: 'Catalog', icon: FileText },
+  { href: '/portal', label: 'Portal', icon: LayoutGrid },
   { href: '/docs/quickstart', label: 'Docs', icon: BookOpen },
   { href: '/pricing', label: 'Pricing', icon: CreditCard },
 ];
@@ -53,7 +52,7 @@ export default function Navbar() {
           href="/portal/generate"
           className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-500 transition-colors"
         >
-          Generate →
+          Start For Free
         </Link>
       </div>
     </header>
