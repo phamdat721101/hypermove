@@ -197,7 +197,6 @@ const server = createServer(async (req, res) => {
       // 3. Generate manifest
       const hostname = new URL(body.url).hostname.replace(/^www\./, '');
       const slug = `${hostname}-mcp`.replace(/[^a-z0-9-]/g, '-');
-      const baseHost = body.host || `http://localhost:${PORT}`;
       const walletAddr = body.wallet || '0x0000000000000000000000000000000000000000';
       const manifest = {
         name: slug,
@@ -209,10 +208,11 @@ const server = createServer(async (req, res) => {
       };
 
       // 4. Generate MCP config
+      const mcpBaseUrl = process.env.MCP_HOST_URL || `http://localhost:${PORT}`;
       const mcpConfig = {
         mcpServers: {
           [slug]: {
-            url: `${baseHost}/${walletAddr}/${slug}`,
+            url: `${mcpBaseUrl}/${walletAddr}/${slug}`,
             transport: 'http',
             description: manifest.description,
             tools: cleanTools.map(t => t.name),
