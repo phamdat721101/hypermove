@@ -1,41 +1,64 @@
 'use client';
 
 import { useState } from 'react';
+import { Globe, Sparkles, CheckCircle2, Copy, Check, Download, RefreshCw, Terminal } from 'lucide-react';
 
 interface ScanResponse {
-  scan: { url: string; durationMs: number; toolCount: number } | null;
-  manifest: { name: string; version: string; description: string; tools: Array<{ name: string; description: string; inputSchema: unknown }>; sourceUrl: string };
-  serverCode: string;
+  manifest: { name: string; description: string; tools: Array<{ name: string; description: string; inputSchema: unknown }>; sourceUrl: string };
   mcpConfig: Record<string, unknown>;
-  saved?: { id?: number; slug?: string; cached?: boolean };
+  crawlData?: { url: string; title: string; toolCount: number };
 }
 
 type Step = 'input' | 'scanning' | 'result';
 
 export default function GeneratePage() {
   const [url, setUrl] = useState('');
-  const [host, setHost] = useState('');
+  const [wallet, setWallet] = useState('');
   const [step, setStep] = useState<Step>('input');
   const [result, setResult] = useState<ScanResponse | null>(null);
   const [error, setError] = useState('');
   const [copied, setCopied] = useState('');
+  const [scanProgress, setScanProgress] = useState(0);
+  const [scanStep, setScanStep] = useState('');
+
+  const scanSteps = [
+    'Crawling target page...',
+    'Fetching JS bundles...',
+    'Parsing page structure...',
+    'AI analyzing content...',
+    'Generating MCP tools...',
+    'Building server bundle...',
+  ];
 
   async function handleScan() {
     if (!url.trim()) return;
     setError('');
     setStep('scanning');
+    setScanProgress(0);
+
+    // Animate progress
+    let progress = 0;
+    const interval = setInterval(() => {
+      progress += Math.random() * 12 + 3;
+      if (progress > 95) progress = 95;
+      setScanProgress(progress);
+      setScanStep(scanSteps[Math.min(Math.floor((progress / 100) * scanSteps.length), scanSteps.length - 1)]);
+    }, 500);
+
     try {
-      const llmApi = process.env.NEXT_PUBLIC_LLM_API_URL || 'http://localhost:3001';
+      const llmApi = process.env.NEXT_PUBLIC_LLM_API_URL || 'https://hypermove.duckdns.org';
       const res = await fetch(`${llmApi}/scan`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), host: host.trim() || undefined, wallet: undefined }),
+        body: JSON.stringify({ url: url.trim(), wallet: wallet.trim() || undefined }),
       });
       const data = await res.json();
+      clearInterval(interval);
+      setScanProgress(100);
       if (!res.ok) { setError(data.error || 'Scan failed'); setStep('input'); return; }
-      setResult(data);
-      setStep('result');
+      setTimeout(() => { setResult(data); setStep('result'); }, 400);
     } catch (e) {
+      clearInterval(interval);
       setError((e as Error).message);
       setStep('input');
     }
@@ -52,7 +75,7 @@ export default function GeneratePage() {
     const res = await fetch('/api/download', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url: result.manifest.sourceUrl, manifest: result.manifest, serverCode: result.serverCode, host: host.trim() || undefined }),
+      body: JSON.stringify({ url: result.manifest.sourceUrl, manifest: result.manifest }),
     });
     if (!res.ok) return;
     const blob = await res.blob();
@@ -63,106 +86,127 @@ export default function GeneratePage() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl px-4 py-16 md:px-8 md:py-20">
-      <header className="mb-8">
-        <h1 className="text-3xl font-bold tracking-tight text-on-surface">
-          Generate MCP Server <span className="gradient-text-purple-cyan">from any URL</span>
-        </h1>
-        <p className="mt-2 text-on-surface-variant">
-          Paste URL → we crawl everything → AI analyzes → you get an MCP server.
-        </p>
-      </header>
+    <div className="relative min-h-[calc(100vh-64px)]">
+      <div className="absolute top-0 left-0 w-full h-[400px] bg-[radial-gradient(ellipse_at_top,_var(--tw-gradient-stops))] from-indigo-900/15 via-transparent to-transparent pointer-events-none" />
 
-      {/* Input */}
-      {step === 'input' && (
-        <div className="space-y-4">
-          <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && handleScan()}
-            placeholder="https://yield.goat.network" className="w-full rounded-lg border border-outline-variant/40 bg-surface-container px-4 py-3 text-on-surface placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none" />
-          <input type="text" value={host} onChange={(e) => setHost(e.target.value)}
-            placeholder="Server IP/domain for MCP config (leave empty for hosted)"
-            className="w-full rounded-lg border border-outline-variant/40 bg-surface-container px-4 py-3 text-on-surface placeholder:text-on-surface-variant/50 focus:border-primary focus:outline-none" />
-          <button onClick={handleScan} disabled={!url.trim()} className="w-full rounded-lg bg-primary px-6 py-3 font-medium text-on-primary disabled:opacity-50">
-            Scan & Generate
-          </button>
-          {error && <p className="text-sm text-error">{error}</p>}
+      <div className="mx-auto max-w-3xl px-4 pt-12 pb-20 sm:px-6">
+        {/* Header */}
+        <div className="text-center mb-10">
+          <h1 className="font-display text-3xl font-bold text-white sm:text-4xl">
+            Generate MCP Server
+          </h1>
+          <p className="mt-3 text-gray-400">
+            Paste a URL → AI crawls & analyzes → you get a deployable MCP server
+          </p>
         </div>
-      )}
 
-      {/* Scanning */}
-      {step === 'scanning' && (
-        <div className="flex items-center gap-3 py-12">
-          <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-          <span className="text-on-surface-variant">Crawling & analyzing {url}...</span>
-        </div>
-      )}
-
-      {/* Result */}
-      {step === 'result' && result && (
-        <div className="space-y-6">
-          {/* Summary */}
-          <div className="glass-panel rounded-lg p-4 flex items-center justify-between">
-            <span className="text-sm text-on-surface-variant">
-              {result.scan?.durationMs || 0}ms · {result.manifest.tools.length} tools
-              {result.saved?.cached && ' · (cached)'}
-            </span>
-            <button onClick={() => { setStep('input'); setResult(null); }} className="text-xs text-secondary hover:underline">Reset</button>
-          </div>
-
-          {/* Tools */}
-          <div>
-            <h2 className="text-lg font-semibold text-on-surface mb-2">Detected Tools ({result.manifest.tools.length})</h2>
-            {result.manifest.tools.length === 0 ? (
-              <p className="text-on-surface-variant">No tools detected.</p>
-            ) : (
-              <ul className="space-y-1">
-                {result.manifest.tools.map((t) => (
-                  <li key={t.name} className="glass-panel rounded px-3 py-2">
-                    <span className="font-mono text-sm text-primary">{t.name}</span>
-                    <p className="mt-0.5 text-xs text-on-surface-variant">{t.description}</p>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* MCP Config */}
-          <div>
-            <h2 className="text-lg font-semibold text-on-surface mb-2">📋 MCP Config</h2>
-            <pre className="rounded-lg bg-surface-container p-4 text-xs text-on-surface overflow-auto max-h-48">
-              {JSON.stringify(result.mcpConfig, null, 2)}
-            </pre>
-            <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'config')}
-              className="mt-2 rounded border border-primary px-4 py-1.5 text-sm text-primary hover:bg-primary/10">
-              {copied === 'config' ? '✓ Copied!' : 'Copy Config'}
-            </button>
-          </div>
-
-          {/* Deploy options */}
-          <div className="space-y-3">
-            <h2 className="text-lg font-semibold text-on-surface">🚀 Deploy</h2>
-            <div className="flex gap-3 flex-wrap">
-              <button onClick={handleDownloadZip} className="rounded-lg bg-secondary px-5 py-2.5 text-sm font-medium text-on-primary hover:opacity-90">
-                Download ZIP (self-host)
-              </button>
-              <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'hosted')}
-                className="rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-on-primary hover:opacity-90">
-                {copied === 'hosted' ? '✓ Copied!' : 'Host for me → Copy Config'}
+        {/* Input State */}
+        {step === 'input' && (
+          <div className="space-y-4">
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-6 space-y-4">
+              <div className="relative">
+                <Globe className="absolute left-3.5 top-3 h-5 w-5 text-gray-500" />
+                <input
+                  type="url" value={url} onChange={(e) => setUrl(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleScan()}
+                  placeholder="https://yield.goat.network"
+                  className="w-full rounded-lg border border-gray-700 bg-gray-950 pl-11 pr-4 py-3 text-white placeholder:text-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition"
+                />
+              </div>
+              <input
+                type="text" value={wallet} onChange={(e) => setWallet(e.target.value)}
+                placeholder="Wallet address 0x... (optional)"
+                className="w-full rounded-lg border border-gray-700 bg-gray-950 px-4 py-3 text-white placeholder:text-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition"
+              />
+              <button
+                onClick={handleScan} disabled={!url.trim()}
+                className="w-full flex items-center justify-center space-x-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 px-6 py-3.5 text-sm font-semibold text-white transition-all shadow-lg shadow-indigo-500/10"
+              >
+                <Sparkles className="h-4 w-4" />
+                <span>Scan & Generate</span>
               </button>
             </div>
-            <p className="text-xs text-on-surface-variant">
-              <strong>Self-host:</strong> Download ZIP, run on your server. <strong>Host for me:</strong> Already hosted — copy MCP config into your IDE.
+            {error && <p className="text-sm text-red-400 text-center">{error}</p>}
+            <p className="text-center text-xs text-gray-600">
+              Try: yield.goat.network · app.uniswap.org · aave.com
             </p>
           </div>
+        )}
 
-          {/* Raw manifest */}
-          <details className="text-sm">
-            <summary className="cursor-pointer text-on-surface-variant hover:text-on-surface">Raw manifest JSON</summary>
-            <pre className="mt-2 rounded-lg bg-surface-container p-4 text-xs overflow-auto max-h-64">
-              {JSON.stringify(result.manifest, null, 2)}
-            </pre>
-          </details>
-        </div>
-      )}
+        {/* Scanning State */}
+        {step === 'scanning' && (
+          <div className="rounded-xl border border-gray-800 bg-gray-900/50 p-8 space-y-6">
+            <div className="text-center">
+              <Sparkles className="mx-auto h-8 w-8 text-indigo-400 animate-pulse" />
+              <p className="mt-3 text-sm text-gray-400">{scanStep}</p>
+            </div>
+            <div className="w-full h-1.5 bg-gray-800 rounded-full overflow-hidden">
+              <div className="h-full bg-gradient-to-r from-indigo-500 to-purple-500 rounded-full transition-all duration-300" style={{ width: `${scanProgress}%` }} />
+            </div>
+            <p className="text-center text-xs text-gray-600 font-mono">{Math.round(scanProgress)}%</p>
+          </div>
+        )}
+
+        {/* Result State */}
+        {step === 'result' && result && (
+          <div className="space-y-6">
+            {/* Success banner */}
+            <div className="flex items-center justify-between rounded-xl border border-green-800/40 bg-green-900/10 px-5 py-3">
+              <div className="flex items-center space-x-2">
+                <CheckCircle2 className="h-5 w-5 text-green-400" />
+                <span className="text-sm text-green-300 font-medium">
+                  {result.manifest.tools.length} tools detected
+                </span>
+              </div>
+              <button onClick={() => { setStep('input'); setResult(null); }} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-white">
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>New scan</span>
+              </button>
+            </div>
+
+            {/* Tools list */}
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+              <div className="px-5 py-3 border-b border-gray-800">
+                <h2 className="text-sm font-semibold text-white">Detected Tools</h2>
+              </div>
+              <div className="divide-y divide-gray-800/60">
+                {result.manifest.tools.map((t) => (
+                  <div key={t.name} className="px-5 py-3 hover:bg-gray-800/20 transition-colors">
+                    <span className="font-mono text-sm text-indigo-400">{t.name}</span>
+                    <p className="mt-0.5 text-xs text-gray-500">{t.description}</p>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* MCP Config */}
+            <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+                <h2 className="text-sm font-semibold text-white">MCP Config</h2>
+                <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'config')} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+                  {copied === 'config' ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-3.5 w-3.5" />}
+                  <span>{copied === 'config' ? 'Copied!' : 'Copy'}</span>
+                </button>
+              </div>
+              <pre className="p-5 text-xs text-gray-300 font-mono overflow-auto max-h-48">
+                {JSON.stringify(result.mcpConfig, null, 2)}
+              </pre>
+            </div>
+
+            {/* Deploy buttons */}
+            <div className="grid sm:grid-cols-2 gap-3">
+              <button onClick={handleDownloadZip} className="flex items-center justify-center space-x-2 rounded-lg border border-gray-700 bg-gray-900/60 hover:bg-gray-800 px-5 py-3 text-sm font-medium text-white transition-colors">
+                <Download className="h-4 w-4" />
+                <span>Download ZIP</span>
+              </button>
+              <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'hosted')} className="flex items-center justify-center space-x-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-5 py-3 text-sm font-medium text-white transition-all shadow-md shadow-indigo-500/10">
+                <Terminal className="h-4 w-4" />
+                <span>{copied === 'hosted' ? '✓ Copied!' : 'Host for me → Copy'}</span>
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
