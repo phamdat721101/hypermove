@@ -335,6 +335,48 @@ cmd_clean() {
   ok "removed: .next, out, node_modules, coverage, $LOG_DIR"
 }
 
+# Env vars that production *must* have set. Mirrors .env.example.
+PRODUCTION_ENVS=(DATABASE_URL LIVE_AGENT_MODE PAY_TO_ADDRESS PAYMENT_CHAIN PAYMENT_PRICE_MICRO_USDC AGENT_DAILY_BUDGET_USD)
+
+cmd_env_show() {
+  banner "env-show — values your deploy target needs"
+  [[ -f .env.local ]] || fatal ".env.local missing — run ./run.sh setup"
+  log "Copy/paste these into Vercel → Project Settings → Environment Variables (Production)"
+  echo
+  for var in "${PRODUCTION_ENVS[@]}"; do
+    val=$(grep -E "^${var}=" .env.local | cut -d'=' -f2- || true)
+    if [[ -n "$val" ]]; then
+      # Mask the password inside any postgres:// URL for the printout.
+      masked=$(echo "$val" | sed -E 's#(postgres(ql)?://[^:]+:)[^@]+(@)#\1********\3#')
+      printf "  %s%s%-26s%s = %s\n" "$BOLD" "$CYAN" "$var" "$RESET" "$masked"
+    else
+      printf "  %s%-26s%s = %s(unset)%s\n" "$DIM" "$var" "$RESET" "$YELLOW" "$RESET"
+    fi
+  done
+  echo
+  log "Or via the Vercel CLI:"
+  echo "    npm i -g vercel && vercel login && vercel link"
+  echo "    ./run.sh env-push-vercel"
+}
+
+cmd_env_push_vercel() {
+  banner "env-push-vercel — sync .env.local → Vercel production env"
+  have vercel || fatal "vercel CLI not installed — run: npm i -g vercel"
+  [[ -f .env.local ]] || fatal ".env.local missing"
+  [[ -d .vercel ]]    || fatal "project not linked — run: vercel link"
+  for var in "${PRODUCTION_ENVS[@]}"; do
+    val=$(grep -E "^${var}=" .env.local | cut -d'=' -f2-)
+    [[ -z "$val" ]] && { warn "skipping $var (empty in .env.local)"; continue; }
+    # Remove existing value first so the upsert doesn't prompt.
+    vercel env rm "$var" production --yes >/dev/null 2>&1 || true
+    printf '%s' "$val" | vercel env add "$var" production --sensitive
+    ok "pushed $var"
+  done
+  log "Triggering production redeploy …"
+  vercel --prod --yes
+  ok "deployed"
+}
+
 cmd_help() {
   cat <<'USAGE'
 hypermove-app · run.sh
@@ -354,6 +396,8 @@ Usage:
   ./run.sh docker-run   Run the Docker image on :3003
   ./run.sh ship         full pipeline: setup → test → build → smoke → report
   ./run.sh doctor       Check Node/pnpm/npm versions + env vars + ports
+  ./run.sh env-show     Print the env vars production needs (copy/paste to Vercel)
+  ./run.sh env-push-vercel  Sync .env.local → Vercel production env (needs vercel CLI)
   ./run.sh clean        Remove .next, node_modules, coverage, generated logs
   ./run.sh help         Show this usage
 
@@ -382,6 +426,8 @@ main() {
     docker-run)   cmd_docker_run  "$@" ;;
     ship)         cmd_ship        "$@" ;;
     doctor)       cmd_doctor      "$@" ;;
+    env-show)     cmd_env_show    "$@" ;;
+    env-push-vercel) cmd_env_push_vercel "$@" ;;
     clean)        cmd_clean       "$@" ;;
     help|-h|--help) cmd_help ;;
     *) cmd_help; fatal "unknown subcommand: $sub" ;;

@@ -82,7 +82,26 @@ When the Server Action returns `persist_failed`, the UI shows a hint code mapped
 vercel deploy
 ```
 
-Set `DATABASE_URL` + `LIVE_AGENT_MODE` in Vercel project env vars.
+**⚠ The fastest path to a `persist_failed` bug is forgetting to set `DATABASE_URL` (and friends) in Vercel.** `.env.local` is git-ignored and never reaches Vercel.
+
+Run `./run.sh env-show` to print the exact values you need to paste into **Vercel → Project Settings → Environment Variables (Production)**.
+
+Or, if you have the Vercel CLI logged in + linked:
+
+```bash
+./run.sh env-push-vercel    # sync .env.local → Vercel + redeploy
+```
+
+The required production variables (mirrored from `.env.example`):
+
+| Var | Source | Why |
+|---|---|---|
+| `DATABASE_URL`            | Supavisor pooler URL (see Registry section) | Server Action writes registry rows |
+| `LIVE_AGENT_MODE`         | `mock` or `real` | Toggles the homepage demo source |
+| `PAY_TO_ADDRESS`          | your 0x address | `/api/paid-endpoint` payee |
+| `PAYMENT_CHAIN`           | `base-sepolia` or `goat-mainnet` etc. | Settlement chain |
+| `PAYMENT_PRICE_MICRO_USDC`| `10000` ($0.01)  | Per-call price |
+| `AGENT_DAILY_BUDGET_USD`  | `5` | Caps the Anthropic gateway in real mode |
 
 ### Option B — Docker (any VPS)
 

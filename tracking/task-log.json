@@ -48,6 +48,7 @@
     { "id": "41", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "BundleRequestForm: useTransition + direct Server Action call",         "est_h": 0.3, "actual_h": 0.3, "status": "done" },
     { "id": "42", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "Drop /api/v1/register route + safeHeaders() for test-env tolerance",   "est_h": 0.2, "actual_h": 0.2, "status": "done" },
     { "id": "43", "sprint": "S2.2", "prd_refs": ["upgrade"], "title": "Tests + run.sh smoke updated to Server Action contract",               "est_h": 0.4, "actual_h": 0.3, "status": "done" },
-    { "id": "44", "sprint": "S2.2", "prd_refs": ["bugfix"],  "title": "Fix persist_failed: switch to Supavisor pooler (aws-1/ap-southeast-1) + hint classifier", "est_h": 0.6, "actual_h": 0.5, "status": "done" }
+    { "id": "44", "sprint": "S2.2", "prd_refs": ["bugfix"],  "title": "Fix persist_failed: switch to Supavisor pooler (aws-1/ap-southeast-1) + hint classifier", "est_h": 0.6, "actual_h": 0.5, "status": "done" },
+    { "id": "45", "sprint": "S2.2", "prd_refs": ["bugfix"],  "title": "Add env-show + env-push-vercel run.sh subcommands; document Vercel env step",           "est_h": 0.4, "actual_h": 0.3, "status": "done" }
   ]
 }
