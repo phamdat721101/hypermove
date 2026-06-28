@@ -11,7 +11,7 @@ interface ScanResponse {
 
 type Step = 'input' | 'scanning' | 'result';
 
-const clients = ['Kiro / Cursor', 'Claude Desktop', 'Continue', 'Windsurf'] as const;
+const clients = ['Kiro / Cursor', 'Claude Desktop', 'Windsurf'] as const;
 type Client = typeof clients[number];
 
 function McpConfigBlock({ mcpUrl, copied, onCopy }: { mcpUrl: string; copied: string; onCopy: (t: string, id: string) => void }) {
@@ -22,7 +22,6 @@ function McpConfigBlock({ mcpUrl, copied, onCopy }: { mcpUrl: string; copied: st
   const configs: Record<Client, string> = {
     'Kiro / Cursor': JSON.stringify({ mcpServers: { [name]: { url: mcpUrl } } }, null, 2),
     'Claude Desktop': JSON.stringify({ mcpServers: { [name]: { command: 'npx', args: ['-y', 'mcp-remote', mcpUrl] } } }, null, 2),
-    'Continue': JSON.stringify({ mcpServers: [{ name, transport: { type: 'http', url: mcpUrl } }] }, null, 2),
     'Windsurf': JSON.stringify({ mcpServers: { [name]: { command: 'npx', args: ['-y', 'mcp-remote', mcpUrl] } } }, null, 2),
   };
 
