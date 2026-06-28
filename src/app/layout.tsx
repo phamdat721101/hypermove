@@ -11,6 +11,7 @@ export const metadata: Metadata = {
     template: '%s · HyperMove',
   },
   description: 'Make any web3 dApp agent-callable in 3 lines of HTML. Monetize in 5 minutes with x402-USDC across 27 chains and 14 protocols. Open-source, MIT-licensed.',
+  icons: { icon: '/favicon.png', apple: '/favicon.png' },
   openGraph: {
     title: 'HyperMove — Agentic web3, in one <script>',
     description: 'n-payment SDK for AI agents that pay. Open-source, MIT-licensed.',
@@ -30,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <footer className="border-t border-gray-800 bg-gray-950/80">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
             <a href="https://www.npmjs.com/package/n-payment" target="_blank" rel="noreferrer" className="flex items-center space-x-3 rounded-lg bg-gray-800/60 px-4 py-2.5 hover:bg-gray-800 transition-colors">
-              <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-indigo-600 text-xs font-bold text-white">H</div>
+              <img src="/logo.png" alt="HyperMove" width={32} height={32} className="h-8 w-8 rounded-lg" />
               <div>
                 <p className="text-xs text-gray-400 uppercase tracking-wider">Open Source · MIT</p>
                 <p className="text-sm text-white">n-payment on npm — 27 chains, 14 protocols</p>

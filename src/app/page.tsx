@@ -75,10 +75,6 @@ export default function HomePage() {
 
       {/* Hero */}
       <div className="mx-auto max-w-7xl px-4 pt-16 pb-20 sm:px-6 lg:px-8 text-center">
-        <span className="inline-flex items-center space-x-1.5 rounded-full bg-indigo-500/10 px-3.5 py-1 text-xs font-semibold text-indigo-400 border border-indigo-500/20">
-          <Zap className="h-3.5 w-3.5" />
-          <span>n-payment v0.29.1 · open-source · MIT</span>
-        </span>
         <h1 className="mt-4 font-display text-5xl font-extrabold tracking-tight text-white sm:text-6xl md:text-7xl">
           Make any web3 dApp <br />
           <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400">
