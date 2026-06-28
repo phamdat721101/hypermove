@@ -3,8 +3,8 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "start": "tsx server.ts",
-    "dev": "tsx watch server.ts"
+    "start": "tsx --env-file=.env.local server.ts",
+    "dev": "tsx --env-file=.env.local watch server.ts"
   },
   "dependencies": {
     "tsx": "^4.7.0"

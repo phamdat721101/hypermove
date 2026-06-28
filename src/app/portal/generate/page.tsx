@@ -46,11 +46,32 @@ export default function GeneratePage() {
     }, 500);
 
     try {
-      const llmApi = process.env.NEXT_PUBLIC_LLM_API_URL || 'https://hypermove.duckdns.org';
-      const res = await fetch(`${llmApi}/scan`, {
+      // Env-driven config (no production-domain leaks):
+      //   NEXT_PUBLIC_LLM_API_URL   — where to POST /scan. Empty → use the local Next.js /api/scan route.
+      //   NEXT_PUBLIC_MCP_HOST_URL  — OPTIONAL explicit override for the MCP base URL embedded in the response.
+      //
+      // Default behavior: don't send body.host at all. The BE derives the host
+      // from the incoming request, so the MCP config URL matches whatever URL
+      // the FE used to reach the BE (truly self-configuring across envs).
+      //
+      // Localhost protection (defense in depth): if my browser is on localhost,
+      // a non-local LLM API would return MCP URLs unreachable from my local agent
+      // AND would leak whatever host the remote BE is configured for. So when
+      // running on localhost we IGNORE any non-local NEXT_PUBLIC_LLM_API_URL and
+      // force port :3001 on the same host the browser is using.
+      const rawLlmApi = (process.env.NEXT_PUBLIC_LLM_API_URL || '').replace(/\/+$/, '');
+      const isLocalHostname = (h: string) => /^(localhost|127\.|0\.0\.0\.0|\[?::1?\]?)$/i.test(h);
+      const browserOnLocalhost = typeof window !== 'undefined' && isLocalHostname(window.location.hostname);
+      const rawApiIsLocal = !rawLlmApi || /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[?::1?\]?)(?::|\/|$)/i.test(rawLlmApi);
+      const llmApi = browserOnLocalhost && !rawApiIsLocal
+        ? `${window.location.protocol}//${window.location.hostname}:3001`
+        : rawLlmApi;
+      const scanEndpoint = llmApi ? `${llmApi}/scan` : '/api/scan';
+      const hostOverride = (process.env.NEXT_PUBLIC_MCP_HOST_URL || '').replace(/\/+$/, '');
+      const res = await fetch(scanEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim() }),
+        body: JSON.stringify({ url: url.trim(), ...(hostOverride ? { host: hostOverride } : {}) }),
       });
       const data = await res.json();
       clearInterval(interval);

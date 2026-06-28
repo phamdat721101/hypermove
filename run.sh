@@ -165,6 +165,71 @@ cmd_dev() {
   exec $(pick_pm) dev
 }
 
+# ---------------------------------------------------------------------------
+# cmd_dev_full — local full-stack mode (FE + BE).
+#
+# Why this exists: project-root .env.local and services/llm/.env.local both
+# default to staging-against-prod values (production IP / duckdns domain).
+# This action is the single source of truth for "pure local mode": it boots
+# the BE and FE side-by-side and INJECTS local-only env overrides so the
+# generated MCP-config URL embeds http://localhost:3001 — not production.
+#
+# No files are modified; overrides live only in the spawned processes.
+# ---------------------------------------------------------------------------
+cmd_dev_full() {
+  [[ -d node_modules ]] || cmd_setup
+  ensure_env_local
+  ensure_dirs
+
+  local BE_PORT=3001
+  local FE_PORT="$APP_PORT"
+  local BE_LOG="$LOG_DIR/llm.log"
+  local BE_DIR="services/llm"
+
+  [[ -d "$BE_DIR" ]] || fatal "$BE_DIR not found"
+  [[ -d "$BE_DIR/node_modules" ]] || { log "installing BE deps (one-time)"; ( cd "$BE_DIR" && npm install --silent ); }
+
+  if port_busy "$BE_PORT"; then fatal "port $BE_PORT busy — free it before ./run.sh dev:full"; fi
+  if port_busy "$FE_PORT"; then fatal "port $FE_PORT busy — free it before ./run.sh dev:full"; fi
+
+  banner "dev:full — BE :$BE_PORT (services/llm) + FE :$FE_PORT (Next.js)"
+
+  # Start BE in background. No MCP_HOST_URL override needed — the BE now
+  # derives the public base URL from the request itself (Host header).
+  log "starting BE → $BE_LOG"
+  ( cd "$BE_DIR" && PORT="$BE_PORT" npm start ) \
+    >"$BE_LOG" 2>&1 &
+  local BE_PID=$!
+  echo "$BE_PID" >"$LOG_DIR/llm.pid"
+
+  # Clean teardown on Ctrl+C or normal exit.
+  cleanup_full() {
+    local pid; pid=$(cat "$LOG_DIR/llm.pid" 2>/dev/null || true)
+    if [[ -n "$pid" ]] && kill -0 "$pid" 2>/dev/null; then
+      log "stopping BE (pid $pid)"; kill "$pid" 2>/dev/null || true
+      sleep 0.3
+      kill -0 "$pid" 2>/dev/null && kill -9 "$pid" 2>/dev/null || true
+    fi
+    rm -f "$LOG_DIR/llm.pid"
+  }
+  trap cleanup_full EXIT INT TERM
+
+  if ! wait_for_url "http://localhost:$BE_PORT/health" 20; then
+    err "BE did not become healthy in 20s — last 20 log lines:"
+    tail -n 20 "$BE_LOG" | sed -E 's/(BEDROCK_API_KEY=)[^[:space:]]+/\1***REDACTED***/g; s/ABSKQm[A-Za-z0-9+/=]+/***REDACTED***/g' >&2
+    fatal "BE startup failed"
+  fi
+  ok "BE up on :$BE_PORT (pid $BE_PID)  ·  /health green"
+
+  # Run FE in the foreground. Only NEXT_PUBLIC_LLM_API_URL is set; the BE
+  # will infer the MCP base URL from the actual request the FE makes, so the
+  # config returned always points at http://localhost:$BE_PORT.
+  log "starting FE on :$FE_PORT  ·  open http://localhost:$FE_PORT  ·  Ctrl+C to stop both"
+  NEXT_PUBLIC_LLM_API_URL="http://localhost:$BE_PORT" \
+  PORT="$FE_PORT" \
+    $(pick_pm) dev
+}
+
 cmd_test() {
   [[ -d node_modules ]] || cmd_setup
   banner "test — vitest (S1 + S2 smoke)"
@@ -386,6 +451,8 @@ Single entry point for the full app lifecycle.
 Usage:
   ./run.sh setup        Install deps, scaffold .env.local, run doctor
   ./run.sh dev          Boot Next.js dev server on :3003 (zero-config mock mode)
+  ./run.sh dev:full     Boot BE (services/llm on :3001) + FE (Next.js on :3003) with
+                        local-only env overrides so generated MCP URLs are http://localhost:3001
   ./run.sh test         Run vitest suite (S1 + S2 smoke)
   ./run.sh build        Production build (standalone output, ready for Docker)
   ./run.sh start        Boot the production server (after `build`)
@@ -416,6 +483,7 @@ main() {
   case "$sub" in
     setup)        cmd_setup       "$@" ;;
     dev)          cmd_dev         "$@" ;;
+    dev:full|full) cmd_dev_full   "$@" ;;
     test)         cmd_test        "$@" ;;
     build)        cmd_build       "$@" ;;
     start)        cmd_start       "$@" ;;
