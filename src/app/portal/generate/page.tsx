@@ -15,7 +15,7 @@ const clients = ['Kiro / Cursor / Claude CLI', 'Claude Desktop / Windsurf'] as c
 type Client = typeof clients[number];
 
 function McpConfigBlock({ mcpUrl, copied, onCopy }: { mcpUrl: string; copied: string; onCopy: (t: string, id: string) => void }) {
-  const [client, setClient] = useState<Client>('Kiro / Cursor');
+  const [client, setClient] = useState<Client>(clients[0]);
 
   const name = mcpUrl.split('/').pop() || 'mcp-server';
 
