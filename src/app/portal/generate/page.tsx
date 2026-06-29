@@ -11,6 +11,43 @@ interface ScanResponse {
 
 type Step = 'input' | 'scanning' | 'result';
 
+const clients = ['Kiro / Cursor / Claude CLI', 'Claude Desktop / Windsurf'] as const;
+type Client = typeof clients[number];
+
+function McpConfigBlock({ mcpUrl, copied, onCopy }: { mcpUrl: string; copied: string; onCopy: (t: string, id: string) => void }) {
+  const [client, setClient] = useState<Client>(clients[0]);
+
+  const name = mcpUrl.split('/').pop() || 'mcp-server';
+
+  const configs: Record<Client, string> = {
+    'Kiro / Cursor / Claude CLI': JSON.stringify({ mcpServers: { [name]: { url: mcpUrl } } }, null, 2),
+    'Claude Desktop / Windsurf': JSON.stringify({ mcpServers: { [name]: { command: 'npx', args: ['-y', 'mcp-remote', mcpUrl] } } }, null, 2),
+  };
+
+  const config = configs[client];
+
+  return (
+    <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
+      <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+        <h2 className="text-sm font-semibold text-white">MCP Config</h2>
+        <button onClick={() => onCopy(config, 'config')} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
+          {copied === 'config' ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-3.5 w-3.5" />}
+          <span>{copied === 'config' ? 'Copied!' : 'Copy'}</span>
+        </button>
+      </div>
+      <div className="flex gap-1 px-5 pt-3">
+        {clients.map((c) => (
+          <button key={c} onClick={() => setClient(c)}
+            className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${client === c ? 'bg-indigo-600 text-white' : 'text-gray-500 hover:text-gray-300 bg-gray-800/50'}`}>
+            {c}
+          </button>
+        ))}
+      </div>
+      <pre className="p-5 text-xs text-gray-300 font-mono overflow-auto max-h-48">{config}</pre>
+    </div>
+  );
+}
+
 export default function GeneratePage() {
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
@@ -203,19 +240,8 @@ export default function GeneratePage() {
               </div>
             </div>
 
-            {/* MCP Config */}
-            <div className="rounded-xl border border-gray-800 bg-gray-900/50 overflow-hidden">
-              <div className="flex items-center justify-between px-5 py-3 border-b border-gray-800">
-                <h2 className="text-sm font-semibold text-white">MCP Config</h2>
-                <button onClick={() => copyText(JSON.stringify(result.mcpConfig, null, 2), 'config')} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-indigo-400 transition-colors">
-                  {copied === 'config' ? <Check className="h-3.5 w-3.5 text-green-400" /> : <Copy className="h-3.5 w-3.5" />}
-                  <span>{copied === 'config' ? 'Copied!' : 'Copy'}</span>
-                </button>
-              </div>
-              <pre className="p-5 text-xs text-gray-300 font-mono overflow-auto max-h-48">
-                {JSON.stringify(result.mcpConfig, null, 2)}
-              </pre>
-            </div>
+            {/* MCP Config — per client */}
+            <McpConfigBlock mcpUrl={Object.values(result.mcpConfig.mcpServers as Record<string, {url:string}>)[0]?.url || ''} copied={copied} onCopy={copyText} />
 
             {/* Deploy buttons */}
             <div className="grid sm:grid-cols-2 gap-3">
