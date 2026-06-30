@@ -77,14 +77,17 @@ export default function GenerateContent() {
 
   // Fetch quota when wallet connects
   useEffect(() => {
-    if (isConnected && address) {
-      const llmApi = getLlmApi();
-      fetch(`${llmApi}/quota?wallet=${address}`)
-        .then(r => r.ok ? r.json() : null)
-        .then(data => { if (data && 'free_remaining' in data) setQuota(data); })
-        .catch(() => {});
-    }
+    if (isConnected && address) { refreshQuota(); }
   }, [isConnected, address]);
+
+  function refreshQuota() {
+    if (!address) return;
+    const api = getLlmApi();
+    fetch(`${api}/quota?wallet=${address}`)
+      .then(r => r.ok ? r.json() : null)
+      .then(data => { if (data && 'free_remaining' in data) setQuota(data); })
+      .catch(() => {});
+  }
 
   const scanSteps = [
     'Crawling target page...',
@@ -126,7 +129,7 @@ export default function GenerateContent() {
       const res = await fetch(scanEndpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: url.trim(), ...(hostOverride ? { host: hostOverride } : {}) }),
+        body: JSON.stringify({ url: url.trim(), wallet: address, ...(hostOverride ? { host: hostOverride } : {}) }),
       });
       const data = await res.json();
       clearInterval(interval);
@@ -136,7 +139,7 @@ export default function GenerateContent() {
       // Consume quota via BE after successful scan
       fetch(`${llmApi}/quota/consume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet: address }) }).catch(() => {});
       // Refresh quota display
-      fetch(`${llmApi}/quota?wallet=${address}`).then(r => r.ok ? r.json() : null).then(d => { if (d && 'free_remaining' in d) setQuota(d); }).catch(() => {});
+      setTimeout(refreshQuota, 500);
     } catch (e) {
       clearInterval(interval);
       setError((e as Error).message);
@@ -249,7 +252,7 @@ export default function GenerateContent() {
                   {result.manifest.tools.length} tools detected
                 </span>
               </div>
-              <button onClick={() => { setStep('input'); setResult(null); }} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-white">
+              <button onClick={() => { setStep('input'); setResult(null); refreshQuota(); }} className="flex items-center space-x-1 text-xs text-gray-400 hover:text-white">
                 <RefreshCw className="h-3.5 w-3.5" />
                 <span>New scan</span>
               </button>
@@ -306,7 +309,7 @@ export default function GenerateContent() {
         onClose={() => setShowUpgrade(false)}
         onSuccess={() => {
           setShowUpgrade(false);
-          if (address) fetch(`/api/quota?wallet=${address}`).then(r => r.ok ? r.json() : null).then(d => { if (d && 'free_remaining' in d) setQuota(d); }).catch(() => {});
+          refreshQuota();
         }}
       />
     </div>

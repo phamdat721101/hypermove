@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAccount, useSendTransaction, useWriteContract, useWaitForTransactionReceipt } from 'wagmi';
 import { parseEther, parseUnits } from 'viem';
@@ -22,6 +22,11 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
   const [step, setStep] = useState<'loading' | 'confirm' | 'paying' | 'verifying' | 'done'>('loading');
   const [priceInfo, setPriceInfo] = useState<{ btcAmount: string; display: string; weiAmount: string } | null>(null);
 
+  // Reset when modal opens
+  useEffect(() => {
+    if (isOpen) { setStep('loading'); setPriceInfo(null); }
+  }, [isOpen]);
+
   // Fetch dynamic price when modal opens
   if (isOpen && step === 'loading' && !priceInfo) {
     const llmApi = (process.env.NEXT_PUBLIC_LLM_API_URL || '').replace(/\/+$/, '') || 'http://localhost:3001';
@@ -32,11 +37,17 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
   }
 
   // Native BTC transfer
-  const { sendTransaction, data: nativeTxHash } = useSendTransaction();
+  const { sendTransaction, data: nativeTxHash, error: nativeError } = useSendTransaction();
   // ERC-20 transfer
-  const { writeContract, data: tokenTxHash } = useWriteContract();
+  const { writeContract, data: tokenTxHash, error: tokenError } = useWriteContract();
 
   const txHash = PAYMENT_CONFIG.useNative ? nativeTxHash : tokenTxHash;
+  const txError = PAYMENT_CONFIG.useNative ? nativeError : tokenError;
+
+  // Reset to confirm if user rejects
+  if (txError && step === 'paying') {
+    setStep('confirm');
+  }
 
   const { isSuccess: txConfirmed } = useWaitForTransactionReceipt({
     hash: txHash,
