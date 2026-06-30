@@ -319,6 +319,22 @@ const server = createServer(async (req, res) => {
 
   const url = req.url || '/';
 
+  // GET /price — dynamic BTC amount for $5 upgrade
+  if (req.method === 'GET' && url === '/price') {
+    try {
+      const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+      const data = await r.json() as { bitcoin?: { usd?: number } };
+      const btcPrice = data.bitcoin?.usd || 60000;
+      const usdAmount = 5;
+      const btcAmount = usdAmount / btcPrice;
+      const btcAmountStr = btcAmount.toFixed(8);
+      const weiStr = BigInt(Math.round(btcAmount * 1e18)).toString();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ usdAmount, btcPrice, btcAmount: btcAmountStr, weiAmount: weiStr, display: `${btcAmountStr} BTC (~$${usdAmount})` }));
+    } catch { res.writeHead(500); res.end(JSON.stringify({ error: 'Price fetch failed' })); }
+    return;
+  }
+
   // Health
   if (req.method === 'GET' && url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
@@ -373,7 +389,12 @@ const server = createServer(async (req, res) => {
         if (!tx) { res.writeHead(400); res.end(JSON.stringify({ error: 'Transaction not found' })); return; }
         if (tx.from.toLowerCase() !== body.wallet.toLowerCase()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Not from your wallet' })); return; }
         if (!tx.to || tx.to.toLowerCase() !== PAYMENT.treasury.toLowerCase()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Not to treasury' })); return; }
-        if (tx.value < BigInt(PAYMENT.amountWei)) { res.writeHead(400); res.end(JSON.stringify({ error: 'Insufficient amount' })); return; }
+        // Verify amount >= $5 worth of BTC (live price, 10% slippage tolerance)
+        const priceRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+        const priceData = await priceRes.json() as { bitcoin?: { usd?: number } };
+        const btcPrice = priceData.bitcoin?.usd || 60000;
+        const minBtcWei = BigInt(Math.round((5 / btcPrice) * 0.9 * 1e18));
+        if (tx.value < minBtcWei) { res.writeHead(400); res.end(JSON.stringify({ error: 'Insufficient amount' })); return; }
       } else {
         // --- ERC-20 token verification ---
         const transferLog = receipt.logs.find(log => log.address.toLowerCase() === PAYMENT.token.toLowerCase());

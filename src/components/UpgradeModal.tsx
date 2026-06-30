@@ -19,7 +19,17 @@ interface Props {
 
 export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
   const { address } = useAccount();
-  const [step, setStep] = useState<'confirm' | 'paying' | 'verifying' | 'done'>('confirm');
+  const [step, setStep] = useState<'loading' | 'confirm' | 'paying' | 'verifying' | 'done'>('loading');
+  const [priceInfo, setPriceInfo] = useState<{ btcAmount: string; display: string; weiAmount: string } | null>(null);
+
+  // Fetch dynamic price when modal opens
+  if (isOpen && step === 'loading' && !priceInfo) {
+    const llmApi = (process.env.NEXT_PUBLIC_LLM_API_URL || '').replace(/\/+$/, '') || 'http://localhost:3001';
+    fetch(`${llmApi}/price`).then(r => r.json()).then(data => {
+      setPriceInfo(data);
+      setStep('confirm');
+    }).catch(() => setStep('confirm'));
+  }
 
   // Native BTC transfer
   const { sendTransaction, data: nativeTxHash } = useSendTransaction();
@@ -52,10 +62,11 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
     setStep('paying');
 
     if (PAYMENT_CONFIG.useNative) {
-      // Native BTC transfer
+      // Native BTC transfer (dynamic price)
+      const wei = priceInfo?.weiAmount ? BigInt(priceInfo.weiAmount) : parseEther(PAYMENT_CONFIG.amount);
       sendTransaction({
         to: PAYMENT_CONFIG.treasury,
-        value: parseEther(PAYMENT_CONFIG.amount),
+        value: wei,
       });
     } else {
       // ERC-20 token transfer
@@ -81,11 +92,18 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
           </button>
         </div>
 
+        {step === 'loading' && (
+          <div className="text-center py-6">
+            <Loader2 className="h-6 w-6 text-indigo-400 animate-spin mx-auto" />
+            <p className="mt-2 text-xs text-gray-500">Fetching current price...</p>
+          </div>
+        )}
+
         {step === 'confirm' && (
           <div className="space-y-4">
             <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4 text-center">
-              <p className="text-2xl font-bold text-white">{PAYMENT_CONFIG.amountDisplay}</p>
-              <p className="text-xs text-gray-500 mt-1">per month · GOAT Testnet3</p>
+              <p className="text-2xl font-bold text-white">{priceInfo?.display || PAYMENT_CONFIG.amountDisplay}</p>
+              <p className="text-xs text-gray-500 mt-1">per month · GOAT Testnet3 · ~$5 USD</p>
             </div>
             <ul className="text-xs text-gray-400 space-y-1">
               <li>✓ Unlimited scans for 30 days</li>
@@ -94,7 +112,7 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
             </ul>
             <button onClick={handlePay} className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-3 text-sm font-semibold text-white transition-colors">
               <Zap className="h-4 w-4" />
-              Pay {PAYMENT_CONFIG.amountDisplay}
+              Pay {priceInfo?.btcAmount || PAYMENT_CONFIG.amount} BTC
             </button>
           </div>
         )}
