@@ -48,6 +48,15 @@ CREATE TABLE IF NOT EXISTS hypermove_generated_mcps (
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_hgm_created_at ON hypermove_generated_mcps(created_at DESC);
+
+CREATE TABLE IF NOT EXISTS hypermove_user_quotas (
+  wallet_address TEXT PRIMARY KEY,
+  free_remaining INT NOT NULL DEFAULT 5,
+  tier           TEXT NOT NULL DEFAULT 'free',
+  tier_expires_at TIMESTAMPTZ,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_scan_at   TIMESTAMPTZ
+);
 `;
 
 let pool: Pool | null = null;
@@ -221,6 +230,97 @@ export async function insertGeneratedMCP(req: GeneratedMCP): Promise<GeneratedMC
     const hint = classifyError(err);
     console.error(`[generated-mcp] insert failed hint=${hint}`, err);
     return { ok: false, error: String(err), hint };
+  } finally {
+    client?.release();
+  }
+}
+
+// ─── Quota tracking ─────────────────────────────────────────────────────────
+
+export interface UserQuota {
+  wallet_address: string;
+  free_remaining: number;
+  tier: 'free' | 'pro';
+  tier_expires_at: string | null;
+}
+
+/** Get quota for a wallet. Creates entry with 5 free if not exists. */
+export async function getQuota(wallet: string): Promise<UserQuota | null> {
+  const p = getPool();
+  if (!p) return { wallet_address: wallet, free_remaining: 5, tier: 'free', tier_expires_at: null };
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    // Upsert: create if not exists
+    const { rows } = await client.query<UserQuota>(
+      `INSERT INTO hypermove_user_quotas (wallet_address) VALUES ($1)
+       ON CONFLICT (wallet_address) DO NOTHING;
+       SELECT wallet_address, free_remaining, tier, tier_expires_at::text FROM hypermove_user_quotas WHERE wallet_address = $1`,
+      [wallet.toLowerCase()],
+    );
+    if (!rows.length) return { wallet_address: wallet, free_remaining: 5, tier: 'free', tier_expires_at: null };
+    // Check if pro expired
+    const q = rows[0];
+    if (q.tier === 'pro' && q.tier_expires_at && new Date(q.tier_expires_at) < new Date()) {
+      await client.query(`UPDATE hypermove_user_quotas SET tier = 'free' WHERE wallet_address = $1`, [wallet.toLowerCase()]);
+      q.tier = 'free';
+    }
+    return q;
+  } catch {
+    return null;
+  } finally {
+    client?.release();
+  }
+}
+
+/** Consume 1 free scan. Returns false if no quota left. */
+export async function consumeQuota(wallet: string): Promise<boolean> {
+  const p = getPool();
+  if (!p) return true; // no DB = unlimited (dev mode)
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    const { rows } = await client.query<{ tier: string; free_remaining: number; tier_expires_at: string | null }>(
+      `SELECT tier, free_remaining, tier_expires_at::text FROM hypermove_user_quotas WHERE wallet_address = $1`,
+      [wallet.toLowerCase()],
+    );
+    if (!rows.length) return false;
+    const q = rows[0];
+    // Pro tier (not expired) = unlimited
+    if (q.tier === 'pro' && q.tier_expires_at && new Date(q.tier_expires_at) > new Date()) return true;
+    // Free tier: check remaining
+    if (q.free_remaining <= 0) return false;
+    // Decrement
+    await client.query(
+      `UPDATE hypermove_user_quotas SET free_remaining = free_remaining - 1, last_scan_at = NOW() WHERE wallet_address = $1`,
+      [wallet.toLowerCase()],
+    );
+    return true;
+  } catch {
+    return false;
+  } finally {
+    client?.release();
+  }
+}
+
+/** Upgrade wallet to pro for 30 days. */
+export async function upgradeToProTier(wallet: string): Promise<boolean> {
+  const p = getPool();
+  if (!p) return true;
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    await client.query(
+      `INSERT INTO hypermove_user_quotas (wallet_address, tier, tier_expires_at) VALUES ($1, 'pro', NOW() + INTERVAL '30 days')
+       ON CONFLICT (wallet_address) DO UPDATE SET tier = 'pro', tier_expires_at = NOW() + INTERVAL '30 days'`,
+      [wallet.toLowerCase()],
+    );
+    return true;
+  } catch {
+    return false;
   } finally {
     client?.release();
   }

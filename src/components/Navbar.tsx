@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { LayoutGrid, Zap, BookOpen, CreditCard } from 'lucide-react';
+import { WalletConnectButton } from './WalletConnect';
 
 const navItems = [
   { href: '/', label: 'Product', icon: Zap },
@@ -46,12 +47,15 @@ export default function Navbar() {
           })}
         </nav>
 
-        <Link
-          href="/portal/generate"
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-500 transition-colors"
-        >
-          Start For Free
-        </Link>
+        <div className="flex items-center gap-3">
+          <WalletConnectButton />
+          <Link
+            href="/portal/generate"
+            className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-500 transition-colors"
+          >
+            Start For Free
+          </Link>
+        </div>
       </div>
     </header>
   );
