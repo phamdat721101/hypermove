@@ -1,9 +1,10 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
-import { Globe, Sparkles, CheckCircle2, Copy, Check, Download, RefreshCw, Terminal } from 'lucide-react';
+import { Globe, Sparkles, CheckCircle2, Copy, Check, Download, RefreshCw, Terminal, Wallet } from 'lucide-react';
 import { useWalletModal } from '@/lib/wallet-modal-context';
+import UpgradeModal from '@/components/UpgradeModal';
 
 interface ScanResponse {
   manifest: { name: string; description: string; tools: Array<{ name: string; description: string; inputSchema: unknown }>; sourceUrl: string };
@@ -53,6 +54,16 @@ function McpConfigBlock({ mcpUrl, copied, onCopy }: { mcpUrl: string; copied: st
 export default function GenerateContent() {
   const { isConnected, address } = useAccount();
   const { open: openWalletModal } = useWalletModal();
+
+  function getLlmApi() {
+    const rawLlmApi = (process.env.NEXT_PUBLIC_LLM_API_URL || '').replace(/\/+$/, '');
+    const isLocalHostname = (h: string) => /^(localhost|127\.|0\.0\.0\.0|\[?::1?\]?)$/i.test(h);
+    const browserOnLocalhost = typeof window !== 'undefined' && isLocalHostname(window.location.hostname);
+    const rawApiIsLocal = !rawLlmApi || /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[?::1?\]?)(?::|\/|$)/i.test(rawLlmApi);
+    return browserOnLocalhost && !rawApiIsLocal
+      ? `${window.location.protocol}//${window.location.hostname}:3001`
+      : rawLlmApi;
+  }
   const [url, setUrl] = useState('');
   const [description, setDescription] = useState('');
   const [step, setStep] = useState<Step>('input');
@@ -61,6 +72,19 @@ export default function GenerateContent() {
   const [copied, setCopied] = useState('');
   const [scanProgress, setScanProgress] = useState(0);
   const [scanStep, setScanStep] = useState('');
+  const [quota, setQuota] = useState<{ free_remaining: number; tier: string } | null>(null);
+  const [showUpgrade, setShowUpgrade] = useState(false);
+
+  // Fetch quota when wallet connects
+  useEffect(() => {
+    if (isConnected && address) {
+      const llmApi = getLlmApi();
+      fetch(`${llmApi}/quota?wallet=${address}`)
+        .then(r => r.ok ? r.json() : null)
+        .then(data => { if (data && 'free_remaining' in data) setQuota(data); })
+        .catch(() => {});
+    }
+  }, [isConnected, address]);
 
   const scanSteps = [
     'Crawling target page...',
@@ -75,10 +99,13 @@ export default function GenerateContent() {
     if (!url.trim()) return;
     if (!isConnected || !address) { openWalletModal(); return; }
 
-    // Check + consume quota
-    const quotaRes = await fetch('/api/quota', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet: address }) });
-    if (quotaRes.status === 402) { setError('No free scans remaining. Upgrade to Pro ($5/month).'); return; }
-    if (!quotaRes.ok) { setError('Quota check failed'); return; }
+    // Check quota via BE
+    const llmApi = getLlmApi();
+    const quotaCheck = await fetch(`${llmApi}/quota?wallet=${address}`);
+    if (quotaCheck.ok) {
+      const q = await quotaCheck.json();
+      if (q.tier !== 'pro' && q.free_remaining <= 0) { setShowUpgrade(true); return; }
+    }
 
     setError('');
     setStep('scanning');
@@ -94,26 +121,6 @@ export default function GenerateContent() {
     }, 500);
 
     try {
-      // Env-driven config (no production-domain leaks):
-      //   NEXT_PUBLIC_LLM_API_URL   — where to POST /scan. Empty → use the local Next.js /api/scan route.
-      //   NEXT_PUBLIC_MCP_HOST_URL  — OPTIONAL explicit override for the MCP base URL embedded in the response.
-      //
-      // Default behavior: don't send body.host at all. The BE derives the host
-      // from the incoming request, so the MCP config URL matches whatever URL
-      // the FE used to reach the BE (truly self-configuring across envs).
-      //
-      // Localhost protection (defense in depth): if my browser is on localhost,
-      // a non-local LLM API would return MCP URLs unreachable from my local agent
-      // AND would leak whatever host the remote BE is configured for. So when
-      // running on localhost we IGNORE any non-local NEXT_PUBLIC_LLM_API_URL and
-      // force port :3001 on the same host the browser is using.
-      const rawLlmApi = (process.env.NEXT_PUBLIC_LLM_API_URL || '').replace(/\/+$/, '');
-      const isLocalHostname = (h: string) => /^(localhost|127\.|0\.0\.0\.0|\[?::1?\]?)$/i.test(h);
-      const browserOnLocalhost = typeof window !== 'undefined' && isLocalHostname(window.location.hostname);
-      const rawApiIsLocal = !rawLlmApi || /^https?:\/\/(localhost|127\.|0\.0\.0\.0|\[?::1?\]?)(?::|\/|$)/i.test(rawLlmApi);
-      const llmApi = browserOnLocalhost && !rawApiIsLocal
-        ? `${window.location.protocol}//${window.location.hostname}:3001`
-        : rawLlmApi;
       const scanEndpoint = llmApi ? `${llmApi}/scan` : '/api/scan';
       const hostOverride = (process.env.NEXT_PUBLIC_MCP_HOST_URL || '').replace(/\/+$/, '');
       const res = await fetch(scanEndpoint, {
@@ -126,6 +133,10 @@ export default function GenerateContent() {
       setScanProgress(100);
       if (!res.ok) { setError(data.error || 'Scan failed'); setStep('input'); return; }
       setTimeout(() => { setResult(data); setStep('result'); }, 400);
+      // Consume quota via BE after successful scan
+      fetch(`${llmApi}/quota/consume`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ wallet: address }) }).catch(() => {});
+      // Refresh quota display
+      fetch(`${llmApi}/quota?wallet=${address}`).then(r => r.ok ? r.json() : null).then(d => { if (d && 'free_remaining' in d) setQuota(d); }).catch(() => {});
     } catch (e) {
       clearInterval(interval);
       setError((e as Error).message);
@@ -194,9 +205,17 @@ export default function GenerateContent() {
                 onClick={handleScan} disabled={!url.trim()}
                 className="w-full flex items-center justify-center space-x-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 px-6 py-3.5 text-sm font-semibold text-white transition-all shadow-lg shadow-indigo-500/10"
               >
-                <Sparkles className="h-4 w-4" />
-                <span>Scan & Generate</span>
+                {isConnected ? (
+                  <><Sparkles className="h-4 w-4" /><span>Scan & Generate</span></>
+                ) : (
+                  <><Wallet className="h-4 w-4" /><span>Connect Wallet</span></>
+                )}
               </button>
+              {isConnected && quota && (
+                <p className="text-center text-xs text-gray-500">
+                  {quota.tier === 'pro' ? '✓ Pro — unlimited scans' : `${quota.free_remaining}/5 free scans remaining`}
+                </p>
+              )}
             </div>
             {error && <p className="text-sm text-red-400 text-center">{error}</p>}
             <p className="text-center text-xs text-gray-600">
@@ -282,6 +301,14 @@ export default function GenerateContent() {
           </div>
         )}
       </div>
+      <UpgradeModal
+        isOpen={showUpgrade}
+        onClose={() => setShowUpgrade(false)}
+        onSuccess={() => {
+          setShowUpgrade(false);
+          if (address) fetch(`/api/quota?wallet=${address}`).then(r => r.ok ? r.json() : null).then(d => { if (d && 'free_remaining' in d) setQuota(d); }).catch(() => {});
+        }}
+      />
     </div>
   );
 }

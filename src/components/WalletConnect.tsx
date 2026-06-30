@@ -1,5 +1,6 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { useAccount, useConnect, useDisconnect } from 'wagmi';
 import { Wallet, LogOut, X } from 'lucide-react';
@@ -10,6 +11,11 @@ export function WalletConnectButton() {
   const { address, isConnected } = useAccount();
   const { disconnect } = useDisconnect();
   const { open } = useWalletModal();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  if (!mounted) return <div className="w-[120px] h-8" />; // placeholder to avoid layout shift
 
   if (isConnected && address) {
     return (

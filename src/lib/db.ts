@@ -252,16 +252,19 @@ export async function getQuota(wallet: string): Promise<UserQuota | null> {
   try {
     client = await p.connect();
     await ensureSchema(client);
-    // Upsert: create if not exists
+    // Upsert
+    await client.query(
+      `INSERT INTO hypermove_user_quotas (wallet_address) VALUES ($1) ON CONFLICT (wallet_address) DO NOTHING`,
+      [wallet.toLowerCase()],
+    );
+    // Select
     const { rows } = await client.query<UserQuota>(
-      `INSERT INTO hypermove_user_quotas (wallet_address) VALUES ($1)
-       ON CONFLICT (wallet_address) DO NOTHING;
-       SELECT wallet_address, free_remaining, tier, tier_expires_at::text FROM hypermove_user_quotas WHERE wallet_address = $1`,
+      `SELECT wallet_address, free_remaining, tier, tier_expires_at::text FROM hypermove_user_quotas WHERE wallet_address = $1`,
       [wallet.toLowerCase()],
     );
     if (!rows.length) return { wallet_address: wallet, free_remaining: 5, tier: 'free', tier_expires_at: null };
-    // Check if pro expired
     const q = rows[0];
+    // Check if pro expired
     if (q.tier === 'pro' && q.tier_expires_at && new Date(q.tier_expires_at) < new Date()) {
       await client.query(`UPDATE hypermove_user_quotas SET tier = 'free' WHERE wallet_address = $1`, [wallet.toLowerCase()]);
       q.tier = 'free';
