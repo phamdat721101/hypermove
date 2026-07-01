@@ -205,7 +205,7 @@ export default function GenerateContent() {
                 className="w-full rounded-lg border border-gray-700 bg-gray-950 px-4 py-3 text-white placeholder:text-gray-600 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 focus:outline-none transition"
               />
               <button
-                onClick={handleScan} disabled={!url.trim()}
+                onClick={isConnected ? handleScan : openWalletModal} disabled={isConnected && !url.trim()}
                 className="w-full flex items-center justify-center space-x-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:hover:bg-indigo-600 px-6 py-3.5 text-sm font-semibold text-white transition-all shadow-lg shadow-indigo-500/10"
               >
                 {isConnected ? (
