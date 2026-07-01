@@ -2,7 +2,9 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutGrid, Zap, BookOpen, CreditCard } from 'lucide-react';
+import { LayoutGrid, Zap, BookOpen, CreditCard, LogOut } from 'lucide-react';
+import { useAccount, useDisconnect } from 'wagmi';
+import { useState, useEffect } from 'react';
 
 const navItems = [
   { href: '/', label: 'Product', icon: Zap },
@@ -13,6 +15,11 @@ const navItems = [
 
 export default function Navbar() {
   const pathname = usePathname();
+  const { address, isConnected } = useAccount();
+  const { disconnect } = useDisconnect();
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => { setMounted(true); }, []);
 
   return (
     <header className="sticky top-0 z-50 w-full border-b border-gray-800/80 bg-gray-950/85 backdrop-blur-md">
@@ -46,12 +53,25 @@ export default function Navbar() {
           })}
         </nav>
 
-        <Link
-          href="/portal/generate"
-          className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-500 transition-colors"
-        >
-          Start For Free
-        </Link>
+        <div className="flex items-center gap-3">
+          {mounted && isConnected && address ? (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-mono text-gray-400">
+                {address.slice(0, 6)}...{address.slice(-4)}
+              </span>
+              <button onClick={() => disconnect()} className="flex items-center gap-1 rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:text-white transition-colors">
+                <LogOut className="h-3 w-3" />
+              </button>
+            </div>
+          ) : (
+            <Link
+              href="/portal"
+              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-500 transition-colors"
+            >
+              Start For Free
+            </Link>
+          )}
+        </div>
       </div>
     </header>
   );

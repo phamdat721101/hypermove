@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
+import UpgradeButton from '@/components/UpgradeButton';
 
 export const metadata: Metadata = {
   title: 'Pricing',
@@ -10,26 +11,26 @@ const TIERS = [
   {
     name: 'Free',
     price: '$0',
-    cadence: '3 paid MCPs for life',
-    description: 'For prototyping and personal projects. Self-host the 4-file bundle anywhere.',
-    features: ['Up to 3 paid MCPs total', 'Mode A self-host (4-file ZIP)', 'All 27 chains · all 14 protocols', 'Community Discord support', '100% revenue retained'],
-    cta: { label: 'Start free', href: '/portal' },
+    cadence: '5 free scans',
+    description: 'For prototyping and testing. Connect wallet to start.',
+    features: ['5 free MCP generations', 'Hosted MCP endpoint', 'All chains supported', 'MCP config for any IDE', 'Community support'],
+    cta: { label: 'Start free', href: '/portal/generate' },
   },
   {
     name: 'Pro',
     price: '$5',
-    cadence: 'USDC / month',
-    description: 'For teams shipping paid MCPs across multiple dApps and chains.',
-    features: ['Unlimited Mode A MCPs', 'Aave V3 GHO treasury (idle USDC yield)', 'Per-tool override pricing', 'Email + DM support', '100% revenue retained'],
-    cta: { label: 'Upgrade with USDC', href: '/portal?plan=pro' },
+    cadence: 'BTC / month',
+    description: 'Unlimited scans for teams building with AI agents.',
+    features: ['Unlimited MCP generations', 'Hosted MCP endpoint', 'Priority LLM analysis', 'All tools + hosted MCP', 'Email + DM support'],
+    cta: { label: 'Upgrade with BTC', href: '/portal?plan=pro' },
     highlight: true,
   },
   {
     name: 'Mode B Hosted',
     price: '90/10',
     cadence: 'split',
-    description: 'One-line <script> install. We host the MCP proxy at hypermove.dev.',
-    features: ['1-line <script> install', 'Hosted at hypermove.dev/h/<domain>', 'ed25519 DNS-TXT signature', 'Weekly USDC payout', '90% to you · 10% infra'],
+    description: 'We host the MCP server for you. One-click deploy.',
+    features: ['Auto-hosted MCP server', 'Custom domain support', 'Weekly usage reports', '90% revenue to you · 10% infra', 'Coming soon'],
     cta: { label: 'Join waitlist', href: '/registry' },
   },
 ];
@@ -39,13 +40,13 @@ export default function PricingPage() {
     <div className="mx-auto max-w-7xl px-4 py-16 sm:px-6 lg:px-8">
       <div className="mb-12">
         <span className="inline-block rounded-full border border-gray-700 bg-gray-800/50 px-3 py-1 text-xs font-mono text-gray-400 uppercase tracking-wider">
-          USDC only · No Stripe · No credit card
+          BTC on GOAT Network · No credit card
         </span>
         <h1 className="mt-4 font-display text-4xl font-bold text-white sm:text-5xl">
           Pricing built for <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-400 to-purple-400">agent payments</span>.
         </h1>
         <p className="mt-4 max-w-2xl text-gray-400">
-          Every plan settles in USDC on-chain. Pay with the same wallet your agent uses. No KYC, no chargebacks.
+          Pay with BTC on GOAT Network. Same wallet your agent uses. No KYC, no chargebacks.
         </p>
       </div>
 
@@ -73,15 +74,19 @@ export default function PricingPage() {
                 </li>
               ))}
             </ul>
-            <Link href={tier.cta.href} className={`mt-auto rounded-lg px-4 py-2.5 text-center text-sm font-medium transition-colors ${tier.highlight ? 'bg-indigo-600 text-white hover:bg-indigo-500' : 'border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500'}`}>
-              {tier.cta.label}
-            </Link>
+            {tier.highlight ? (
+              <div className="mt-auto"><UpgradeButton /></div>
+            ) : (
+              <Link href={tier.cta.href} className="mt-auto rounded-lg px-4 py-2.5 text-center text-sm font-medium transition-colors border border-gray-700 text-gray-300 hover:text-white hover:border-gray-500">
+                {tier.cta.label}
+              </Link>
+            )}
           </div>
         ))}
       </div>
 
       <p className="mt-10 max-w-2xl text-sm text-gray-500">
-        <strong className="text-white">No Stripe.</strong> Every payment is an on-chain USDC transfer settled through the same n-payment SDK your dApp uses.
+        <strong className="text-white">No Stripe.</strong> Payment is a native BTC transfer on GOAT Network, verified on-chain.
       </p>
     </div>
   );

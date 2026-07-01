@@ -9,8 +9,69 @@
  */
 
 import { createServer } from 'node:http';
+import { Pool } from 'pg';
+import { createPublicClient, http, parseUnits, decodeEventLog } from 'viem';
 
 const PORT = Number(process.env.PORT || 3001);
+
+// ─── DB (Supabase) ───────────────────────────────────────────────────────────
+const dbPool = process.env.DATABASE_URL ? new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, max: 5 }) : null;
+
+async function ensureQuotaTable() {
+  if (!dbPool) return;
+  await dbPool.query(`CREATE TABLE IF NOT EXISTS hypermove_user_quotas (
+    wallet_address TEXT PRIMARY KEY, free_remaining INT NOT NULL DEFAULT 5,
+    tier TEXT NOT NULL DEFAULT 'free', tier_expires_at TIMESTAMPTZ,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_scan_at TIMESTAMPTZ
+  )`);
+  await dbPool.query(`CREATE TABLE IF NOT EXISTS hypermove_used_tx_hashes (
+    tx_hash TEXT PRIMARY KEY, wallet_address TEXT NOT NULL, used_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+  )`);
+}
+ensureQuotaTable().catch(() => {});
+
+async function getQuota(wallet: string) {
+  if (!dbPool) return { wallet_address: wallet, free_remaining: 5, tier: 'free', tier_expires_at: null };
+  await dbPool.query(`INSERT INTO hypermove_user_quotas (wallet_address) VALUES ($1) ON CONFLICT DO NOTHING`, [wallet.toLowerCase()]);
+  const { rows } = await dbPool.query(`SELECT wallet_address, free_remaining, tier, tier_expires_at::text FROM hypermove_user_quotas WHERE wallet_address = $1`, [wallet.toLowerCase()]);
+  const q = rows[0];
+  if (q.tier === 'pro' && q.tier_expires_at && new Date(q.tier_expires_at) < new Date()) {
+    await dbPool.query(`UPDATE hypermove_user_quotas SET tier = 'free' WHERE wallet_address = $1`, [wallet.toLowerCase()]);
+    q.tier = 'free';
+  }
+  return q;
+}
+
+async function consumeQuota(wallet: string): Promise<boolean> {
+  if (!dbPool) return true;
+  const q = await getQuota(wallet);
+  if (q.tier === 'pro') return true;
+  if (q.free_remaining <= 0) return false;
+  await dbPool.query(`UPDATE hypermove_user_quotas SET free_remaining = free_remaining - 1, last_scan_at = NOW() WHERE wallet_address = $1`, [wallet.toLowerCase()]);
+  return true;
+}
+
+async function upgradeToProTier(wallet: string): Promise<boolean> {
+  if (!dbPool) return true;
+  await dbPool.query(`INSERT INTO hypermove_user_quotas (wallet_address, tier, tier_expires_at) VALUES ($1, 'pro', NOW() + INTERVAL '30 days') ON CONFLICT (wallet_address) DO UPDATE SET tier = 'pro', tier_expires_at = NOW() + INTERVAL '30 days'`, [wallet.toLowerCase()]);
+  return true;
+}
+
+// ─── Payment config ──────────────────────────────────────────────────────────
+const PAYMENT = {
+  chainId: 48816,
+  useNative: true, // true = native BTC, false = ERC-20
+  token: '0xbC10000000000000000000000000000000000001',
+  tokenDecimals: 18,
+  amount: '0.000001', // native BTC amount
+  amountWei: '1000000000000', // 10^12
+  treasury: '0x792cA42F2C2f9D9fB56dDBbfE9a0916AE6e98DD8',
+};
+
+const viemClient = createPublicClient({
+  chain: { id: 48816, name: 'GOAT Testnet3', nativeCurrency: { name: 'BTC', symbol: 'BTC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.testnet3.goat.network'] } } },
+  transport: http('https://rpc.testnet3.goat.network'),
+});
 
 const SYSTEM_PROMPT = `You are analyzing a web page to extract user-callable actions as MCP tools.
 Given the website's crawled data below, identify ALL actions a user can perform AND the read-operations they can query for live data.
@@ -258,10 +319,104 @@ const server = createServer(async (req, res) => {
 
   const url = req.url || '/';
 
+  // GET /price — dynamic BTC amount for $5 upgrade
+  if (req.method === 'GET' && url === '/price') {
+    try {
+      const r = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+      const data = await r.json() as { bitcoin?: { usd?: number } };
+      const btcPrice = data.bitcoin?.usd || 60000;
+      const usdAmount = 5;
+      const btcAmount = usdAmount / btcPrice;
+      const btcAmountStr = btcAmount.toFixed(8);
+      const weiStr = BigInt(Math.round(btcAmount * 1e18)).toString();
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ usdAmount, btcPrice, btcAmount: btcAmountStr, weiAmount: weiStr, display: `${btcAmountStr} BTC (~$${usdAmount})` }));
+    } catch { res.writeHead(500); res.end(JSON.stringify({ error: 'Price fetch failed' })); }
+    return;
+  }
+
   // Health
   if (req.method === 'GET' && url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, provider: process.env.LLM_PROVIDER || 'bedrock' }));
+    return;
+  }
+
+  // GET /quota?wallet=0x...
+  if (req.method === 'GET' && url.startsWith('/quota')) {
+    const params = new URL(url, `http://localhost:${PORT}`).searchParams;
+    const wallet = params.get('wallet');
+    if (!wallet) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing wallet' })); return; }
+    try {
+      const q = await getQuota(wallet);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(q));
+    } catch { res.writeHead(500); res.end(JSON.stringify({ error: 'DB error' })); }
+    return;
+  }
+
+  // POST /quota/consume — decrement 1 free scan
+  if (req.method === 'POST' && url === '/quota/consume') {
+    const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    if (!body.wallet) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing wallet' })); return; }
+    const allowed = await consumeQuota(body.wallet);
+    if (!allowed) { res.writeHead(402); res.end(JSON.stringify({ error: 'quota_exhausted' })); return; }
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true }));
+    return;
+  }
+
+  // POST /upgrade — verify payment tx + upgrade tier (supports native BTC & ERC-20)
+  if (req.method === 'POST' && url === '/upgrade') {
+    const chunks: Buffer[] = []; for await (const c of req) chunks.push(c as Buffer);
+    const body = JSON.parse(Buffer.concat(chunks).toString());
+    if (!body.wallet || !body.txHash) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing wallet or txHash' })); return; }
+    try {
+      // Check duplicate txHash
+      if (dbPool) {
+        const { rows } = await dbPool.query(`SELECT tx_hash FROM hypermove_used_tx_hashes WHERE tx_hash = $1`, [body.txHash.toLowerCase()]);
+        if (rows.length > 0) { res.writeHead(400); res.end(JSON.stringify({ error: 'Transaction already used' })); return; }
+      }
+
+      // Get receipt first (confirms tx succeeded)
+      const receipt = await viemClient.getTransactionReceipt({ hash: body.txHash as `0x${string}` });
+      if (!receipt || receipt.status !== 'success') { res.writeHead(400); res.end(JSON.stringify({ error: 'Transaction failed or not confirmed' })); return; }
+
+      if (PAYMENT.useNative) {
+        // --- Native BTC verification ---
+        const tx = await viemClient.getTransaction({ hash: body.txHash as `0x${string}` });
+        if (!tx) { res.writeHead(400); res.end(JSON.stringify({ error: 'Transaction not found' })); return; }
+        if (tx.from.toLowerCase() !== body.wallet.toLowerCase()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Not from your wallet' })); return; }
+        if (!tx.to || tx.to.toLowerCase() !== PAYMENT.treasury.toLowerCase()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Not to treasury' })); return; }
+        // Verify amount >= $5 worth of BTC (live price, 10% slippage tolerance)
+        const priceRes = await fetch('https://api.coingecko.com/api/v3/simple/price?ids=bitcoin&vs_currencies=usd');
+        const priceData = await priceRes.json() as { bitcoin?: { usd?: number } };
+        const btcPrice = priceData.bitcoin?.usd || 60000;
+        const minBtcWei = BigInt(Math.round((5 / btcPrice) * 0.9 * 1e18));
+        if (tx.value < minBtcWei) { res.writeHead(400); res.end(JSON.stringify({ error: 'Insufficient amount' })); return; }
+      } else {
+        // --- ERC-20 token verification ---
+        const transferLog = receipt.logs.find(log => log.address.toLowerCase() === PAYMENT.token.toLowerCase());
+        if (!transferLog) { res.writeHead(400); res.end(JSON.stringify({ error: 'No token transfer found in tx' })); return; }
+        const decoded = decodeEventLog({
+          abi: [{ type: 'event', name: 'Transfer', inputs: [{ name: 'from', type: 'address', indexed: true }, { name: 'to', type: 'address', indexed: true }, { name: 'value', type: 'uint256', indexed: false }] }],
+          data: transferLog.data, topics: transferLog.topics,
+        });
+        const from = (decoded.args.from as string).toLowerCase();
+        const to = (decoded.args.to as string).toLowerCase();
+        const value = decoded.args.value as bigint;
+        if (from !== body.wallet.toLowerCase()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Not from your wallet' })); return; }
+        if (to !== PAYMENT.treasury.toLowerCase()) { res.writeHead(400); res.end(JSON.stringify({ error: 'Not to treasury' })); return; }
+        if (value < parseUnits(PAYMENT.amount, PAYMENT.tokenDecimals)) { res.writeHead(400); res.end(JSON.stringify({ error: 'Insufficient amount' })); return; }
+      }
+
+      // All checks passed — upgrade + save txHash
+      await upgradeToProTier(body.wallet);
+      if (dbPool) { await dbPool.query(`INSERT INTO hypermove_used_tx_hashes (tx_hash, wallet_address) VALUES ($1, $2) ON CONFLICT DO NOTHING`, [body.txHash.toLowerCase(), body.wallet.toLowerCase()]); }
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ ok: true, tier: 'pro', expiresIn: '30 days' }));
+    } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Verify failed', detail: (err as Error).message })); }
     return;
   }
 

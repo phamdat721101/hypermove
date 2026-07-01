@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { ArrowRight } from 'lucide-react';
 import Navbar from '@/components/Navbar';
+import Web3Provider from '@/components/Web3Provider';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -26,9 +27,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
   return (
     <html lang="en">
       <body className="min-h-screen flex flex-col">
-        <Navbar />
-        <main className="flex-1">{children}</main>
-        <footer className="border-t border-gray-800 bg-gray-950/80">
+        <Web3Provider>
+          <Navbar />
+          <main className="flex-1">{children}</main>
+          <footer className="border-t border-gray-800 bg-gray-950/80">
           <div className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 flex flex-col sm:flex-row items-center justify-between gap-4">
             <a href="https://www.npmjs.com/package/n-payment" target="_blank" rel="noreferrer" className="flex items-center space-x-3 rounded-lg bg-gray-800/60 px-4 py-2.5 hover:bg-gray-800 transition-colors">
               <img src="/logo.png" alt="HyperMove" width={32} height={32} className="h-8 w-8 rounded-lg" />
@@ -48,6 +50,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </nav>
           </div>
         </footer>
+        </Web3Provider>
       </body>
     </html>
   );
