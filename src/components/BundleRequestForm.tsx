@@ -24,7 +24,7 @@ export default function BundleRequestForm({ bundleId }: Props) {
   };
 
   if (status === 'ok') {
-    return <p className="rounded-lg border border-green-500/30 bg-green-500/5 px-3 py-2 text-sm text-green-400">✓ {message}</p>;
+    return <p className="rounded-lg border border-green-200 bg-green-50 px-3 py-2 text-sm text-green-700">✓ {message}</p>;
   }
 
   return (
@@ -32,13 +32,13 @@ export default function BundleRequestForm({ bundleId }: Props) {
       <input
         type="email" required value={email} onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
-        className="flex-1 rounded-lg border border-gray-700 bg-gray-950 px-3 py-2 text-sm font-mono text-white placeholder:text-gray-600 focus:border-indigo-500 focus:outline-none"
+        className="flex-1 rounded-lg border border-hm-accent bg-hm-bg px-3 py-2 text-sm font-mono text-hm-dark placeholder:text-hm-grey-light focus:border-hm-purple focus:outline-none"
       />
       <button type="submit" disabled={pending}
-        className="shrink-0 rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white hover:bg-indigo-500 disabled:opacity-50 transition-colors">
+        className="shrink-0 rounded-lg bg-hm-purple px-4 py-2 text-sm font-medium text-white hover:bg-hm-purple/90 disabled:opacity-50 transition-colors">
         {pending ? 'Sending…' : 'Request bundle →'}
       </button>
-      {status === 'error' && <span className="text-xs text-red-400 self-center">{message}</span>}
+      {status === 'error' && <span className="text-xs text-red-600 self-center">{message}</span>}
     </form>
   );
 }

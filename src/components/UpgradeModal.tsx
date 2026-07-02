@@ -94,34 +94,34 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-      <div className="relative z-10 w-full max-w-sm rounded-xl border border-gray-800 bg-gray-950 p-6 shadow-2xl">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <div className="relative z-10 w-full max-w-sm rounded-xl border border-hm-accent bg-white p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-display text-lg font-semibold text-white">Upgrade to Pro</h3>
-          <button onClick={onClose} className="text-gray-500 hover:text-white transition-colors">
+          <h3 className="font-heading text-lg font-semibold text-hm-primary">Upgrade to Pro</h3>
+          <button onClick={onClose} className="text-hm-grey hover:text-hm-dark transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {step === 'loading' && (
           <div className="text-center py-6">
-            <Loader2 className="h-6 w-6 text-indigo-400 animate-spin mx-auto" />
-            <p className="mt-2 text-xs text-gray-500">Fetching current price...</p>
+            <Loader2 className="h-6 w-6 text-hm-purple animate-spin mx-auto" />
+            <p className="mt-2 text-xs text-hm-grey">Fetching current price...</p>
           </div>
         )}
 
         {step === 'confirm' && (
           <div className="space-y-4">
-            <div className="rounded-lg border border-gray-800 bg-gray-900/50 p-4 text-center">
-              <p className="text-2xl font-bold text-white">{priceInfo?.display || PAYMENT_CONFIG.amountDisplay}</p>
-              <p className="text-xs text-gray-500 mt-1">per month · GOAT Testnet3 · ~$5 USD</p>
+            <div className="rounded-lg border border-hm-accent bg-hm-bg p-4 text-center">
+              <p className="text-2xl font-bold text-hm-primary">{priceInfo?.display || PAYMENT_CONFIG.amountDisplay}</p>
+              <p className="text-xs text-hm-grey mt-1">per month · GOAT Testnet3 · ~$5 USD</p>
             </div>
-            <ul className="text-xs text-gray-400 space-y-1">
+            <ul className="text-xs text-hm-grey space-y-1">
               <li>✓ Unlimited scans for 30 days</li>
               <li>✓ All tools + hosted MCP</li>
               <li>✓ Cancel anytime</li>
             </ul>
-            <button onClick={handlePay} className="w-full flex items-center justify-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-3 text-sm font-semibold text-white transition-colors">
+            <button onClick={handlePay} className="w-full flex items-center justify-center gap-2 rounded-lg bg-hm-purple hover:bg-hm-purple/90 px-4 py-3 text-sm font-semibold text-white transition-colors">
               <Zap className="h-4 w-4" />
               Pay {priceInfo?.btcAmount || PAYMENT_CONFIG.amount} BTC
             </button>
@@ -130,24 +130,24 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
 
         {step === 'paying' && (
           <div className="text-center py-6 space-y-3">
-            <Loader2 className="h-8 w-8 text-indigo-400 animate-spin mx-auto" />
-            <p className="text-sm text-gray-400">Confirm transaction in your wallet...</p>
+            <Loader2 className="h-8 w-8 text-hm-purple animate-spin mx-auto" />
+            <p className="text-sm text-hm-grey">Confirm transaction in your wallet...</p>
           </div>
         )}
 
         {step === 'verifying' && (
           <div className="text-center py-6 space-y-3">
-            <Loader2 className="h-8 w-8 text-indigo-400 animate-spin mx-auto" />
-            <p className="text-sm text-gray-400">Verifying payment...</p>
+            <Loader2 className="h-8 w-8 text-hm-purple animate-spin mx-auto" />
+            <p className="text-sm text-hm-grey">Verifying payment...</p>
           </div>
         )}
 
         {step === 'done' && (
           <div className="text-center py-6 space-y-3">
-            <CheckCircle2 className="h-8 w-8 text-green-400 mx-auto" />
-            <p className="text-sm text-green-300 font-medium">Upgraded to Pro!</p>
-            <p className="text-xs text-gray-500">Unlimited scans for 30 days.</p>
-            <button onClick={onClose} className="text-xs text-indigo-400 hover:text-indigo-300">Close</button>
+            <CheckCircle2 className="h-8 w-8 text-green-600 mx-auto" />
+            <p className="text-sm text-green-700 font-medium">Upgraded to Pro!</p>
+            <p className="text-xs text-hm-grey">Unlimited scans for 30 days.</p>
+            <button onClick={onClose} className="text-xs text-hm-purple hover:text-hm-purple/80">Close</button>
           </div>
         )}
       </div>

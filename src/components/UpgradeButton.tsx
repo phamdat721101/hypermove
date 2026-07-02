@@ -12,7 +12,7 @@ export default function UpgradeButton() {
   return (
     <button
       onClick={() => isConnected ? openUpgrade() : openWallet()}
-      className="w-full rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2.5 text-center text-sm font-medium text-white transition-colors"
+      className="w-full rounded-lg bg-hm-purple hover:bg-hm-purple/90 px-4 py-2.5 text-center text-sm font-medium text-white transition-colors"
     >
       Upgrade with BTC
     </button>

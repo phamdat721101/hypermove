@@ -20,10 +20,10 @@ export function WalletConnectButton() {
   if (isConnected && address) {
     return (
       <div className="flex items-center gap-2">
-        <span className="text-xs font-mono text-gray-400">
+        <span className="text-xs font-mono text-hm-grey">
           {address.slice(0, 6)}...{address.slice(-4)}
         </span>
-        <button onClick={() => disconnect()} className="flex items-center gap-1 rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:text-white transition-colors">
+        <button onClick={() => disconnect()} className="flex items-center gap-1 rounded-lg border border-hm-accent px-2 py-1 text-xs text-hm-grey hover:text-hm-dark transition-colors">
           <LogOut className="h-3 w-3" />
         </button>
       </div>
@@ -33,7 +33,7 @@ export function WalletConnectButton() {
   return (
     <button
       onClick={open}
-      className="flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 px-4 py-2 text-sm font-medium text-white transition-colors"
+      className="flex items-center gap-1.5 rounded-lg bg-hm-purple hover:bg-hm-purple/90 px-4 py-2 text-sm font-medium text-white transition-colors"
     >
       <Wallet className="h-3.5 w-3.5" />
       <span>Connect Wallet</span>
@@ -50,11 +50,11 @@ export function WalletModal() {
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={close} />
-      <div className="relative z-10 w-full max-w-sm rounded-xl border border-gray-800 bg-gray-950 p-6 shadow-2xl">
+      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={close} />
+      <div className="relative z-10 w-full max-w-sm rounded-xl border border-hm-accent bg-white p-6 shadow-2xl">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="font-display text-lg font-semibold text-white">Connect Wallet</h3>
-          <button onClick={close} className="text-gray-500 hover:text-white transition-colors">
+          <h3 className="font-heading text-lg font-semibold text-hm-primary">Connect Wallet</h3>
+          <button onClick={close} className="text-hm-grey hover:text-hm-dark transition-colors">
             <X className="h-5 w-5" />
           </button>
         </div>
@@ -63,16 +63,16 @@ export function WalletModal() {
             <button
               key={connector.uid}
               onClick={() => { connect({ connector }); close(); }}
-              className="w-full flex items-center gap-3 rounded-lg border border-gray-800 bg-gray-900/50 hover:bg-gray-800 px-4 py-3 transition-colors"
+              className="w-full flex items-center gap-3 rounded-lg border border-hm-accent bg-hm-bg hover:bg-hm-muted px-4 py-3 transition-colors"
             >
               {connector.icon && (
                 <img src={connector.icon} alt="" className="h-6 w-6 rounded" />
               )}
-              <span className="text-sm font-medium text-white">{connector.name}</span>
+              <span className="text-sm font-medium text-hm-primary">{connector.name}</span>
             </button>
           ))}
           {connectors.length === 0 && (
-            <p className="text-sm text-gray-500 text-center py-4">
+            <p className="text-sm text-hm-grey text-center py-4">
               No wallet detected. Install MetaMask or another EVM wallet.
             </p>
           )}
