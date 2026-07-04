@@ -2,15 +2,15 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { LayoutGrid, Zap, BookOpen, CreditCard, LogOut } from 'lucide-react';
 import { useAccount, useDisconnect } from 'wagmi';
 import { useState, useEffect } from 'react';
+import { LogOut } from 'lucide-react';
 
 const navItems = [
-  { href: '/', label: 'Product', icon: Zap },
-  { href: '/portal', label: 'Portal', icon: LayoutGrid },
-  { href: '/docs/quickstart', label: 'Docs', icon: BookOpen },
-  { href: '/pricing', label: 'Pricing', icon: CreditCard },
+  { href: '/', label: 'Products' },
+  { href: '/portal', label: 'Portal' },
+  { href: '/docs/quickstart', label: 'Developers' },
+  { href: '/pricing', label: 'Pricing' },
 ];
 
 export default function Navbar() {
@@ -21,58 +21,55 @@ export default function Navbar() {
 
   useEffect(() => { setMounted(true); }, []);
 
+  const isHome = pathname === '/';
+
   return (
-    <header className="sticky top-0 z-50 w-full border-b border-gray-800/80 bg-gray-950/85 backdrop-blur-md">
-      <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-4 sm:px-6 lg:px-8">
-        <Link href="/" className="flex items-center space-x-2">
-          <img src="/logo.png" alt="HyperMove" width={36} height={36} className="h-9 w-9 rounded-md" />
-          <span className="font-display text-xl font-bold tracking-tight text-white">
-            HyperMove
-          </span>
-        </Link>
+    <nav className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between w-full max-w-[1144px] mx-auto px-6 py-5">
+      <Link href="/" className="flex items-center gap-2">
+        <img src="/logo-black.png" alt="HyperMove" className="h-9 w-9 rounded-md" />
+        <span className="font-heading text-xl font-bold text-hm-primary">HyperMove</span>
+      </Link>
 
-        <nav className="hidden md:flex items-center space-x-1">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href));
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`relative flex items-center space-x-1.5 rounded-md px-3.5 py-2 text-sm font-medium transition-colors duration-150 ${
-                  isActive ? 'text-white' : 'text-gray-400 hover:text-gray-200'
-                }`}
-              >
-                <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
-                {isActive && (
-                  <span className="absolute inset-x-1 -bottom-[17px] h-0.5 bg-indigo-500 rounded-full" />
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-
-        <div className="flex items-center gap-3">
-          {mounted && isConnected && address ? (
-            <div className="flex items-center gap-2">
-              <span className="text-xs font-mono text-gray-400">
-                {address.slice(0, 6)}...{address.slice(-4)}
-              </span>
-              <button onClick={() => disconnect()} className="flex items-center gap-1 rounded-lg border border-gray-700 px-2 py-1 text-xs text-gray-400 hover:text-white transition-colors">
-                <LogOut className="h-3 w-3" />
-              </button>
-            </div>
-          ) : (
+      <ul className="hidden md:flex items-center gap-8">
+        {navItems.map((item) => (
+          <li key={item.href}>
             <Link
-              href="/portal"
-              className="rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-md shadow-indigo-500/20 hover:bg-indigo-500 transition-colors"
+              href={item.href}
+              className={`text-base font-bold transition-colors ${
+                isHome
+                  ? (pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+                    ? 'text-white'
+                    : 'text-white/80 hover:text-white hover:underline')
+                  : (pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
+                    ? 'text-hm-purple'
+                    : 'text-hm-dark hover:text-hm-purple hover:underline')
+              }`}
             >
-              Start For Free
+              {item.label}
             </Link>
-          )}
-        </div>
+          </li>
+        ))}
+      </ul>
+
+      <div className="flex items-center gap-3">
+        {mounted && isConnected && address ? (
+          <div className="flex items-center gap-2">
+            <span className={`text-xs font-mono rounded-full px-3 py-1.5 ${isHome ? 'text-white/80 bg-white/20' : 'text-hm-dark bg-hm-muted'}`}>
+              {address.slice(0, 6)}...{address.slice(-4)}
+            </span>
+            <button onClick={() => disconnect()} className={`flex items-center gap-1 rounded-full px-2.5 py-1.5 text-xs transition-colors ${isHome ? 'bg-white/20 text-white/80 hover:text-white hover:bg-white/30' : 'bg-hm-muted text-hm-dark hover:bg-hm-accent'}`}>
+              <LogOut className="h-3 w-3" />
+            </button>
+          </div>
+        ) : (
+          <Link
+            href="/portal"
+            className={`rounded-full px-5 py-2 text-sm font-bold transition-colors ${isHome ? 'bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white' : 'bg-hm-purple hover:bg-hm-purple/90 text-white'}`}
+          >
+            Start For Free
+          </Link>
+        )}
       </div>
-    </header>
+    </nav>
   );
 }

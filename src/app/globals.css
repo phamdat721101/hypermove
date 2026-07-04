@@ -1,31 +1,175 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;600;700&family=Lato:wght@300;400;700&family=JetBrains+Mono:wght@400;500&display=swap');
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
-  --font-display: "Space Grotesk", sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+  --text-dark: #3a3a3a;
+  --text-light: #fff;
+  --text-grey: #717182;
+  --text-grey-light: #bdc6d2;
+  --purple-1: #635bff;
+  --purple-2: #7000ff;
+  --blue-1: #00d4ff;
+  --primary-accent: #030213;
+  --bg-white: #fff;
+  --bg-light: #f7f9fc;
+  --muted: #ececf0;
+  --accent: #e9ebef;
+  --standard-border-radius: 20px;
+  --standard-box-shadow: 0px 2px 40px rgba(0, 0, 0, 0.08);
+  --primary-gradient: linear-gradient(101.33deg, #08209a 0.76%, #6563ff 33.33%, #36c5f0 76.92%, #83e2ff 96.96%);
 }
 
 body {
-  background-color: #030712;
-  color: #f3f4f6;
-  font-family: var(--font-sans);
+  background-color: var(--bg-white);
+  color: var(--text-dark);
+  font-family: 'Roboto', sans-serif;
 }
 
-::-webkit-scrollbar {
+h1, h2, h3, h4, h5, h6 {
+  font-family: 'Lato', sans-serif;
+}
+
+/* Gradient canvas */
+.gradient-bg {
+  position: absolute;
+  top: -10%;
+  left: 0;
+  width: 100%;
+  height: 800px;
+  transform: skewY(-10deg);
+  z-index: -1;
+  background: var(--primary-gradient);
+  opacity: 0.9;
+}
+
+/* Buttons */
+.btn-primary {
+  @apply inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold tracking-wide transition-all;
+  background-color: var(--primary-accent);
+  color: var(--text-light);
+  letter-spacing: 1.25px;
+}
+
+.btn-primary:hover {
+  background-color: #1a1a2e;
+}
+
+.btn-primary-purple {
+  @apply inline-flex items-center gap-2 rounded-full px-6 py-3 text-sm font-bold tracking-wide transition-all;
+  background-color: #635bff;
+  color: var(--text-light);
+  letter-spacing: 1.25px;
+}
+
+.btn-primary-purple:hover {
+  background-color: #4f46e5;
+}
+
+.btn-secondary {
+  @apply inline-flex items-center gap-2 text-sm font-bold transition-all;
+  color: var(--purple-2);
+  letter-spacing: 1.25px;
+  background: transparent;
+  border: none;
+}
+
+.btn-secondary:hover {
+  opacity: 0.75;
+}
+
+/* Section layout */
+.section-container {
+  @apply mx-auto w-full px-6;
+  max-width: 1144px;
+}
+
+/* Integration section dark bg */
+.dark-section {
+  background-color: var(--primary-accent);
+  color: var(--text-light);
+  position: relative;
+}
+
+.dark-section::before {
+  content: "";
+  width: 100%;
+  height: 100%;
+  background-color: var(--primary-accent);
+  position: absolute;
+  top: -32px;
+  left: 0;
+  z-index: -1;
+  transform: skewY(-10deg);
+}
+
+/* Cards */
+.swipe-card {
+  @apply flex flex-col items-start p-6;
+}
+
+.swipe-card h3 {
+  @apply text-xl font-medium mb-2;
+  font-family: 'Lato', sans-serif;
+}
+
+.swipe-card .icon {
+  @apply h-12 w-12 mb-4;
+}
+
+/* Subtitle styles */
+.subtitle {
+  color: #635bff;
+  font-weight: 500;
+  font-size: 17px;
+  line-height: 26px;
+  font-family: 'Lato', sans-serif;
+}
+
+.subtitle2 {
+  color: #00d4ff;
+  font-weight: 500;
+  font-size: 17px;
+  line-height: 26px;
+  font-family: 'Lato', sans-serif;
+}
+
+/* Scrollbar — hidden by default, show on scroll */
+html {
+  overflow-y: scroll;
+  scrollbar-width: none; /* Firefox */
+}
+
+html::-webkit-scrollbar {
   width: 8px;
-  height: 8px;
+  background: transparent;
 }
-::-webkit-scrollbar-track {
-  background: #0b0f19;
-}
-::-webkit-scrollbar-thumb {
-  background: #1f2937;
+
+html::-webkit-scrollbar-thumb {
+  background: transparent;
   border-radius: 4px;
 }
-::-webkit-scrollbar-thumb:hover {
-  background: #374151;
+
+html:hover::-webkit-scrollbar-thumb {
+  background: #c4cdd5;
+}
+
+html:hover {
+  scrollbar-width: thin; /* Firefox */
+}
+
+/* Prose inline code styling */
+.prose :where(code):not(:where(pre *)) {
+  background-color: var(--muted);
+  padding: 0.15em 0.4em;
+  border-radius: 4px;
+  font-size: 0.85em;
+  border: none;
+}
+
+.prose blockquote code {
+  background: transparent !important;
+  padding: 0 !important;
+  border: none !important;
 }
