@@ -44,7 +44,7 @@ function Footer() {
       <div className="section-container">
         <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
           <div>
-            <img src="/logo.png" alt="HyperMove" className="h-10 w-10 rounded-lg mb-4" />
+            <img src="/logo-black.png" alt="HyperMove" className="h-10 w-10 rounded-lg mb-4" />
             <div className="flex items-center gap-2 text-sm text-hm-dark/70 mb-2">
               <Globe className="h-4 w-4" />
               <a href="#" className="hover:text-hm-purple">Global</a>

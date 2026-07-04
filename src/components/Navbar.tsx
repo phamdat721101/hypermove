@@ -26,8 +26,8 @@ export default function Navbar() {
   return (
     <nav className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between w-full max-w-[1144px] mx-auto px-6 py-5">
       <Link href="/" className="flex items-center gap-2">
-        <img src="/logo.png" alt="HyperMove" className="h-9 w-9 rounded-md" />
-        <span className={`font-heading text-xl font-bold ${isHome ? 'text-white' : 'text-hm-primary'}`}>HyperMove</span>
+        <img src="/logo-black.png" alt="HyperMove" className="h-9 w-9 rounded-md" />
+        <span className="font-heading text-xl font-bold text-hm-primary">HyperMove</span>
       </Link>
 
       <ul className="hidden md:flex items-center gap-8">
