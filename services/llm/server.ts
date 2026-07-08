@@ -519,7 +519,7 @@ const server = createServer(async (req, res) => {
       };
 
       // 5. Register for hosting
-      mcpStore.set(`${walletAddr}/${slug}`, manifest);
+      mcpStoreSet(`${walletAddr}/${slug}`, manifest);
 
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({
@@ -582,7 +582,7 @@ const server = createServer(async (req, res) => {
     let body: { wallet?: string; slug?: string; manifest?: unknown };
     try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
     if (!body.wallet || !body.slug || !body.manifest) { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing wallet, slug, or manifest' })); return; }
-    mcpStore.set(`${body.wallet}/${body.slug}`, body.manifest);
+    mcpStoreSet(`${body.wallet}/${body.slug}`, body.manifest);
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ ok: true, url: `/${body.wallet}/${body.slug}` }));
     return;
@@ -591,27 +591,76 @@ const server = createServer(async (req, res) => {
   res.writeHead(404); res.end('Not found');
 });
 
-// ─── In-memory MCP store (replace with DB for production) ────────────────────
-const mcpStore = new Map<string, unknown>();
+// ─── Persistent MCP store (Supabase + in-memory cache) ───────────────────────
+const mcpCache = new Map<string, unknown>();
+
+async function ensureMcpTable() {
+  if (!dbPool) return;
+  await dbPool.query(`
+    CREATE TABLE IF NOT EXISTS mcp_manifests (
+      key TEXT PRIMARY KEY,
+      wallet TEXT NOT NULL,
+      slug TEXT NOT NULL,
+      manifest JSONB NOT NULL,
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `);
+}
+
+async function mcpStoreSet(key: string, manifest: unknown) {
+  mcpCache.set(key, manifest);
+  if (!dbPool) return;
+  const [wallet, slug] = key.split('/');
+  await dbPool.query(
+    `INSERT INTO mcp_manifests (key, wallet, slug, manifest) VALUES ($1, $2, $3, $4)
+     ON CONFLICT (key) DO UPDATE SET manifest = $4, updated_at = NOW()`,
+    [key, wallet, slug, JSON.stringify(manifest)]
+  ).catch(e => console.error('[MCP DB] write error:', e.message));
+}
+
+async function mcpStoreGet(key: string): Promise<unknown | undefined> {
+  // Check cache first
+  if (mcpCache.has(key)) return mcpCache.get(key);
+  // Fallback to DB
+  if (!dbPool) return undefined;
+  try {
+    const { rows } = await dbPool.query('SELECT manifest FROM mcp_manifests WHERE key = $1', [key]);
+    if (rows.length > 0) {
+      const manifest = rows[0].manifest;
+      mcpCache.set(key, manifest); // warm cache
+      return manifest;
+    }
+  } catch (e) { console.error('[MCP DB] read error:', (e as Error).message); }
+  return undefined;
+}
+
+async function mcpStoreLoadAll() {
+  if (!dbPool) return;
+  try {
+    const { rows } = await dbPool.query('SELECT key, manifest FROM mcp_manifests');
+    for (const row of rows) mcpCache.set(row.key, row.manifest);
+    console.log(`[MCP DB] Loaded ${rows.length} manifests from Supabase`);
+  } catch (e) { console.error('[MCP DB] load error:', (e as Error).message); }
+}
 
 async function handleHostedMcp(req: import('node:http').IncomingMessage, res: import('node:http').ServerResponse, wallet: string, slug: string) {
   const key = `${wallet}/${slug}`;
-  const manifest = mcpStore.get(key) as { name?: string; version?: string; tools?: Array<{ name: string; description: string; inputSchema: unknown }> } | undefined;
+  const manifest = await mcpStoreGet(key) as { name?: string; version?: string; tools?: Array<{ name: string; description: string; inputSchema: unknown }> } | undefined;
 
-  if (!manifest) {
-    res.writeHead(404, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ error: 'MCP not found', path: `/${wallet}/${slug}` }));
-    return;
-  }
-
-  // GET → return manifest
+  // GET → return manifest (or 404 JSON for browsers/debugging)
   if (req.method === 'GET') {
+    if (!manifest) {
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'MCP not found', path: `/${wallet}/${slug}`, hint: 'Scan the URL again at /portal/generate to re-register this MCP.' }));
+      return;
+    }
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify(manifest, null, 2));
     return;
   }
 
-  // POST → JSON-RPC
+  // POST → JSON-RPC (MCP Streamable HTTP transport)
   if (req.method === 'POST') {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
@@ -622,12 +671,31 @@ async function handleHostedMcp(req: import('node:http').IncomingMessage, res: im
       return;
     }
 
+    // Handle notifications (no response needed) — e.g. notifications/initialized
+    if (!('id' in body) || body.id === undefined) {
+      res.writeHead(204);
+      res.end();
+      return;
+    }
+
+    // If manifest not found, return JSON-RPC error (NOT HTTP 404 — avoids OAuth trigger)
+    if (!manifest) {
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'MCP server not found. Scan the URL again to re-register.' } }));
+      return;
+    }
+
     const tools = manifest.tools || [];
     let result: unknown;
     switch (body.method) {
       case 'initialize':
         result = { protocolVersion: '2024-11-05', serverInfo: { name: manifest.name, version: manifest.version || '0.1.0' }, capabilities: { tools: {} } };
         break;
+      case 'notifications/initialized':
+        // Client confirms initialization — no response needed
+        res.writeHead(204);
+        res.end();
+        return;
       case 'tools/list':
         result = { tools: tools.map(t => ({ name: t.name, description: t.description, inputSchema: t.inputSchema })) };
         break;
@@ -644,8 +712,19 @@ async function handleHostedMcp(req: import('node:http').IncomingMessage, res: im
         res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `Unknown method: ${body.method}` } }));
         return;
     }
+
+    // Streamable HTTP compliant response
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
+    return;
+  }
+
+  // DELETE → remove MCP (optional, for management)
+  if (req.method === 'DELETE') {
+    mcpCache.delete(key);
+    if (dbPool) await dbPool.query('DELETE FROM mcp_manifests WHERE key = $1', [key]).catch(() => {});
+    res.writeHead(200, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, deleted: key }));
     return;
   }
 
@@ -712,8 +791,11 @@ async function callLiveTool(tool: { name: string; endpoint?: string; method?: st
   } finally { clearTimeout(timer); }
 }
 
-server.listen(PORT, () => {
+server.listen(PORT, async () => {
   console.log(`LLM service running on port ${PORT}`);
   console.log(`Provider: ${process.env.LLM_PROVIDER || 'bedrock'}`);
   console.log(`Health: http://localhost:${PORT}/health`);
+  // Initialize MCP persistence
+  await ensureMcpTable();
+  await mcpStoreLoadAll();
 });
