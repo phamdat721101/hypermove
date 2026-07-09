@@ -121,6 +121,8 @@ The Dockerfile uses Next.js `output: 'standalone'` mode (~150 MB final image).
 | `/docs/n-payment` | n-payment integration guide (27 chains, 14 protocols) |
 | `/pricing` | 3-tier USDC-only pricing |
 | `/portal` | Bundle catalog + email registry form |
+| `/portal/telemetry` | **v2.0** Live observability dashboard (Errors + Policies + Metrics) |
+| `/roadmap` | **v2.0** iOS-parallel 12-primitive roadmap |
 | `/registry`, `/dashboard` | Sprint 3 stubs |
 | `/.well-known/webmcp.json` | Machine-readable WebMCP manifest |
 | `/.well-known/agent.json` | AgentCard |
@@ -128,7 +130,45 @@ The Dockerfile uses Next.js `output: 'standalone'` mode (~150 MB final image).
 | `/api/agent` | SSE live-agent gateway |
 | `/api/paid-endpoint` | x402 paywall |
 | `/api/mcp` | JSON-RPC 2.0 MCP surface |
+| `/api/errors` | **v2.0** Public event ingestion (accepts `AgentEvent` or batch up to 100) |
+| `/api/telemetry/stream` | **v2.0** SSE feed powering the telemetry dashboard |
 | `/api/v1/register` | Email-bundle registry submission |
+
+## HyperMove v2.0 Platform Layer
+
+Ship agent-callable endpoints with structured tracing + policy enforcement +
+agentjacking defense in **one line of code**. All four modules land behind a
+single master flag `FEATURE_HM_PLATFORM` — rollback is a single env-var flip.
+
+```ts
+// Any Next.js Route Handler becomes fully instrumented:
+import { wrapAgentEndpoint } from '@/lib/observability';
+import { defaultSentinel } from '@/lib/sentinel';
+
+export const GET = wrapAgentEndpoint({
+  name: 'my.endpoint',
+  sentinel: defaultSentinel(),
+  handler: async (req) => { /* your handler unchanged */ },
+});
+```
+
+Enable and open the dashboard:
+
+```bash
+export FEATURE_HM_PLATFORM=true
+pnpm dev
+open http://localhost:3003/portal/telemetry
+```
+
+Full API reference: [`docs/observability.md`](./docs/observability.md). Roadmap:
+[`/roadmap`](./src/app/roadmap/page.tsx) or `http://localhost:3003/roadmap` in dev.
+
+Optional Sentry-forward for enterprise buyers with existing Sentry setups:
+
+```bash
+export SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
+# HyperMove lazy-imports @sentry/nextjs — install it only if you enable this.
+```
 
 ## Architecture
 

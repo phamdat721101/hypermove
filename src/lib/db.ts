@@ -57,6 +57,38 @@ CREATE TABLE IF NOT EXISTS hypermove_user_quotas (
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   last_scan_at   TIMESTAMPTZ
 );
+
+-- ─── HyperMove v2.0 Platform Layer (HM1 + HM2) ────────────────────────────
+CREATE TABLE IF NOT EXISTS hm_events (
+  id           BIGSERIAL PRIMARY KEY,
+  kind         TEXT        NOT NULL,
+  endpoint     TEXT        NOT NULL,
+  version      TEXT,
+  chain        TEXT,
+  agent_id     TEXT        NOT NULL,
+  trace_id     TEXT        NOT NULL,
+  duration_ms  INT,
+  error        TEXT,
+  stack        TEXT,
+  payload_hash TEXT,
+  context      JSONB,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_hm_events_created_at ON hm_events(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hm_events_endpoint   ON hm_events(endpoint);
+CREATE INDEX IF NOT EXISTS idx_hm_events_kind       ON hm_events(kind);
+
+CREATE TABLE IF NOT EXISTS hm_policy_hits (
+  id             BIGSERIAL PRIMARY KEY,
+  policy         TEXT        NOT NULL,
+  endpoint       TEXT        NOT NULL,
+  agent_id       TEXT        NOT NULL,
+  reason         TEXT        NOT NULL,
+  cost_micro_usd BIGINT,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_hm_policy_hits_created_at ON hm_policy_hits(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_hm_policy_hits_policy     ON hm_policy_hits(policy);
 `;
 
 let pool: Pool | null = null;
@@ -324,6 +356,155 @@ export async function upgradeToProTier(wallet: string): Promise<boolean> {
     return true;
   } catch {
     return false;
+  } finally {
+    client?.release();
+  }
+}
+
+// ─── HyperMove v2.0 Platform Layer helpers (HM1 + HM2) ─────────────────────
+//
+// SOLID: Single Responsibility — every persistence op for hm_events + hm_policy_hits
+// lives here. Callers pass plain data shapes; this module owns SQL + retries.
+// Graceful no-op semantics preserved from existing helpers: missing DATABASE_URL
+// returns { ok: true, noopReason: 'no_database_url' } so dev mode never breaks.
+
+export interface HMEventRow {
+  kind: string;
+  endpoint: string;
+  version?: string;
+  chain?: string;
+  agent_id: string;
+  trace_id: string;
+  duration_ms?: number;
+  error?: string;
+  stack?: string;
+  payload_hash?: string;
+  context?: Record<string, unknown>;
+}
+
+export interface HMPolicyHitRow {
+  policy: string;
+  endpoint: string;
+  agent_id: string;
+  reason: string;
+  cost_micro_usd?: number;
+}
+
+export interface HMWriteResult {
+  ok: boolean;
+  noopReason?: 'no_database_url';
+  error?: string;
+}
+
+export async function insertHMEvent(ev: HMEventRow): Promise<HMWriteResult> {
+  const p = getPool();
+  if (!p) return { ok: true, noopReason: 'no_database_url' };
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    await client.query(
+      `INSERT INTO hm_events
+         (kind, endpoint, version, chain, agent_id, trace_id, duration_ms, error, stack, payload_hash, context)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+      [
+        ev.kind, ev.endpoint, ev.version ?? null, ev.chain ?? null,
+        ev.agent_id, ev.trace_id, ev.duration_ms ?? null,
+        ev.error ?? null, ev.stack ?? null, ev.payload_hash ?? null,
+        ev.context ? JSON.stringify(ev.context) : null,
+      ],
+    );
+    return { ok: true };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[hm_events] insert failed', err);
+    return { ok: false, error: String(err) };
+  } finally {
+    client?.release();
+  }
+}
+
+export async function insertHMPolicyHit(hit: HMPolicyHitRow): Promise<HMWriteResult> {
+  const p = getPool();
+  if (!p) return { ok: true, noopReason: 'no_database_url' };
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    await client.query(
+      `INSERT INTO hm_policy_hits (policy, endpoint, agent_id, reason, cost_micro_usd)
+       VALUES ($1,$2,$3,$4,$5)`,
+      [hit.policy, hit.endpoint, hit.agent_id, hit.reason, hit.cost_micro_usd ?? null],
+    );
+    return { ok: true };
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[hm_policy_hits] insert failed', err);
+    return { ok: false, error: String(err) };
+  } finally {
+    client?.release();
+  }
+}
+
+export interface HMEventQuery {
+  since?: string;   // ISO timestamp
+  kinds?: readonly string[];
+  endpoint?: string;
+  limit?: number;
+}
+
+export async function queryHMEvents(q: HMEventQuery = {}): Promise<HMEventRow[]> {
+  const p = getPool();
+  if (!p) return [];
+  const limit = Math.min(Math.max(q.limit ?? 100, 1), 500);
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    const where: string[] = [];
+    const params: unknown[] = [];
+    if (q.since) { params.push(q.since); where.push(`created_at > $${params.length}`); }
+    if (q.kinds?.length) { params.push(q.kinds); where.push(`kind = ANY($${params.length}::text[])`); }
+    if (q.endpoint) { params.push(q.endpoint); where.push(`endpoint = $${params.length}`); }
+    params.push(limit);
+    const sql = `SELECT kind, endpoint, version, chain, agent_id, trace_id, duration_ms, error, stack, payload_hash, context
+                 FROM hm_events
+                 ${where.length ? 'WHERE ' + where.join(' AND ') : ''}
+                 ORDER BY created_at DESC
+                 LIMIT $${params.length}`;
+    const { rows } = await client.query<HMEventRow>(sql, params);
+    return rows;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[hm_events] query failed', err);
+    return [];
+  } finally {
+    client?.release();
+  }
+}
+
+export async function queryHMPolicyHits(sinceIso?: string, limit = 100): Promise<HMPolicyHitRow[]> {
+  const p = getPool();
+  if (!p) return [];
+  const capped = Math.min(Math.max(limit, 1), 500);
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    const params: unknown[] = [];
+    let where = '';
+    if (sinceIso) { params.push(sinceIso); where = 'WHERE created_at > $1'; }
+    params.push(capped);
+    const { rows } = await client.query<HMPolicyHitRow>(
+      `SELECT policy, endpoint, agent_id, reason, cost_micro_usd
+       FROM hm_policy_hits ${where}
+       ORDER BY created_at DESC
+       LIMIT $${params.length}`,
+      params,
+    );
+    return rows;
+  } catch {
+    return [];
   } finally {
     client?.release();
   }

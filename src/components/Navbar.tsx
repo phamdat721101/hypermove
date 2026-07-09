@@ -9,7 +9,9 @@ import { LogOut } from 'lucide-react';
 const navItems = [
   { href: '/', label: 'Products' },
   { href: '/portal', label: 'Portal' },
+  { href: '/portal/telemetry', label: 'Telemetry' },
   { href: '/docs/quickstart', label: 'Developers' },
+  { href: '/roadmap', label: 'Roadmap' },
   { href: '/pricing', label: 'Pricing' },
 ];
 
@@ -23,6 +25,11 @@ export default function Navbar() {
 
   const isHome = pathname === '/';
 
+  // Longest-prefix match wins so /portal doesn't stay highlighted on /portal/telemetry.
+  const activeHref = [...navItems]
+    .filter((i) => pathname === i.href || (i.href !== '/' && pathname.startsWith(i.href + '/')))
+    .sort((a, b) => b.href.length - a.href.length)[0]?.href;
+
   return (
     <nav className="absolute top-0 left-0 right-0 z-50 flex items-center justify-between w-full max-w-[1144px] mx-auto px-6 py-5">
       <Link href="/" className="flex items-center gap-2">
@@ -31,24 +38,23 @@ export default function Navbar() {
       </Link>
 
       <ul className="hidden md:flex items-center gap-8">
-        {navItems.map((item) => (
-          <li key={item.href}>
-            <Link
-              href={item.href}
-              className={`text-base font-bold transition-colors ${
-                isHome
-                  ? (pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
-                    ? 'text-white'
-                    : 'text-white/80 hover:text-white hover:underline')
-                  : (pathname === item.href || (item.href !== '/' && pathname.startsWith(item.href))
-                    ? 'text-hm-purple'
-                    : 'text-hm-dark hover:text-hm-purple hover:underline')
-              }`}
-            >
-              {item.label}
-            </Link>
-          </li>
-        ))}
+        {navItems.map((item) => {
+          const active = item.href === activeHref;
+          return (
+            <li key={item.href}>
+              <Link
+                href={item.href}
+                className={`text-base font-bold transition-colors ${
+                  isHome
+                    ? (active ? 'text-white' : 'text-white/80 hover:text-white hover:underline')
+                    : (active ? 'text-hm-purple' : 'text-hm-dark hover:text-hm-purple hover:underline')
+                }`}
+              >
+                {item.label}
+              </Link>
+            </li>
+          );
+        })}
       </ul>
 
       <div className="flex items-center gap-3">

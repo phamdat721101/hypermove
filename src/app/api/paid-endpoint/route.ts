@@ -1,4 +1,6 @@
 import type { NextRequest } from 'next/server';
+import { wrapAgentEndpoint } from '@/lib/observability';
+import { defaultSentinel } from '@/lib/sentinel';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -13,13 +15,16 @@ export const dynamic = 'force-dynamic';
  *
  * The wire contract here is identical to what n-payment v0.29.1 createPaywall() emits, so any agent
  * that can pay one can pay the other. In Sprint 3 we swap this for a direct import of n-payment.
+ *
+ * v2.0: wrapped in wrapAgentEndpoint for auto-tracing. Identity function when
+ * FEATURE_HM_PLATFORM=false — byte-identical v1.0 behavior.
  */
 
 const PAY_TO = process.env.PAY_TO_ADDRESS ?? '0x0000000000000000000000000000000000000000';
 const PRICE_MICRO = process.env.PAYMENT_PRICE_MICRO_USDC ?? '10000';
 const CHAIN = process.env.PAYMENT_CHAIN ?? 'base-sepolia';
 
-export async function GET(req: NextRequest) {
+async function handleGet(req: NextRequest): Promise<Response> {
   const payment = req.headers.get('x-payment');
 
   if (!payment) {
@@ -43,5 +48,13 @@ export async function GET(req: NextRequest) {
     paid_at: new Date().toISOString(),
   });
 }
+
+export const GET = wrapAgentEndpoint({
+  name: 'hypermove.pay.x402',
+  version: '1.0.0',
+  chain: CHAIN,
+  sentinel: defaultSentinel(),
+  handler: handleGet,
+});
 
 export const HEAD = GET;
