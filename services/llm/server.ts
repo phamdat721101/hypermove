@@ -311,10 +311,11 @@ async function callLlm(content: string): Promise<string> {
 }
 
 const server = createServer(async (req, res) => {
-  // CORS
+  // CORS + MCP Streamable HTTP headers
   res.setHeader('Access-Control-Allow-Origin', '*');
-  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, GET, OPTIONS, DELETE');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Accept, Mcp-Protocol-Version, Mcp-Session-Id');
+  res.setHeader('Access-Control-Expose-Headers', 'Mcp-Protocol-Version, Mcp-Session-Id');
   if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
 
   const url = req.url || '/';
@@ -662,11 +663,12 @@ async function handleHostedMcp(req: import('node:http').IncomingMessage, res: im
 
   // POST → JSON-RPC (MCP Streamable HTTP transport)
   if (req.method === 'POST') {
+    const MCP_JSON_HEADERS = { 'content-type': 'application/json', 'mcp-protocol-version': '2024-11-05' } as const;
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
     let body: { jsonrpc: string; id: any; method: string; params?: any };
     try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch {
-      res.writeHead(200, { 'content-type': 'application/json' });
+      res.writeHead(200, MCP_JSON_HEADERS);
       res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32700, message: 'Parse error' } }));
       return;
     }
@@ -680,7 +682,7 @@ async function handleHostedMcp(req: import('node:http').IncomingMessage, res: im
 
     // If manifest not found, return JSON-RPC error (NOT HTTP 404 — avoids OAuth trigger)
     if (!manifest) {
-      res.writeHead(200, { 'content-type': 'application/json' });
+      res.writeHead(200, MCP_JSON_HEADERS);
       res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32001, message: 'MCP server not found. Scan the URL again to re-register.' } }));
       return;
     }
@@ -703,18 +705,18 @@ async function handleHostedMcp(req: import('node:http').IncomingMessage, res: im
         const name = body.params?.name;
         const args = body.params?.arguments ?? {};
         const tool = tools.find(t => t.name === name) as (typeof tools[number] & { endpoint?: string; method?: string }) | undefined;
-        if (!tool) { res.writeHead(200, { 'content-type': 'application/json' }); res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `Unknown tool: ${name}` } })); return; }
+        if (!tool) { res.writeHead(200, MCP_JSON_HEADERS); res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `Unknown tool: ${name}` } })); return; }
         result = await callLiveTool(tool, args);
         break;
       }
       default:
-        res.writeHead(200, { 'content-type': 'application/json' });
+        res.writeHead(200, MCP_JSON_HEADERS);
         res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, error: { code: -32601, message: `Unknown method: ${body.method}` } }));
         return;
     }
 
     // Streamable HTTP compliant response
-    res.writeHead(200, { 'content-type': 'application/json' });
+    res.writeHead(200, MCP_JSON_HEADERS);
     res.end(JSON.stringify({ jsonrpc: '2.0', id: body.id, result }));
     return;
   }
