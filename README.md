@@ -69,7 +69,7 @@ When the Server Action returns `persist_failed`, the UI shows a hint code mapped
 | Hint code           | Likely fix                                                                              |
 |---------------------|----------------------------------------------------------------------------------------- |
 | `dns_unreachable`   | Wrong host in `DATABASE_URL`, or you're using the IPv6-only direct host on IPv4 network. Switch to pooler URL. |
-| `tenant_not_found`  | Wrong shard (`aws-0` vs `aws-1`) or wrong region in the pooler URL.                     |
+| `tenant_not_found`  | Usually **not** a shard mismatch — the pooler's own DNS (`aws-0`/`aws-1-<region>.pooler.supabase.com`) resolves regardless of project state, so it never tells you the shard is wrong. Run `./run.sh doctor` — it pings `https://<project-ref>.supabase.co` directly: no DNS record there means the project was deleted; DNS resolves but HTTP doesn't respond means it's paused (free-tier auto-pause after ~7 days idle — restore it from the Dashboard). |
 | `auth_failed`       | Password rotated, or `postgres.<project-ref>` tenant prefix missing from the username.  |
 | `connection_refused`| Pooler port is `6543` (not `5432`) for Transaction mode.                                |
 | `tls_failed`        | Provider requires `ssl=true`; `db.ts` enables `rejectUnauthorized:false` automatically when host contains `supabase`. |

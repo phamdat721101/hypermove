@@ -1,11 +1,11 @@
 {
   "name": "HyperMove",
-  "description": "An agent-callable consolidation surface for n-payment.",
+  "description": "An MCP gateway for cross-chain web3 data (EVM + Stellar + XRPL), news + insight, agentic tools, and n-payment settlement.",
   "url": "https://hypermove.dev",
-  "version": "0.1.0",
+  "version": "2.0.0",
   "capabilities": {
-    "tools": ["payment.x402", "reputation.read"],
-    "transports": ["http+sse", "http+json-rpc"]
+    "tools": ["search", "data.call", "news.search", "codemode.news.insight", "insight.roadmap", "ideas.generate", "skillify", "payments.settle", "payments.status"],
+    "transports": ["streamable-http"]
   },
   "endpoints": {
     "mcp": "https://hypermove.dev/api/mcp",
@@ -13,5 +13,5 @@
     "bundles": "https://hypermove.dev/bundles.json"
   },
   "license": "MIT",
-  "source": "https://github.com/phamdat721101"
+  "source": "https://github.com/phamdat721721"
 }

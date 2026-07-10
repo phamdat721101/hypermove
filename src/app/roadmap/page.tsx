@@ -16,7 +16,7 @@ interface Primitive {
 const PRIMITIVES: readonly Primitive[] = [
   { n: 1,  ios: 'Hardware abstraction',       hypermove: 'Chain abstraction (27+ chains × 14 protocols)',   status: 'shipped' },
   { n: 2,  ios: 'App distribution',           hypermove: 'OpenX marketplace (sister product)',              status: 'shipped' },
-  { n: 3,  ios: 'Inter-app connectivity',     hypermove: 'WebMCP + .well-known/webmcp.json + MCP Apps',     status: 'shipped' },
+  { n: 3,  ios: 'Inter-app connectivity',     hypermove: 'WebMCP + .well-known/webmcp.json + /mcp-connect UI',     status: 'shipped' },
   { n: 4,  ios: 'Payment rail',               hypermove: 'n-payment SDK (x402 + AP2 + 5 stablecoin rails)', status: 'shipped' },
   { n: 5,  ios: 'Identity',                   hypermove: 'ERC-8004 KYA + Phala TEE attestation',            status: 'shipped' },
   { n: 6,  ios: 'Push notifications',         hypermove: 'HyperMove Push (WebSocket/SSE event bus)',        status: 'q4', note: 'HM7' },

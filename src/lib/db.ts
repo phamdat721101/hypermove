@@ -89,6 +89,98 @@ CREATE TABLE IF NOT EXISTS hm_policy_hits (
 );
 CREATE INDEX IF NOT EXISTS idx_hm_policy_hits_created_at ON hm_policy_hits(created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_hm_policy_hits_policy     ON hm_policy_hits(policy);
+
+-- ─── HyperMove MCP Gateway v1.0 (all additive) ────────────────────────────
+CREATE TABLE IF NOT EXISTS mcp_users (
+  user_id        UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  workos_user_id TEXT UNIQUE,
+  email          TEXT,
+  tier           TEXT NOT NULL DEFAULT 'free',
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_seen_at   TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS mcp_tokens (
+  token_hash  TEXT PRIMARY KEY,
+  user_id     TEXT NOT NULL,
+  email       TEXT,
+  expires_at  TIMESTAMPTZ NOT NULL,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_tokens_user ON mcp_tokens(user_id);
+-- mcp_tokens.user_id was originally UUID, but every caller (storeToken /
+-- validateToken) always stores/queries the external identity string
+-- (WorkOS user id or "wallet:0x…"), never the mcp_users.user_id UUID PK.
+-- Widen the column on any DB created before this fix.
+ALTER TABLE mcp_tokens ALTER COLUMN user_id TYPE TEXT;
+
+CREATE TABLE IF NOT EXISTS mcp_rate_counters (
+  bucket_key  TEXT PRIMARY KEY,   -- sha256(userId + hourBucket)
+  user_id     TEXT NOT NULL,
+  hour_bucket BIGINT NOT NULL,
+  count       INT NOT NULL DEFAULT 0,
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_rate_user ON mcp_rate_counters(user_id, hour_bucket);
+
+CREATE TABLE IF NOT EXISTS mcp_paid_sessions (
+  session_id  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id     TEXT NOT NULL,
+  tier        TEXT NOT NULL,
+  chain       TEXT NOT NULL,
+  rail        TEXT NOT NULL,
+  amount      TEXT NOT NULL,
+  quota_limit INT NOT NULL DEFAULT 100,
+  quota_used  INT NOT NULL DEFAULT 0,
+  tx_hash     TEXT,
+  created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at  TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_sessions_user ON mcp_paid_sessions(user_id, expires_at);
+
+CREATE TABLE IF NOT EXISTS mcp_calls (
+  call_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id       TEXT NOT NULL,
+  session_id    UUID,
+  tool_name     TEXT NOT NULL,
+  tier          TEXT,
+  params_hash   TEXT NOT NULL,
+  response_bytes INT NOT NULL DEFAULT 0,
+  latency_ms    INT NOT NULL DEFAULT 0,
+  outcome       TEXT NOT NULL DEFAULT 'ok',
+  created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_calls_user ON mcp_calls(user_id, created_at DESC);
+
+CREATE TABLE IF NOT EXISTS mcp_catalog (
+  entry_id     TEXT PRIMARY KEY,
+  service      TEXT NOT NULL,
+  chain        TEXT,
+  kind         TEXT NOT NULL,
+  description  TEXT NOT NULL,
+  keywords     TEXT[],
+  signature    TEXT,
+  price_tier   TEXT NOT NULL,
+  embedding    JSONB,     -- vector stored as JSON array; pgvector optional (see vector-store.ts)
+  generated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_catalog_service ON mcp_catalog(service);
+CREATE INDEX IF NOT EXISTS idx_mcp_catalog_chain   ON mcp_catalog(chain, kind);
+
+CREATE TABLE IF NOT EXISTS mcp_news (
+  news_id      TEXT PRIMARY KEY,   -- sha256(url + title)
+  project      TEXT NOT NULL,
+  chain        TEXT,
+  title        TEXT NOT NULL,
+  summary      TEXT,
+  url          TEXT,
+  source       TEXT,
+  published_at TIMESTAMPTZ NOT NULL,
+  embedding    JSONB,
+  ingested_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_news_project ON mcp_news(project, published_at DESC);
+CREATE INDEX IF NOT EXISTS idx_mcp_news_published ON mcp_news(published_at DESC);
 `;
 
 let pool: Pool | null = null;
@@ -113,6 +205,28 @@ async function ensureSchema(client: PoolClient): Promise<void> {
   if (schemaReady) return;
   await client.query(TABLE_DDL);
   schemaReady = true;
+}
+
+/**
+ * Run `fn` with a pooled client after the schema is ensured. Returns null when
+ * DATABASE_URL is unset (dev / mock-first). Every MCP feature module uses this
+ * instead of re-implementing connect/ensureSchema/release — SRP + no dup.
+ */
+export async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T | null> {
+  const p = getPool();
+  if (!p) return null;
+  let client: PoolClient | null = null;
+  try {
+    client = await p.connect();
+    await ensureSchema(client);
+    return await fn(client);
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.error('[mcp:withClient] query failed', err);
+    return null;
+  } finally {
+    client?.release();
+  }
 }
 
 export interface RegistryRequest {

@@ -1,7 +1,12 @@
 /**
- * src/lib/nav-config.ts — navigation + external link data.
- * Every consumer (TopNav, FooterGoatBadge, Hero, stubs) reads from these constants only.
- * Changing a URL here propagates everywhere — single source of truth.
+ * src/lib/nav-config.ts — external link constants + docs sub-nav data.
+ *
+ * NOTE: the top nav bar itself is NOT driven by TOP_NAV below — it's
+ * hardcoded in src/components/Navbar.tsx (`navItems`). TOP_NAV exists for
+ * any future consumer that wants the top-level route list; keep it in sync
+ * with Navbar.tsx's navItems by hand until one is refactored to import the
+ * other. DOCS_NAV and the external-link constants ARE the real source of
+ * truth for their respective consumers.
  */
 
 export interface NavLink {
@@ -14,6 +19,7 @@ export interface NavLink {
 export const TOP_NAV: readonly NavLink[] = [
   { href: '/', label: 'Product' },
   { href: '/docs/quickstart', label: 'Docs' },
+  { href: '/mcp-connect', label: 'Connect' },
   { href: '/portal', label: 'Portal' },
   { href: '/registry', label: 'Registry', soon: true },
   { href: '/pricing', label: 'Pricing' },
@@ -32,6 +38,10 @@ export const DOCS_NAV: readonly DocsSection[] = [
   {
     title: 'n-payment',
     links: [{ href: '/docs/n-payment', label: 'fetchWithPayment() + 14 protocols' }],
+  },
+  {
+    title: 'MCP Gateway',
+    links: [{ href: '/docs/mcp-gateway', label: 'Agent connectivity — search + news + pay' }],
   },
 ];
 

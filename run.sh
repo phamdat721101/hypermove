@@ -141,6 +141,81 @@ cmd_doctor() {
   [[ -f .env.local ]] && ok ".env.local present" || warn ".env.local missing (will be created by ./run.sh setup)"
   [[ -d node_modules ]] && ok "node_modules present" || warn "node_modules missing (run ./run.sh setup)"
   [[ -f tracking/task-log.json ]] && ok "tracking/task-log.json present" || warn "tracking missing"
+  check_database_url
+}
+
+# DATABASE_URL reachability — a bad/expired credential here doesn't crash
+# anything (withClient() no-ops on failure) but silently breaks MCP token
+# issuance: storeToken() would hand out keys that can never authenticate.
+# node's own pg client gives the clearest signal, so shell out to it instead
+# of re-parsing the connection string in bash.
+check_database_url() {
+  local url
+  url=$(grep -E '^DATABASE_URL=' .env.local 2>/dev/null | cut -d'=' -f2-)
+  if [[ -z "$url" ]]; then
+    warn "DATABASE_URL unset — MCP token issuance + registry storage no-op"
+    return
+  fi
+  if ! have node; then
+    warn "DATABASE_URL set but node unavailable to test it"
+    return
+  fi
+  local result
+  result=$(DATABASE_URL="$url" node -e '
+    const { Pool } = require("pg");
+    const pool = new Pool({ connectionString: process.env.DATABASE_URL, ssl: { rejectUnauthorized: false }, connectionTimeoutMillis: 5000 });
+    pool.query("SELECT 1").then(() => { console.log("OK"); process.exit(0); })
+      .catch((e) => { console.log("FAIL:" + (e.message || e)); process.exit(1); });
+  ' 2>&1) || true
+  if [[ "$result" == "OK" ]]; then
+    ok "DATABASE_URL reachable"
+    return
+  fi
+  err "DATABASE_URL unreachable — ${result#FAIL:}"
+  warn "MCP token issuance (wallet + WorkOS sign-in) will silently fail until this is fixed"
+  diagnose_supabase_project "$url"
+}
+
+# Supavisor's "Tenant or user not found" is ambiguous by itself — it fires
+# for a wrong project ref, a wrong/rotated password, AND a paused project
+# (Supabase auto-pauses free-tier projects after ~7 days idle, which tears
+# down the pooler's tenant registration). Ping the project's REST endpoint
+# with zero credentials to tell "project is alive, password is wrong" apart
+# from "project itself is paused/deleted" — the fix differs completely.
+diagnose_supabase_project() {
+  local url=$1 ref
+  ref=$(printf '%s' "$url" | sed -nE 's#.*postgres\.([a-z0-9]+):.*#\1#p')
+  if [[ -z "$ref" ]]; then
+    warn "could not parse a project ref out of DATABASE_URL — check the postgres.<ref> username segment"
+    return
+  fi
+  local rest_status
+  rest_status=$(curl -s -o /dev/null -w '%{http_code}' --max-time 6 "https://${ref}.supabase.co/rest/v1/" 2>/dev/null) || true
+  rest_status=${rest_status:-000}
+  local dns_ok
+  if have node; then
+    dns_ok=$(node -e "require('dns').resolve4('${ref}.supabase.co', (e) => { console.log(e ? 'no' : 'yes'); })" 2>/dev/null) || dns_ok="no"
+  else
+    dns_ok="unknown"
+  fi
+  case "$rest_status" in
+    200|401|404)
+      err "project '$ref' is reachable (REST API → HTTP $rest_status) — the DATABASE_URL password/pooler credential is wrong or rotated."
+      warn "fix: Supabase Dashboard → Project Settings → Database → reset the database password → update DATABASE_URL in .env.local (Connection pooling → Transaction)."
+      ;;
+    000)
+      if [[ "$dns_ok" == "no" ]]; then
+        err "project '$ref' has no DNS record at ${ref}.supabase.co — the project was very likely deleted (a merely-paused project still resolves to a 'paused' page)."
+        warn "fix: check https://supabase.com/dashboard for a project with this ref. If it's gone, create a new project and update DATABASE_URL — the old data cannot be recovered from here."
+      else
+        err "project '$ref' resolves in DNS but did not respond over HTTPS — likely paused (free-tier auto-pause after ~7 days idle)."
+        warn "fix: https://supabase.com/dashboard/project/$ref → if it shows 'Paused', click Restore, then update DATABASE_URL if the password changed."
+      fi
+      ;;
+    *)
+      warn "project '$ref' REST API returned HTTP $rest_status — inconclusive; check https://supabase.com/dashboard/project/$ref directly."
+      ;;
+  esac
 }
 
 cmd_setup() {
@@ -162,7 +237,24 @@ cmd_dev() {
   ensure_env_local
   banner "dev — Next.js on :$APP_PORT (zero-config mock mode)"
   log "open http://localhost:$APP_PORT  ·  Ctrl+C to stop"
+  print_mcp_info "http://localhost:$APP_PORT"
   exec $(pick_pm) dev
+}
+
+# Prints the MCP connection surface: manifest, connect UI, JSON-RPC endpoint.
+# Called from cmd_dev (best-effort, server not up yet) and cmd_ship (server
+# was just smoke-tested, so this doubles as a "here's what you shipped" recap.
+print_mcp_info() {
+  local base=$1
+  echo
+  log "MCP gateway"
+  printf "    %smanifest%s   %s/.well-known/webmcp.json\n" "$BOLD" "$RESET" "$base"
+  printf "    %sconnect%s    %s/mcp-connect%s  (sign in, copy your bearer token)\n" "$BOLD" "$RESET" "$base" "$RESET"
+  printf "    %sendpoint%s   %s/api/mcp%s      (JSON-RPC 2.0 — tools/list, tools/call)\n" "$BOLD" "$RESET" "$base" "$RESET"
+  printf "    %shealth%s     %s/api/mcp/health\n" "$BOLD" "$RESET" "$base"
+  if [[ "${FEATURE_HYPERMOVE_MCP_GATEWAY_V1:-false}" != "true" ]]; then
+    warn "FEATURE_HYPERMOVE_MCP_GATEWAY_V1 is off — /api/mcp serves the legacy 2-tool surface. Set it (+FEATURE_MCP_AUTH_WORKOS) in .env.local to enable auth + full gateway."
+  fi
 }
 
 # ---------------------------------------------------------------------------
@@ -301,6 +393,8 @@ cmd_smoke() {
   assert_http GET "http://localhost:$APP_PORT/.well-known/webmcp.json" 200 || failed=$((failed+1))
   assert_http GET "http://localhost:$APP_PORT/.well-known/agent.json"  200 || failed=$((failed+1))
   assert_http GET "http://localhost:$APP_PORT/bundles.json"            200 || failed=$((failed+1))
+  log "mcp connect ui"
+  assert_http GET "http://localhost:$APP_PORT/mcp-connect"       200 || failed=$((failed+1))
   log "api"
   assert_http GET "http://localhost:$APP_PORT/api/revenue"       200 || failed=$((failed+1))
   assert_http GET "http://localhost:$APP_PORT/api/mcp"           200 || failed=$((failed+1))
@@ -392,6 +486,7 @@ cmd_ship() {
   cmd_report
   banner "✓ ship complete"
   ok "everything green. deploy: vercel deploy   OR   ./run.sh docker && ./run.sh docker-run"
+  print_mcp_info "https://hypermove.dev"
 }
 
 cmd_clean() {

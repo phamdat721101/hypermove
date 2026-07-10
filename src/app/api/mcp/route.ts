@@ -1,6 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { wrapAgentEndpoint, wrapMcpTool, McpToolDenied } from '@/lib/observability';
 import { defaultSentinel } from '@/lib/sentinel';
+import { isMcpGatewayEnabled } from '@/lib/platform-flag';
+import { mcpHttpHandler } from '@/lib/mcp/server';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -83,6 +85,7 @@ async function handlePost(req: NextRequest): Promise<Response> {
     return jsonRpcError(body.id ?? null, -32600, 'Invalid request');
   }
 
+  // ── Legacy 2-tool surface (gateway flag off = byte-identical rollback) ────
   const agentId = req.headers.get('x-hypermove-agent-id') ?? 'anonymous';
 
   switch (body.method) {
@@ -114,20 +117,36 @@ async function handlePost(req: NextRequest): Promise<Response> {
   }
 }
 
-export const POST = wrapAgentEndpoint({
+const legacyPost = wrapAgentEndpoint({
   name: 'hypermove.mcp',
   version: '1.0.0',
   sentinel: defaultSentinel(),
   handler: handlePost,
 });
 
-export async function GET() {
+/** POST: real MCP (Streamable HTTP) when the gateway is on; legacy JSON-RPC otherwise. */
+export async function POST(req: NextRequest): Promise<Response> {
+  if (isMcpGatewayEnabled()) return mcpHttpHandler()(req);
+  return legacyPost(req);
+}
+
+/** GET: MCP protocol handshake/stream when on; discovery JSON otherwise. */
+export async function GET(req: NextRequest): Promise<Response> {
+  if (isMcpGatewayEnabled()) return mcpHttpHandler()(req);
   return Response.json({ jsonrpc: '2.0', endpoint: '/api/mcp', tools: TOOLS.map((t) => t.name) });
+}
+
+/** DELETE: MCP session teardown when on. */
+export async function DELETE(req: NextRequest): Promise<Response> {
+  if (isMcpGatewayEnabled()) return mcpHttpHandler()(req);
+  return new Response(null, { status: 405 });
 }
 
 function jsonRpcResult(id: number | string | null, result: unknown) {
   return Response.json({ jsonrpc: '2.0', id, result });
 }
-function jsonRpcError(id: number | string | null, code: number, message: string) {
-  return Response.json({ jsonrpc: '2.0', id, error: { code, message } }, { status: 200 });
+function jsonRpcError(id: number | string | null, code: number, message: string, data?: unknown) {
+  const error: { code: number; message: string; data?: unknown } = { code, message };
+  if (data !== undefined) error.data = data;
+  return Response.json({ jsonrpc: '2.0', id, error }, { status: 200 });
 }

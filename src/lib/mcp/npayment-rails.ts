@@ -1,0 +1,106 @@
+/**
+ * src/lib/mcp/npayment-rails.ts
+ * -----------------------------
+ * The REAL settlement rail — the n-payment SDK integration behind the
+ * PaymentRail interface. Isolated in its own file so the optional heavy SDK is
+ * lazy-imported and the rest of the gateway never hard-depends on it.
+ *
+ * Settlement path: canonical x402 / EIP-3009 `transferWithAuthorization`. The
+ * agent signs an authorization to PAY_TO_ADDRESS (n-payment client-side); this
+ * merchant rail decodes it via n-payment and broadcasts it from a facilitator
+ * wallet, so the agent pays gaslessly and the merchant receives USDC.
+ *
+ * SOLID:
+ *  - Single Responsibility: settlement only. Selection/validation stay in
+ *    payment-router; session bookkeeping stays in paywall.
+ *  - Liskov: returns the same ServiceResult<PaymentReceipt> envelope as the
+ *    mock. On ANY missing config / verify failure it returns `fail` — it never
+ *    fabricates a receipt (that safety is why the mock/real split is honest).
+ *
+ * Non-EVM rails (Stellar MPP, XRPL RLUSD) intentionally fail with a clear hint
+ * until their adapter creds are wired — see docs/prd/mcp-gateway-v2.md.
+ */
+
+import { ok, fail, type ServiceResult } from './envelope';
+import type { PaymentRail, PaymentReceipt, PaymentSelection, RailId } from './payment-router';
+
+/** Canonical native-USDC token per EVM chain (Circle FiatTokenV2). */
+const USDC: Record<string, `0x${string}`> = {
+  'base-mainnet': '0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913',
+  'base-sepolia': '0x036CbD53842c5426634e7929541eC2318f3dCF7e',
+  'arbitrum-mainnet': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
+  'optimism-mainnet': '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
+  'polygon-mainnet': '0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359',
+};
+
+/** Settlement credentials present → use the real rail; otherwise mock. */
+export function isRealPaymentsConfigured(): boolean {
+  return !!(process.env.MCP_FACILITATOR_PRIVATE_KEY && process.env.PAY_TO_ADDRESS);
+}
+
+/** Resolve the viem chain object for a supported EVM x402 network, or null. */
+async function resolveEvmChain(chain: string): Promise<import('viem').Chain | null> {
+  const chains = (await import('viem/chains')) as unknown as Record<string, import('viem').Chain>;
+  const map: Record<string, string> = {
+    'base-mainnet': 'base', 'base-sepolia': 'baseSepolia',
+    'arbitrum-mainnet': 'arbitrum', 'optimism-mainnet': 'optimism', 'polygon-mainnet': 'polygon',
+  };
+  const key = map[chain];
+  return key ? chains[key] ?? null : null;
+}
+
+function decodeProof(proof: string): { authorization: unknown; signature: `0x${string}` } {
+  const json = proof.trim().startsWith('{') ? proof : Buffer.from(proof, 'base64').toString('utf8');
+  const parsed = JSON.parse(json) as { authorization?: unknown; signature?: string } & Record<string, unknown>;
+  const signature = String(parsed.signature ?? '') as `0x${string}`;
+  return { authorization: parsed.authorization ?? parsed, signature };
+}
+
+/** Real rail: broadcast the buyer's EIP-3009 authorization from the facilitator wallet. */
+export function createNPaymentRail(id: RailId): PaymentRail {
+  return {
+    id,
+    isMock: false,
+    async settle({ selection, amount, proof }): Promise<ServiceResult<PaymentReceipt>> {
+      const pk = process.env.MCP_FACILITATOR_PRIVATE_KEY as `0x${string}` | undefined;
+      if (!pk) return fail('npayment', 'facilitator key missing', { code: 'not_configured', hint: 'set MCP_FACILITATOR_PRIVATE_KEY' });
+      if (!proof) return fail('npayment', 'missing x402 payment proof', { code: 'no_proof', hint: 'submit the base64 EIP-3009 authorization as `proof`' });
+
+      const usdc = USDC[selection.chain];
+      const viemChain = await resolveEvmChain(selection.chain);
+      if (!usdc || !viemChain) {
+        return fail('npayment', `no EIP-3009 settlement route for ${selection.chain}`, { code: 'unsupported_chain', hint: `real x402 settlement supports: ${Object.keys(USDC).join(', ')}` });
+      }
+
+      try {
+        const np = await import('n-payment');
+        const { createWalletClient, createPublicClient, http } = await import('viem');
+        const { privateKeyToAccount } = await import('viem/accounts');
+
+        const { authorization, signature } = decodeProof(proof);
+        const auth = np.decodeAuthorizationPayload(authorization);
+        const { v, r, s } = np.splitSignature(signature);
+
+        const account = privateKeyToAccount(pk);
+        const rpc = process.env[`RPC_URL_${selection.chain.toUpperCase().replace(/-/g, '_')}`];
+        const transport = rpc ? http(rpc) : http();
+        const wallet = createWalletClient({ account, chain: viemChain, transport });
+        const publicClient = createPublicClient({ chain: viemChain, transport });
+
+        const txHash = await wallet.writeContract({
+          account,
+          chain: viemChain,
+          address: usdc,
+          abi: np.TRANSFER_WITH_AUTHORIZATION_ABI,
+          functionName: 'transferWithAuthorization',
+          args: [auth.from, auth.to, auth.value, auth.validAfter, auth.validBefore, auth.nonce, v, r, s],
+        });
+        await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+        return ok({ txHash, chain: selection.chain, rail: id, asset: selection.asset, amount });
+      } catch (err) {
+        return fail('npayment', err instanceof Error ? err.message : String(err), { code: 'settle_failed' });
+      }
+    },
+  };
+}

@@ -9,6 +9,8 @@
     "start": "next start -p 3003",
     "test": "vitest run --reporter=verbose",
     "test:watch": "vitest",
+    "mcp:smoke": "vitest run tests/mcp-gateway.test.ts tests/mcp-route.test.ts",
+    "mcp:refresh": "vitest run -t \"catalog\"",
     "report": "node scripts/report.mjs",
     "lint": "next lint",
     "typecheck": "tsc --noEmit"
@@ -16,18 +18,22 @@
   "dependencies": {
     "@mdx-js/loader": "^3.1.1",
     "@mdx-js/react": "^3.1.1",
+    "@modelcontextprotocol/sdk": "^1.26.0",
     "@next/mdx": "^16.2.9",
     "@tanstack/react-query": "^5.101.2",
     "linkedom": "^0.18.12",
     "lucide-react": "^1.21.0",
+    "mcp-handler": "^1.1.0",
     "motion": "^12.42.0",
+    "n-payment": "^0.30.0",
     "next": "14.2.18",
     "pg": "8.13.1",
     "porto": "^0.2.37",
     "react": "18.3.1",
     "react-dom": "18.3.1",
     "viem": "^2.53.1",
-    "wagmi": "^3.6.21"
+    "wagmi": "^3.6.21",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "6.4.6",

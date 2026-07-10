@@ -8,6 +8,7 @@ import { LogOut } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Products' },
+  { href: '/mcp-connect', label: 'Connect' },
   { href: '/portal', label: 'Portal' },
   { href: '/portal/telemetry', label: 'Telemetry' },
   { href: '/docs/quickstart', label: 'Developers' },

@@ -1,26 +1,34 @@
 {
-  "version": "0.3",
+  "version": "2.0",
   "name": "hypermove.dev",
-  "description": "The HyperMove consolidation surface — independent, MIT-licensed.",
+  "description": "The HyperMove MCP Gateway — one Model Context Protocol endpoint for cross-chain web3 data (EVM + Stellar + XRPL), daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment.",
   "homepage": "https://hypermove.dev",
   "license": "MIT",
+  "transport": {
+    "type": "streamable-http",
+    "protocolVersion": "2025-03-26",
+    "note": "Connect with any MCP client. POST/GET /api/mcp with Accept: application/json, text/event-stream."
+  },
   "endpoints": {
     "mcp": "/api/mcp",
-    "bundles": "/bundles.json"
+    "health": "/api/mcp/health",
+    "spec": "/api/mcp/spec",
+    "bundles": "/bundles.json",
+    "authorize": "/api/mcp/authorize",
+    "connect": "/mcp-connect"
   },
   "tools": [
+    { "name": "search", "description": "Ranked hybrid search over the unified cross-chain catalog." },
+    { "name": "data.call", "description": "Execute live cross-chain reads (EVM + Stellar Horizon/Soroban + XRPL)." },
+    { "name": "news.search", "description": "Search daily Stellar/XRPL/web3 news." },
+    { "name": "codemode.news.insight", "description": "AI-synthesized project insight from today's news." },
+    { "name": "insight.roadmap", "description": "Synthesize a product-upgrade roadmap from news + capabilities." },
+    { "name": "ideas.generate", "description": "Generate grounded product/feature ideas." },
+    { "name": "skillify", "description": "Codify a task into a reusable skill spec." },
     {
-      "name": "payment.x402",
-      "description": "Pay $0.01 USDC to call /api/paid-endpoint and demonstrate the x402 contract live.",
-      "monetize": {
-        "priceMicroUsdc": 10000,
-        "asset": "USDC",
-        "chain": "base-sepolia"
-      }
-    },
-    {
-      "name": "reputation.read",
-      "description": "Read an agent's on-chain reputation score (ERC-8004)."
+      "name": "payments.settle",
+      "description": "Settle a payment via n-payment (x402/MPP) to unlock a paid session.",
+      "monetize": { "tiers": { "t1_read": "0.001", "t2_realtime": "0.01", "t3_vector": "0.10" }, "asset": "USDC", "freeTier": "10 / 24h" }
     }
   ],
   "signature": null
