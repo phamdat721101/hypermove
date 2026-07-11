@@ -1,8 +1,8 @@
 {
   "version": "2.0",
-  "name": "hypermove.dev",
+  "name": "hypermove.xyz",
   "description": "The HyperMove MCP Gateway — one Model Context Protocol endpoint for cross-chain web3 data (EVM + Stellar + XRPL), daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment.",
-  "homepage": "https://hypermove.dev",
+  "homepage": "https://hypermove.xyz",
   "license": "MIT",
   "transport": {
     "type": "streamable-http",

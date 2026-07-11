@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { ArrowRight, Cloud, Zap, Shield, Layers } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { SCRIPT } from '@/lib/agent';
 
 const integrationTabs = [
   { id: 'declarative', label: 'Declarative · 3 lines', desc: 'Zero JS framework lock-in.', code: `<form data-tool-name="payment.send"
@@ -26,7 +27,7 @@ registerWeb3Tool({
   monetize: { priceMicroUsdc: 1000n, payTo: '0xYourAddress', chainId: 2345 },
 });` },
   { id: 'modeB', label: 'Mode B · 1 line', desc: 'We host the MCP proxy.', code: `<!-- Add to your <head>. That's literally the entire integration. -->
-<script src="https://hypermove.dev/h/your-domain.com/webmcp.js" defer></script>` },
+<script src="https://hypermove.xyz/h/your-domain.com/webmcp.js" defer></script>` },
 ];
 
 function CodeTabs() {
@@ -54,24 +55,40 @@ export default function HomePage() {
   const [terminalLines, setTerminalLines] = useState<Array<{ label: string; detail?: string; kind: string }>>([]);
   const [terminalState, setTerminalState] = useState<'idle' | 'running' | 'done'>('idle');
 
-  const runDemo = () => {
-    if (terminalState !== 'idle') return;
-    setTerminalState('running');
-    setTerminalLines([]);
-    const src = new EventSource('/api/agent');
-    src.addEventListener('frame', (ev: MessageEvent) => {
-      try {
-        const frame = JSON.parse(ev.data);
-        setTerminalLines((prev) => [...prev, frame]);
-      } catch {}
-    });
-    src.addEventListener('end', () => { setTerminalState('done'); src.close(); });
-    src.addEventListener('error', () => { setTerminalState('done'); src.close(); });
-  };
+  // Auto-run the demo dynamically on load and loop it — rendered entirely
+  // client-side from the shared SCRIPT (no API calls, no agent budget spend),
+  // so it stays a living demo of how an agent uses HyperMove's MCP config to
+  // access web3, on every deploy at zero cost.
   useEffect(() => {
-    if ((window as any).__gradientInstance) {
-      // Re-init existing gradient on canvas
-      try { (window as any).__gradientInstance.initGradient('#gradient-canvas'); } catch {}
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const wait = (ms: number) => new Promise<void>((r) => { timer = setTimeout(r, ms); });
+
+    const play = async () => {
+      while (!cancelled) {
+        setTerminalLines([]);
+        setTerminalState('running');
+        for (const frame of SCRIPT) {
+          if (cancelled) return;
+          setTerminalLines((prev) => [...prev, frame]);
+          if (frame.delayMs > 0) await wait(frame.delayMs);
+        }
+        if (cancelled) return;
+        setTerminalState('done');
+        await wait(4000);
+      }
+    };
+
+    void play();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []);
+
+  // Load the animated gradient shader that backs the hero. Re-inits on the
+  // #gradient-canvas if the script is already present (client-side nav).
+  useEffect(() => {
+    const instance = (window as unknown as { __gradientInstance?: { initGradient(sel: string): void } }).__gradientInstance;
+    if (instance) {
+      try { instance.initGradient('#gradient-canvas'); } catch {}
     } else if (!document.getElementById('gradient-script')) {
       const script = document.createElement('script');
       script.src = '/gradient.js';
@@ -82,46 +99,6 @@ export default function HomePage() {
 
   return (
     <div className="relative w-full overflow-hidden">
-      {/* Gradient Background — animated canvas */}
-      <canvas
-        id="gradient-canvas"
-        className="absolute -z-10"
-        style={{
-          width: '200%',
-          height: '970px',
-          transform: 'rotate(-10deg)',
-          top: '-600px',
-          left: '-50%',
-          '--gradient-color-1': '#ef008f',
-          '--gradient-color-2': '#6ec3f4',
-          '--gradient-color-3': '#7038ff',
-          '--gradient-color-4': '#ffba27',
-        } as React.CSSProperties}
-      />
-
-      {/* Hero */}
-      <section className="relative z-10 section-container pt-40 pb-32">
-        <div className="max-w-4xl mx-auto text-center">
-          <h1 className="font-heading text-5xl md:text-6xl lg:text-[94px] font-bold text-white leading-[1.15] tracking-tight">
-            Make any web3 dApp <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0a2540] to-[#1e0a3c]">agent-callable in 3 lines of HTML</span>
-          </h1>
-          <p className="mt-6 text-lg text-hm-primary/80 leading-relaxed max-w-2xl mx-auto">
-            <code className="font-mono text-hm-purple">hypermove.dev</code> is the single destination where any web3 dApp becomes agent-callable and starts earning USDC per agent call in five minutes. The homepage IS the demo — watch an AI agent pay the page $0.01 in real time.
-          </p>
-          <div className="mt-8 flex items-center justify-center gap-4">
-            <Link href="/portal/generate" className="group flex items-center space-x-2 rounded-lg bg-hm-purple hover:bg-hm-purple/90 px-6 py-3 text-sm font-semibold text-white transition-all shadow-lg shadow-hm-purple/20">
-              <span>Scan Your URL Now</span>
-              <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
-            </Link>
-            <Link href="/portal" className="flex items-center space-x-1.5 rounded-lg border border-hm-accent bg-white hover:bg-hm-muted px-6 py-3 text-sm font-semibold text-hm-dark hover:text-hm-primary transition-colors">
-              <Layers className="h-4 w-4" />
-              <span>Browse Catalog</span>
-            </Link>
-          </div>
-        </div>
-      </section>
-
-      {/* Partners — hidden for now */}
       {/* <section className="relative z-10 section-container py-16">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-8 items-center justify-items-center">
           {['GOAT Network', 'Claude', 'Cursor', 'Kiro', 'Bedrock', 'Uniswap', 'Aave', 'OpenAI'].map((name) => (
@@ -130,26 +107,36 @@ export default function HomePage() {
         </div>
       </section> */}
 
-      {/* Unified Platform Section */}
-      <section className="bg-hm-bg py-20">
-        <div className="section-container">
-          <p className="subtitle">Unified platform</p>
-          <h2 className="font-heading text-3xl md:text-4xl font-bold mt-2 mb-6 max-w-2xl text-hm-primary">
+      {/* MCP-tools hero — animated gradient backdrop restores the color effect */}
+      <section className="relative overflow-hidden pt-32 pb-20">
+        <canvas
+          id="gradient-canvas"
+          className="absolute inset-0 -z-10 h-full w-full"
+          style={{
+            '--gradient-color-1': '#ef008f',
+            '--gradient-color-2': '#6ec3f4',
+            '--gradient-color-3': '#7038ff',
+            '--gradient-color-4': '#ffba27',
+          } as React.CSSProperties}
+        />
+        <div className="section-container relative z-10">
+          <p className="subtitle2">Unified platform</p>
+          <h2 className="font-heading text-3xl md:text-4xl font-bold mt-2 mb-6 max-w-2xl text-white">
             All the MCP tools you&apos;ll ever need
           </h2>
           <div className="flex flex-col md:flex-row gap-8 mb-8">
-            <p className="flex-1 text-hm-grey text-lg leading-relaxed">
+            <p className="flex-1 text-white/85 text-lg leading-relaxed">
               We&apos;ve got everything you need to turn any website or dApp into an AI-agent-callable MCP server. Scan URLs, extract tools, generate configs — all from one platform across{' '}
-              <a href="#" className="text-hm-purple font-medium">every major chain</a> and{' '}
-              <a href="#" className="text-hm-purple font-medium">protocol</a>.
+              <a href="#" className="font-medium text-white underline decoration-white/40 hover:decoration-white">every major chain</a> and{' '}
+              <a href="#" className="font-medium text-white underline decoration-white/40 hover:decoration-white">protocol</a>.
             </p>
-            <p className="flex-1 text-hm-grey text-lg leading-relaxed">
-              We also help you <a href="#" className="text-hm-purple font-medium">monetize agent calls</a>,{' '}
-              <a href="#" className="text-hm-purple font-medium">manage quotas</a>, and{' '}
-              <a href="#" className="text-hm-purple font-medium">host MCP servers</a> — so AI agents can discover and pay for your tools on-chain.
+            <p className="flex-1 text-white/85 text-lg leading-relaxed">
+              We also help you <a href="#" className="font-medium text-white underline decoration-white/40 hover:decoration-white">monetize agent calls</a>,{' '}
+              <a href="#" className="font-medium text-white underline decoration-white/40 hover:decoration-white">manage quotas</a>, and{' '}
+              <a href="#" className="font-medium text-white underline decoration-white/40 hover:decoration-white">host MCP servers</a> — so AI agents can discover and pay for your tools on-chain.
             </p>
           </div>
-          <Link href="/portal/generate" className="btn-primary-purple">
+          <Link href="/mcp-connect" className="inline-flex items-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-bold text-hm-primary tracking-wide transition-all hover:bg-white/90">
             Start now
             <ArrowRight className="h-4 w-4" />
           </Link>
@@ -186,7 +173,7 @@ export default function HomePage() {
               {/* Terminal body */}
               <div className="p-5 font-mono text-sm flex-1 overflow-y-auto">
                 <p className="text-gray-400">
-                  <span className="text-green-400">~</span> <span className="text-blue-400">$</span> agent run --target hypermove.dev
+                  <span className="text-green-400">~</span> <span className="text-blue-400">$</span> agent run --target hypermove.xyz
                 </p>
                 {terminalLines.length > 0 && (
                   <div className="mt-3 flex flex-col gap-1.5">
@@ -213,13 +200,10 @@ export default function HomePage() {
                   Revenue ticker <span className="text-green-400 text-lg font-bold ml-2">${terminalState === 'done' ? '0.01' : '0.00'}</span>
                   <span className="ml-2">· {terminalState === 'done' ? '1' : '0'} calls</span>
                 </div>
-                <button
-                  onClick={terminalState === 'idle' ? runDemo : () => { setTerminalLines([]); setTerminalState('idle'); }}
-                  disabled={terminalState === 'running'}
-                  className="rounded-lg border border-gray-700 px-4 py-1.5 text-xs font-medium text-gray-300 hover:text-white hover:border-gray-500 disabled:opacity-50 transition-colors"
-                >
-                  {terminalState === 'done' ? '↻ Replay' : terminalState === 'running' ? 'Running…' : '▶ Run agent'}
-                </button>
+                <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-gray-400">
+                  <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+                  Live demo
+                </span>
               </div>
             </div>
             <div className="col-span-1 row-span-1 rounded-2xl bg-white shadow-lg p-6 flex flex-col justify-center">
@@ -247,7 +231,7 @@ export default function HomePage() {
               <p className="text-white/50 text-lg leading-relaxed mb-6">
                 We abstract the hard stuff away so you can focus on building products, not writing MCP boilerplate. Paste a URL — get a working server.
               </p>
-              <Link href="/portal/generate" className="inline-flex items-center gap-2 rounded-full bg-hm-blue px-6 py-3 text-sm font-bold text-hm-dark tracking-wide transition-all hover:bg-white">
+              <Link href="/mcp-connect" className="inline-flex items-center gap-2 rounded-full bg-hm-blue px-6 py-3 text-sm font-bold text-hm-dark tracking-wide transition-all hover:bg-white">
                 Start now
                 <ArrowRight className="h-4 w-4" />
               </Link>
@@ -347,7 +331,7 @@ export default function HomePage() {
               <p className="text-hm-grey text-lg mt-4 leading-relaxed">
                 Explore <a href="/portal" className="text-hm-purple font-medium">HyperMove</a> now, or connect your wallet and start generating MCP servers today! Free tier includes 5 scans.
               </p>
-              <Link href="/portal/generate" className="btn-primary-purple mt-6">
+              <Link href="/mcp-connect" className="btn-primary-purple mt-6">
                 Start now
                 <ArrowRight className="h-4 w-4" />
               </Link>

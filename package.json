@@ -2,7 +2,7 @@
   "name": "hypermove-app",
   "version": "0.1.0",
   "private": true,
-  "description": "hypermove.dev — make any web3 dApp agent-callable in 3 lines of HTML. Funded under GOAT AI Builder Grants.",
+  "description": "hypermove.xyz — make any web3 dApp agent-callable in 3 lines of HTML. Funded under GOAT AI Builder Grants.",
   "scripts": {
     "dev": "next dev -p 3003",
     "build": "next build",

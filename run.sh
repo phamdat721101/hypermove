@@ -486,7 +486,7 @@ cmd_ship() {
   cmd_report
   banner "✓ ship complete"
   ok "everything green. deploy: vercel deploy   OR   ./run.sh docker && ./run.sh docker-run"
-  print_mcp_info "https://hypermove.dev"
+  print_mcp_info "https://hypermove.xyz"
 }
 
 cmd_clean() {

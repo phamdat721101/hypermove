@@ -5,7 +5,7 @@ import Web3Provider from '@/components/Web3Provider';
 import './globals.css';
 
 export const metadata: Metadata = {
-  metadataBase: new URL('https://hypermove.dev'),
+  metadataBase: new URL('https://hypermove.xyz'),
   title: {
     default: 'HyperMove — Turn any dApp into an AI-agent MCP server',
     template: '%s · HyperMove',
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
   openGraph: {
     title: 'HyperMove — Turn any dApp into an AI-agent MCP server',
     description: 'Paste a URL → AI analyzes → get MCP server config. No coding needed.',
-    url: 'https://hypermove.dev',
+    url: 'https://hypermove.xyz',
     siteName: 'HyperMove',
     type: 'website',
   },

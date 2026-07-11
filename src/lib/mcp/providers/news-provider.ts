@@ -58,7 +58,7 @@ export class MockNewsProvider implements NewsProvider {
 
     const items: NewsItem[] = chosen.map((project) => {
       const seed = `${project}:${opts.date}`;
-      const url = `https://news.hypermove.dev/${encodeURIComponent(project)}/${opts.date}`;
+      const url = `https://news.hypermove.xyz/${encodeURIComponent(project)}/${opts.date}`;
       const title = `${project} daily update — ${opts.date}`;
       return {
         id: newsId(url, title),

@@ -82,7 +82,7 @@ export function mcpHttpHandler(): (req: Request) => Promise<Response> {
     (server) => {
       for (const tool of getTools()) registerTool(server, tool);
     },
-    { serverInfo: { name: 'hypermove.dev', version: '2.0.0' } },
+    { serverInfo: { name: 'hypermove.xyz', version: '2.0.0' } },
     { basePath: '/api', disableSse: true, verboseLogs: false },
   );
   handler = withMcpAuth(base, verifyToken, { required: true });

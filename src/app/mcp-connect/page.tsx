@@ -9,7 +9,7 @@ import { useWalletModal } from '@/lib/wallet-modal-context';
  *
  * Two independent gaps fixed here:
  *
- * 1. Origin: every curl example used to hardcode `https://hypermove.dev`,
+ * 1. Origin: every curl example used to hardcode `https://hypermove.xyz`,
  *    which is wrong on any other deploy (localhost, a VPS behind duckdns,
  *    a staging domain). Fixed by deriving the base URL from the browser's
  *    own `window.location.origin` — this page never needs to know its host.
@@ -118,11 +118,6 @@ export default function McpConnectPage() {
       ) : (
         <NoAuthPanel gatewayEnabled={state.gatewayEnabled} origin={origin} />
       )}
-
-      <p className="mt-8 text-xs text-neutral-500">
-        Throwaway local debugging only: <code className="rounded bg-neutral-800 px-1 py-0.5">HYPERMOVE_DEV_UNAUTHENTICATED=true</code> from
-        <code className="ml-1 rounded bg-neutral-800 px-1 py-0.5">localhost</code> skips the key entirely — don't set this on a shared or deployed environment.
-      </p>
     </main>
   );
 }
@@ -135,7 +130,7 @@ function useTokenFromQuery(): string | null {
   return token;
 }
 
-/** The page's own origin — never hardcode a domain; works on hypermove.dev, a VPS, or localhost. */
+/** The page's own origin — never hardcode a domain; works on hypermove.xyz, a VPS, or localhost. */
 function useOrigin(): string {
   const [origin, setOrigin] = useState('');
   useEffect(() => setOrigin(window.location.origin), []);

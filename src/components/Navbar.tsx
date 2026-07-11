@@ -7,10 +7,10 @@ import { useState, useEffect } from 'react';
 import { LogOut } from 'lucide-react';
 
 const navItems = [
-  { href: '/', label: 'Products' },
+  { href: '/', label: 'Home' },
   { href: '/mcp-connect', label: 'Connect' },
-  { href: '/portal', label: 'Portal' },
-  { href: '/docs/quickstart', label: 'Developers' },
+  { href: '/portal', label: 'Tools' },
+  { href: '/docs/quickstart', label: 'Docs' },
   { href: '/pricing', label: 'Pricing' },
 ];
 

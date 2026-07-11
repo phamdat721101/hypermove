@@ -39,7 +39,7 @@ export async function GET(req: NextRequest) {
         ok: true,
         token,
         token_type: 'Bearer',
-        usage: 'Send `Authorization: Bearer <token>` to https://hypermove.dev/api/mcp',
+        usage: 'Send `Authorization: Bearer <token>` to https://hypermove.xyz/api/mcp',
       }),
       { status: 200, headers: { 'content-type': 'application/json', 'set-cookie': clearStateCookie } },
     );

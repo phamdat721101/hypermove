@@ -33,14 +33,14 @@ export interface AgentFrame {
 }
 
 export const SCRIPT: readonly AgentFrame[] = [
-  { kind: 'manifest.fetch', label: 'GET /.well-known/webmcp.json',              detail: 'curl -s hypermove.dev/.well-known/webmcp.json',         delayMs: 700 },
-  { kind: 'manifest.ok',    label: '✓ manifest received',                       detail: '2 tools · signed:false (S3 lands DNS-TXT sig)',         delayMs: 700 },
-  { kind: 'paywall.call',   label: 'POST /api/mcp tools/call payment.x402',     detail: '{ "tool": "payment.x402", "target": "/api/paid-endpoint" }', delayMs: 800 },
-  { kind: 'paywall.402',    label: '← HTTP 402 · WWW-Authenticate: x402-USDC',  detail: 'realm="hypermove.dev" price="10000" chain="base-sepolia"', delayMs: 900 },
-  { kind: 'paywall.sign',   label: 'OWS vault · policy.check + sign EIP-3009',  detail: 'maxPerTx=100000 ✓ · chain.allow=base-sepolia ✓',        delayMs: 700 },
-  { kind: 'paywall.tx',     label: 'tx submitted',                              detail: '0xfa6c…b21e · settle in ~1.2s',                          delayMs: 900 },
-  { kind: 'paywall.200',    label: '→ HTTP 200 · OK',                           detail: '{ "ok": true, "amount_usdc": 10000 }',                  delayMs: 700 },
-  { kind: 'revenue.tick',   label: 'hypermove.dev revenue +$0.01',              detail: 'optimistic tick · ledger commit in mcp-host (S3)',      delayMs: 600 },
+  { kind: 'manifest.fetch', label: 'load MCP config · hypermove.xyz',           detail: 'GET /.well-known/webmcp.json',                            delayMs: 700 },
+  { kind: 'manifest.ok',    label: '✓ 4 web3 tools discovered',                 detail: 'payment.x402 · swap.quote · balance.read · tx.send',      delayMs: 800 },
+  { kind: 'paywall.call',   label: 'tools/call payment.x402 → access web3',     detail: '{ "target": "/api/paid-endpoint", "chain": "base" }',     delayMs: 800 },
+  { kind: 'paywall.402',    label: '← HTTP 402 · WWW-Authenticate: x402-USDC',  detail: 'realm="hypermove.xyz" price="10000" chain="base-sepolia"', delayMs: 900 },
+  { kind: 'paywall.sign',   label: 'OWS vault · policy.check + sign EIP-3009',  detail: 'maxPerTx=100000 ✓ · chain.allow=base-sepolia ✓',          delayMs: 700 },
+  { kind: 'paywall.tx',     label: 'settle on-chain · USDC transfer',           detail: '0xfa6c…b21e · confirmed in ~1.2s',                        delayMs: 900 },
+  { kind: 'paywall.200',    label: '→ HTTP 200 · web3 action executed',         detail: '{ "ok": true, "amount_usdc": 10000 }',                    delayMs: 700 },
+  { kind: 'revenue.tick',   label: 'hypermove.xyz revenue +$0.01',              detail: 'agent paid the dApp per call · settled on-chain',         delayMs: 600 },
   { kind: 'done',           label: 'agent flow complete · 8.0s end-to-end',     delayMs: 0 },
 ];
 

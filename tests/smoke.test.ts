@@ -58,7 +58,7 @@ describe('hypermove-app · S1 scaffold smoke', () => {
 
   it('.well-known/webmcp.json is independent (no GOAT framing)', () => {
     const manifest = JSON.parse(read('public/.well-known/webmcp.json'));
-    expect(manifest.name).toBe('hypermove.dev');
+    expect(manifest.name).toBe('hypermove.xyz');
     expect(manifest.version).toBe('0.3');
     expect(JSON.stringify(manifest)).not.toMatch(/GOAT.*Builder.*Grant/i);
   });

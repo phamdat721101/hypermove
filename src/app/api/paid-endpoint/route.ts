@@ -31,7 +31,7 @@ async function handleGet(req: NextRequest): Promise<Response> {
     return new Response(JSON.stringify({ error: 'payment_required', accept: 'x402-USDC' }), {
       status: 402,
       headers: {
-        'www-authenticate': `x402-USDC realm="hypermove.dev", chain="${CHAIN}", payTo="${PAY_TO}", price="${PRICE_MICRO}"`,
+        'www-authenticate': `x402-USDC realm="hypermove.xyz", chain="${CHAIN}", payTo="${PAY_TO}", price="${PRICE_MICRO}"`,
         'content-type': 'application/json',
         'x-x402-version': '1',
       },

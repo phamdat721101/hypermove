@@ -1,6 +1,6 @@
 # hypermove-app
 
-> **`hypermove.dev`** — make any web3 dApp agent-callable. Monetize in 5 minutes with x402-USDC.
+> **`hypermove.xyz`** — make any web3 dApp agent-callable. Monetize in 5 minutes with x402-USDC.
 > Open-source, MIT-licensed, built on [`n-payment`](https://www.npmjs.com/package/n-payment).
 
 Standalone Next.js 14 implementation of the HyperMove consolidation surface. The homepage IS the demo — an AI agent visiting the site reads `.well-known/webmcp.json`, hits a $0.01 `payment.x402` paywall, signs through n-payment, and renders a 200 OK — all in-page.

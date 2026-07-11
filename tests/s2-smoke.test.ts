@@ -72,7 +72,7 @@ describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
   it('bundles catalog parses + has ≥3 bundles with required fields', async () => {
     const { readBundles } = await import('@/lib/bundles');
     const catalog = await readBundles();
-    expect(catalog.publisher).toBe('hypermove.dev');
+    expect(catalog.publisher).toBe('hypermove.xyz');
     expect(catalog.bundles.length).toBeGreaterThanOrEqual(3);
     for (const b of catalog.bundles) {
       expect(b.id).toMatch(/^[a-z0-9-]+$/);
