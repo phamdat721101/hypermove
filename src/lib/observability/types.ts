@@ -1,8 +1,7 @@
 /**
  * src/lib/observability/types.ts
  * -------------------------------
- * Event schema shared by the capture layer, /api/errors collection endpoint,
- * the sentinel policy engine, and the /portal/telemetry dashboard.
+ * Event schema shared by the capture layer and the sentinel policy engine.
  *
  * SOLID:
  *  - Single Responsibility: this module defines types + validators only. No

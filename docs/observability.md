@@ -122,7 +122,7 @@ Enforcement pipeline:
 ```ts
 import { guard } from '@/lib/security';
 
-const g = await guard(req, { endpoint: '/api/errors' });
+const g = await guard(req, { endpoint: '/api/paid-endpoint' });
 if (!g.allow) return new Response(g.reason, { status: g.status ?? 401 });
 // Optional per-agent context
 const rateLimiter = g.context!.isolate('rate', () => new Map());
@@ -143,12 +143,6 @@ Set `SENTRY_DSN` in the environment. HyperMove lazy-imports `@sentry/nextjs` at
 first `invoke.error` capture. If the package is not installed, the sink silently
 degrades to a no-op. Zero required dependency, zero performance impact on the
 primary path.
-
-## Dashboard
-
-Enable `FEATURE_HM_PLATFORM=true` and open `/portal/telemetry` — three sections
-render live via SSE (Errors + Policies + Metrics). Set
-`DATABASE_URL` for persistence (Supabase pooler recommended; see main README).
 
 ## Rollback
 

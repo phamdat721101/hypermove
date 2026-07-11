@@ -10,9 +10,7 @@ const navItems = [
   { href: '/', label: 'Products' },
   { href: '/mcp-connect', label: 'Connect' },
   { href: '/portal', label: 'Portal' },
-  { href: '/portal/telemetry', label: 'Telemetry' },
   { href: '/docs/quickstart', label: 'Developers' },
-  { href: '/roadmap', label: 'Roadmap' },
   { href: '/pricing', label: 'Pricing' },
 ];
 
@@ -26,7 +24,7 @@ export default function Navbar() {
 
   const isHome = pathname === '/';
 
-  // Longest-prefix match wins so /portal doesn't stay highlighted on /portal/telemetry.
+  // Longest-prefix match wins so /portal doesn't stay highlighted on nested routes.
   const activeHref = [...navItems]
     .filter((i) => pathname === i.href || (i.href !== '/' && pathname.startsWith(i.href + '/')))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href;
