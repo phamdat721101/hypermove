@@ -29,7 +29,7 @@ export function ComingSoon({ title, sprint, blurb }: { title: string; sprint: st
         <span className="text-body-sm text-on-surface-variant">Lands after the S2 ship-gate.</span>
       </div>
       <div className="mt-10 flex flex-wrap gap-3">
-        <Link href="/portal" className="btn-primary">Browse bundles</Link>
+        <Link href="/tools" className="btn-primary">Browse tools</Link>
         <a href={BOOK_DEMO_URL} target="_blank" rel="noreferrer" className="btn-ghost">
           Book early access
         </a>

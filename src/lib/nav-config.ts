@@ -20,7 +20,7 @@ export const TOP_NAV: readonly NavLink[] = [
   { href: '/', label: 'Home' },
   { href: '/docs/quickstart', label: 'Docs' },
   { href: '/mcp-connect', label: 'Connect' },
-  { href: '/portal', label: 'Tools' },
+  { href: '/tools', label: 'Tools' },
   { href: '/registry', label: 'Registry', soon: true },
   { href: '/pricing', label: 'Pricing' },
 ];

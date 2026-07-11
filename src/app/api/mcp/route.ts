@@ -3,6 +3,7 @@ import { wrapAgentEndpoint, wrapMcpTool, McpToolDenied } from '@/lib/observabili
 import { defaultSentinel } from '@/lib/sentinel';
 import { isMcpGatewayEnabled } from '@/lib/platform-flag';
 import { mcpHttpHandler } from '@/lib/mcp/server';
+import { guard } from '@/lib/security';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -126,6 +127,19 @@ const legacyPost = wrapAgentEndpoint({
 
 /** POST: real MCP (Streamable HTTP) when the gateway is on; legacy JSON-RPC otherwise. */
 export async function POST(req: NextRequest): Promise<Response> {
+  // Agentjacking defense (rate-limit / payload cap / header prompt-injection /
+  // ed25519). Runs at the route level — the layer guard() was designed for — so
+  // every MCP tool call (including harness-wrapped skill.* tools) is protected.
+  // guard() reads only headers (never the body), so mcpHttpHandler can still
+  // parse the JSON-RPC body downstream. When FEATURE_HM_PLATFORM=false, guard()
+  // is a pass-through (allow=true), preserving byte-identical rollback.
+  const g = await guard(req, { endpoint: 'hypermove.mcp' });
+  if (!g.allow) {
+    return Response.json(
+      { jsonrpc: '2.0', id: null, error: { code: -32000, message: g.reason ?? 'request_denied' } },
+      { status: g.status ?? 403 },
+    );
+  }
   if (isMcpGatewayEnabled()) return mcpHttpHandler()(req);
   return legacyPost(req);
 }

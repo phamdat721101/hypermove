@@ -80,3 +80,13 @@ export function isMcpNewsEnabled(): boolean {
 export function isMcpAgenticEnabled(): boolean {
   return subFlag('FEATURE_MCP_AGENTIC_V1');
 }
+
+/**
+ * HyperMove /tools skill registry — harness-wrapped agent-skills exposed as MCP
+ * tools (skill.*, skills.list, skills.install). Opt-out (default ON when the
+ * gateway is on), consistent with the other gateway sub-flags; disable with
+ * FEATURE_HYPERMOVE_TOOLS=false.
+ */
+export function isMcpSkillsEnabled(): boolean {
+  return subFlag('FEATURE_HYPERMOVE_TOOLS');
+}

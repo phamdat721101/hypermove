@@ -93,7 +93,7 @@ describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
   });
 
   it('registerBundleRequest Server Action rejects bad email + unknown bundle', async () => {
-    const { registerBundleRequest } = await import('@/app/portal/actions');
+    const { registerBundleRequest } = await import('@/app/tools/actions');
 
     const r1 = await registerBundleRequest({ email: 'not-an-email', bundleId: 'x402-base-starter' });
     expect(r1.ok).toBe(false);

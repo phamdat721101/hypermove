@@ -9,7 +9,7 @@ import { LogOut } from 'lucide-react';
 const navItems = [
   { href: '/', label: 'Home' },
   { href: '/mcp-connect', label: 'Connect' },
-  { href: '/portal', label: 'Tools' },
+  { href: '/tools', label: 'Tools' },
   { href: '/docs/quickstart', label: 'Docs' },
   { href: '/pricing', label: 'Pricing' },
 ];
@@ -24,7 +24,7 @@ export default function Navbar() {
 
   const isHome = pathname === '/';
 
-  // Longest-prefix match wins so /portal doesn't stay highlighted on nested routes.
+  // Longest-prefix match wins so /tools doesn't stay highlighted on nested routes.
   const activeHref = [...navItems]
     .filter((i) => pathname === i.href || (i.href !== '/' && pathname.startsWith(i.href + '/')))
     .sort((a, b) => b.href.length - a.href.length)[0]?.href;
@@ -68,7 +68,7 @@ export default function Navbar() {
           </div>
         ) : (
           <Link
-            href="/portal"
+            href="/tools"
             className={`rounded-full px-5 py-2 text-sm font-bold transition-colors ${isHome ? 'bg-white/20 hover:bg-white/30 backdrop-blur-sm text-white' : 'bg-hm-purple hover:bg-hm-purple/90 text-white'}`}
           >
             Start For Free

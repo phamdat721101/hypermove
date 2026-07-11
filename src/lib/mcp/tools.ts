@@ -15,7 +15,8 @@ import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
 import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
-import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled } from '../platform-flag';
+import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled } from '../platform-flag';
+import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 
 /** Per-call context injected by the gateway (never from client args). */
@@ -279,6 +280,7 @@ export function getTools(): ToolDef[] {
   ];
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
   if (isMcpAgenticEnabled()) tools.push(roadmapTool, ideasTool, skillifyTool);
+  if (isMcpSkillsEnabled()) tools.push(...getSkillTools());
   return tools;
 }
 

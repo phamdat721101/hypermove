@@ -1,7 +1,7 @@
 'use server';
 
 /**
- * src/app/portal/actions.ts
+ * src/app/tools/actions.ts
  * --------------------------
  * Server Action for bundle requests. Runs on the server (no browser exposure
  * of DATABASE_URL); called directly from BundleRequestForm via `action={…}`.

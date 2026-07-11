@@ -35,7 +35,7 @@ describe('hypermove-app · S1 scaffold smoke', () => {
       'src/app/docs/n-payment/page.mdx',
       'src/app/docs/quickstart/page.mdx',
       'src/app/pricing/page.tsx',
-      'src/app/portal/page.tsx',
+      'src/app/tools/page.tsx',
       'src/app/dashboard/page.tsx',
       'src/app/registry/page.tsx',
       'public/.well-known/webmcp.json',

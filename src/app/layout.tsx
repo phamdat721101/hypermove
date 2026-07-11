@@ -57,8 +57,8 @@ function Footer() {
           <div>
             <h3 className="font-heading text-lg font-bold mb-4">Products</h3>
             <ul className="space-y-3 text-sm text-hm-dark/70">
-              <li><a href="/portal/generate" className="hover:text-hm-purple">MCP Generator</a></li>
-              <li><a href="/portal" className="hover:text-hm-purple">Portal Catalog</a></li>
+              <li><a href="/tools/generate" className="hover:text-hm-purple">MCP Generator</a></li>
+              <li><a href="/tools" className="hover:text-hm-purple">Tools Catalog</a></li>
               <li><a href="/pricing" className="hover:text-hm-purple">Pricing</a></li>
               <li><a href="/docs/quickstart" className="hover:text-hm-purple">API Docs</a></li>
             </ul>

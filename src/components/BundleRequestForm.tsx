@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useTransition } from 'react';
-import { registerBundleRequest } from '@/app/portal/actions';
+import { registerBundleRequest } from '@/app/tools/actions';
 
 interface Props {
   bundleId: string;

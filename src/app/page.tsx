@@ -249,7 +249,7 @@ export default function HomePage() {
                   <img src="/assets/cube-icon.png" alt="" className="h-12 mb-3" onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }} />
                   <h3 className="text-white font-heading text-lg font-medium">Auto-detect tools</h3>
                   <p className="text-white/50 text-sm mt-1">AI finds forms, buttons, APIs, DeFi actions automatically.</p>
-                  <a href="/portal" className="text-hm-blue text-sm font-bold mt-2 inline-flex items-center gap-1 hover:opacity-75">
+                  <a href="/tools" className="text-hm-blue text-sm font-bold mt-2 inline-flex items-center gap-1 hover:opacity-75">
                     Explore catalog <ArrowRight className="h-3 w-3" />
                   </a>
                 </div>
@@ -329,7 +329,7 @@ export default function HomePage() {
             <div className="flex-1">
               <h2 className="font-heading text-3xl md:text-4xl font-bold text-hm-primary">What are you waiting for?</h2>
               <p className="text-hm-grey text-lg mt-4 leading-relaxed">
-                Explore <a href="/portal" className="text-hm-purple font-medium">HyperMove</a> now, or connect your wallet and start generating MCP servers today! Free tier includes 5 scans.
+                Explore <a href="/tools" className="text-hm-purple font-medium">HyperMove</a> now, or connect your wallet and start generating MCP servers today! Free tier includes 5 scans.
               </p>
               <Link href="/mcp-connect" className="btn-primary-purple mt-6">
                 Start now

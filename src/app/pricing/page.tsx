@@ -14,7 +14,7 @@ const TIERS = [
     cadence: '5 free scans',
     description: 'For prototyping and testing. Connect wallet to start.',
     features: ['5 free MCP generations', 'Hosted MCP endpoint', 'All chains supported', 'MCP config for any IDE', 'Community support'],
-    cta: { label: 'Start free', href: '/portal/generate' },
+    cta: { label: 'Start free', href: '/tools/generate' },
   },
   {
     name: 'Pro',
@@ -22,7 +22,7 @@ const TIERS = [
     cadence: 'BTC / month',
     description: 'Unlimited scans for teams building with AI agents.',
     features: ['Unlimited MCP generations', 'Hosted MCP endpoint', 'Priority LLM analysis', 'All tools + hosted MCP', 'Email + DM support'],
-    cta: { label: 'Upgrade with BTC', href: '/portal?plan=pro' },
+    cta: { label: 'Upgrade with BTC', href: '/tools?plan=pro' },
     highlight: true,
   },
   {
