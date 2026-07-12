@@ -10,7 +10,7 @@ const navItems = [
   { href: '/', label: 'Home' },
   { href: '/mcp-connect', label: 'Connect' },
   { href: '/tools', label: 'Tools' },
-  { href: '/docs/quickstart', label: 'Docs' },
+  { href: '/docs', label: 'Docs' },
   { href: '/pricing', label: 'Pricing' },
 ];
 

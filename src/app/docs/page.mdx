@@ -1,0 +1,47 @@
+export const metadata = { title: 'HyperMove — Introduction', description: 'What HyperMove is, how it works, and how to use it: make any web3 dApp agent-callable and monetize per call.' };
+
+# Introduction
+
+> **HyperMove makes any web3 dApp agent-callable — and monetizable per call.**
+> One MCP endpoint lets AI agents discover, connect to, and pay for on-chain
+> actions across 27+ chains. Open-source, MIT, built on [n-payment](/docs/n-payment).
+
+_Agents: read all of these docs as one plain-text document at [`/llms.txt`](/llms.txt)._
+
+## What it is
+
+AI agents can reason, but they can't safely *act* on web3 without a unified,
+paid, guard-railed connection. HyperMove is that connection. It exposes three surfaces:
+
+- **MCP Gateway** (`https://hypermove.xyz/api/mcp`) — one endpoint where an agent
+  searches a unified cross-chain catalog, reads live data (EVM · Stellar · XRPL),
+  and pays per query. See [MCP Gateway](/docs/mcp-gateway).
+- **Tools & skills** — harness-wrapped agent-skills you install into any MCP client
+  in one paste; each runs inside observability + policy + output-enforcement. Browse
+  them at [/tools](/tools).
+- **WebMCP client** — 3 lines of HTML turn any dApp's forms and buttons into
+  agent-callable tools, monetized with an x402-USDC paywall.
+
+## How it works
+
+1. An agent connects to the gateway and gets a bearer key (wallet signature or email).
+2. It discovers capabilities (`search`, `data.call`, `skill.*`) over MCP.
+3. When it calls a paid tool, HyperMove returns an HTTP 402 challenge; the agent
+   settles in USDC via [n-payment](/docs/n-payment) and the call completes.
+4. Every call runs inside the harness — errors captured, policy enforced, output verified.
+
+## How to use it
+
+Pick the path that matches your goal:
+
+| I want to… | Start here |
+|---|---|
+| **Let my agent call web3** | [Connect your agent](/mcp-connect) → then the [MCP Gateway](/docs/mcp-gateway) guide |
+| **Install a ready-made skill** | Browse [/tools](/tools), copy one install prompt, paste into your agent |
+| **Monetize my own dApp or API** | [Quickstart — 5 min](/docs/quickstart) + the [n-payment SDK](/docs/n-payment) |
+
+## Next
+
+- [Quickstart — 5 min](/docs/quickstart) — a running paywall + an agent that pays $0.01.
+- [MCP Gateway](/docs/mcp-gateway) — connect, search, pull news, pay per query.
+- [n-payment SDK](/docs/n-payment) — `fetchWithPayment()`, `createPaywall()`, 27 chains · 14 protocols.

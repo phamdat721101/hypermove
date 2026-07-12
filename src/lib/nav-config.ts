@@ -18,7 +18,7 @@ export interface NavLink {
 
 export const TOP_NAV: readonly NavLink[] = [
   { href: '/', label: 'Home' },
-  { href: '/docs/quickstart', label: 'Docs' },
+  { href: '/docs', label: 'Docs' },
   { href: '/mcp-connect', label: 'Connect' },
   { href: '/tools', label: 'Tools' },
   { href: '/registry', label: 'Registry', soon: true },
@@ -32,16 +32,20 @@ export interface DocsSection {
 
 export const DOCS_NAV: readonly DocsSection[] = [
   {
+    title: 'Overview',
+    links: [{ href: '/docs', label: 'Introduction' }],
+  },
+  {
     title: 'Get started',
     links: [{ href: '/docs/quickstart', label: 'Quickstart — 5 min' }],
   },
   {
-    title: 'n-payment',
-    links: [{ href: '/docs/n-payment', label: 'fetchWithPayment() + 14 protocols' }],
+    title: 'Platform',
+    links: [{ href: '/docs/mcp-gateway', label: 'MCP Gateway' }],
   },
   {
-    title: 'MCP Gateway',
-    links: [{ href: '/docs/mcp-gateway', label: 'Agent connectivity — search + news + pay' }],
+    title: 'Payments',
+    links: [{ href: '/docs/n-payment', label: 'n-payment SDK' }],
   },
 ];
 

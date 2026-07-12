@@ -3,12 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { Compass, Terminal, ThumbsUp, ThumbsDown } from 'lucide-react';
-
-const nav = [
-  { href: '/docs/quickstart', label: 'Quickstart — 5 min', icon: Compass },
-  { href: '/docs/n-payment', label: 'n-payment SDK', icon: Terminal },
-];
+import { ThumbsUp, ThumbsDown } from 'lucide-react';
+import { DOCS_NAV } from '@/lib/nav-config';
 
 export default function DocsLayout({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -18,19 +14,22 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
     <div className="section-container pt-24 pb-8">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Sidebar */}
-        <aside className="lg:col-span-3 rounded-xl border border-hm-accent bg-white p-4 space-y-1 h-fit sticky top-20 shadow-sm">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-hm-grey px-3 mb-2">Docs Outline</p>
-          {nav.map((item) => {
-            const Icon = item.icon;
-            const isActive = pathname === item.href;
-            return (
-              <Link key={item.href} href={item.href}
-                className={`w-full flex items-center space-x-2.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-hm-purple text-white' : 'text-hm-grey hover:text-hm-dark hover:bg-hm-muted'}`}>
-                <Icon className="h-4 w-4" />
-                <span>{item.label}</span>
-              </Link>
-            );
-          })}
+        <aside className="lg:col-span-3 rounded-xl border border-hm-accent bg-white p-4 h-fit sticky top-20 shadow-sm">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-hm-grey px-3 mb-3">Documentation</p>
+          {DOCS_NAV.map((section) => (
+            <div key={section.title} className="mb-3">
+              <p className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-wider text-hm-grey/70">{section.title}</p>
+              {section.links.map((item) => {
+                const isActive = pathname === item.href;
+                return (
+                  <Link key={item.href} href={item.href}
+                    className={`block rounded-lg px-3 py-2 text-sm font-medium transition-colors ${isActive ? 'bg-hm-purple text-white' : 'text-hm-grey hover:text-hm-dark hover:bg-hm-muted'}`}>
+                    {item.label}
+                  </Link>
+                );
+              })}
+            </div>
+          ))}
         </aside>
 
         {/* Content */}

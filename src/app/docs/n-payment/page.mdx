@@ -28,7 +28,7 @@ const client = createPaymentClient({
   },
 });
 
-const res = await client.fetchWithPayment('https://hypermove.dev/api/paid-endpoint');
+const res = await client.fetchWithPayment('https://hypermove.xyz/api/paid-endpoint');
 console.log(await res.json());      // 200 OK, paid in ~1.2s
 ```
 

@@ -8,7 +8,8 @@ node_modules/
 .pnp.*
 .yarn/
 jspm_packages/
-docs/
+# Top-level research/build docs only — NOT the Next.js app routes in src/app/docs.
+/docs/
 
 # --- build + compiled output -----------------------------------------
 .next/

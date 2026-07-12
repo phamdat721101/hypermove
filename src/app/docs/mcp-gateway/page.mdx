@@ -1,0 +1,110 @@
+export const metadata = { title: 'MCP Gateway — agent connectivity for cross-chain web3', description: 'One MCP endpoint: search + daily news + tiered multi-chain payment.' };
+
+# MCP Gateway v1.0
+
+> One endpoint — `https://hypermove.xyz/api/mcp` — makes cross-chain web3 agent-callable.
+> Search a unified catalog, pull daily news + AI insight, and pay per query on the
+> network of your choice. WorkOS sign-in, 10 free queries / 24h, then metered
+> `$0.001–$0.10` via x402/MPP. Modeled on Stellar Raven's proven pattern.
+
+The whole gateway lives behind `FEATURE_HYPERMOVE_MCP_GATEWAY_V1`. When off, `/api/mcp`
+serves the legacy 2-tool surface unchanged (60-second rollback).
+
+## Tools (v1.0)
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `search` | T1 `$0.001` | Hybrid lexical + vector search over the cross-chain catalog |
+| `codemode.vector.search` | T3 `$0.10` | Pure semantic search |
+| `codemode.spec` / `catalog` / `describe` | T1 | Discovery: super-spec, full manifest, detail-on-demand |
+| `codemode.payments.networks` | T1 | List supported networks × rails × assets before paying |
+| `news.search` | T1 | Search daily web3 news across tracked projects |
+| `codemode.news.digest` | T2 `$0.01` | Per-project daily rollup |
+| `codemode.news.insight` | T3 `$0.10` | AI-synthesized insight for one project |
+
+> `execute` (sandboxed code) and real-time `stream.subscribe` are deferred to v1.1.
+
+## 1 — Connect your wallet (required by default)
+
+`/api/mcp` requires a key — there is no anonymous free tier. **[hypermove.xyz/mcp-connect](/mcp-connect)**
+connects your wallet, has you sign one free message (no gas), and issues a bearer token from that
+signature. Email-only sign-in via WorkOS is also available from the same page for users without a wallet.
+
+```bash
+# Wallet flow happens in-browser at /mcp-connect. Scripted equivalent (WorkOS):
+open https://hypermove.xyz/api/mcp/authorize
+# → WorkOS AuthKit → /api/mcp/callback → redirects to /mcp-connect?token=…
+# (send `Accept: application/json` to get { "token": "…" } back instead of the redirect)
+```
+
+Both `FEATURE_HYPERMOVE_MCP_GATEWAY_V1=true` and `FEATURE_MCP_AUTH_WORKOS=true` must be set —
+the master flag alone routes to the legacy 2-tool surface, which never checks auth.
+
+Local dev needs no WorkOS: set `HYPERMOVE_DEV_UNAUTHENTICATED=true` and call from `localhost`.
+
+## 2 — Search (free tier: 10 / 24h)
+
+```bash
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
+       "params":{"name":"search","arguments":{"query":"token balances base","limit":5}}}'
+```
+
+Every response follows the **envelope contract** — read payloads via `.data`:
+
+```jsonc
+{ "ok": true, "data": { "hits": [ /* … */ ], "total": 5, "nextSteps": "…" } }
+// on failure:
+{ "ok": false, "error": { "service": "moralis", "kind": "soft-empty", "message": "…", "hint": "…" } }
+```
+
+`kind: "soft-empty"` means *the service returned nothing* — NOT an error. Never treat it as absence.
+
+## 3 — Daily news + insight
+
+```bash
+# search today's news
+-d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"news.search","arguments":{"query":"restaking"}}}'
+# AI insight for one project
+-d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"codemode.news.insight","arguments":{"project":"x402"}}}'
+```
+
+## 4 — Choose a network, then pay
+
+Discover options, then select chain + rail + asset via headers:
+
+```bash
+# what can I pay on?
+-d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"codemode.payments.networks","arguments":{}}}'
+
+# after the free tier, the gateway returns JSON-RPC error -32402 with an x-payment-required
+# challenge listing chains + assets + amounts. Select and pay:
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'x-payment-chain: xrpl-mainnet' \
+  -H 'x-payment-rail: x402' \
+  -H 'x-payment-asset: RLUSD' \
+  -H 'x-payment: <signed-proof>' \
+  -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"search","arguments":{"query":"nft"}}}'
+```
+
+One settlement opens a **session bundling 100 queries** at that tier — per-query gas stays viable.
+
+## Rollback runbook (under 60s)
+
+1. Set `FEATURE_HYPERMOVE_MCP_GATEWAY_V1=false` (or flip any single sub-flag) in the host env.
+2. Redeploy / restart. `/api/mcp` immediately returns to the legacy 2-tool surface.
+3. No data is dropped — flags never touch tables or sessions.
+
+Sub-flags for partial rollback: `FEATURE_MCP_AUTH_WORKOS`, `FEATURE_MCP_RATE_LIMIT`,
+`FEATURE_MCP_PAYWALL`, `FEATURE_MCP_DATA_ADAPTERS_V1`, `FEATURE_MCP_VECTOR_SEARCH`, `FEATURE_MCP_NEWS_V1`.
+
+## Health & spec (public, no auth)
+
+```bash
+curl https://hypermove.xyz/.well-known/webmcp.json  # manifest: tools, endpoints, auth mode
+curl https://hypermove.xyz/api/mcp/health   # { ok, gateway_enabled, tools[] }
+curl https://hypermove.xyz/api/mcp/spec     # OpenAPI-3.1-style super spec
+```
