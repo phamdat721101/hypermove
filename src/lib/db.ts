@@ -181,6 +181,23 @@ CREATE TABLE IF NOT EXISTS mcp_news (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_news_project ON mcp_news(project, published_at DESC);
 CREATE INDEX IF NOT EXISTS idx_mcp_news_published ON mcp_news(published_at DESC);
+
+-- ─── XRPL Pro: 30-day time-boxed entitlement (RLUSD/x402) ─────────────────
+-- One $5 RLUSD payment → one 30-day Pro window. payment_tx is UNIQUE so a
+-- replayed settlement proof can never mint a second entitlement (idempotent).
+CREATE TABLE IF NOT EXISTS mcp_pro_entitlements (
+  id                BIGSERIAL PRIMARY KEY,
+  user_id           TEXT NOT NULL,
+  wallet            TEXT,
+  tier              TEXT NOT NULL DEFAULT 'xrpl-pro',
+  started_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at        TIMESTAMPTZ NOT NULL,
+  payment_tx        TEXT UNIQUE,
+  monthly_query_cap INT NOT NULL DEFAULT 200,
+  queries_used      INT NOT NULL DEFAULT 0,
+  cap_reset_at      TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_pro_ent_user ON mcp_pro_entitlements(user_id, expires_at DESC);
 `;
 
 let pool: Pool | null = null;

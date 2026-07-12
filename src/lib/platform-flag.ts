@@ -90,3 +90,13 @@ export function isMcpAgenticEnabled(): boolean {
 export function isMcpSkillsEnabled(): boolean {
   return subFlag('FEATURE_HYPERMOVE_TOOLS');
 }
+
+// ─── XRPL builder skills ───────────────────────────────────────────────────
+//
+// The two XRPL skills (xrpl-search, xrpl-research-pro) are ALWAYS listed — no
+// visibility flag. Only the costly Exa deep-reasoning tier stays opt-in.
+
+/** deep-reasoning Exa tier — opt-IN (cost guard). Default off. */
+export function isXrplDeepReasoningEnabled(): boolean {
+  return process.env.FEATURE_XRPL_DEEP_REASONING === 'true';
+}

@@ -119,6 +119,7 @@ export default function UpgradeModal({ isOpen, onClose, onSuccess }: Props) {
             <ul className="text-xs text-hm-grey space-y-1">
               <li>✓ Unlimited scans for 30 days</li>
               <li>✓ All tools + hosted MCP</li>
+              <li>✓ XRPL Research Pro — pay $5 RLUSD/x402 from any MCP agent</li>
               <li>✓ Cancel anytime</li>
             </ul>
             <button onClick={handlePay} className="w-full flex items-center justify-center gap-2 rounded-lg bg-hm-purple hover:bg-hm-purple/90 px-4 py-3 text-sm font-semibold text-white transition-colors">

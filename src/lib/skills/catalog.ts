@@ -13,6 +13,9 @@
  */
 
 import type { SkillDef } from '../harness/types';
+import { searchXrplResources, type XrplSourceType } from '../mcp/xrpl-sources';
+import { xrplResearch, XRPL_RESEARCH_SCHEMA, type XrplDepth } from '../mcp/exa-client';
+import { isXrplDeepReasoningEnabled } from '../platform-flag';
 
 const has = (k: string) => typeof process.env[k] === 'string' && process.env[k]!.length > 0;
 
@@ -332,7 +335,91 @@ export const SKILL_CATALOG: readonly SkillDef[] = [
   digitalSdr, smartInferenceRouter, oracleGapSearch, sentinelPrecommit, apDeskParser, brandAdStudio,
 ];
 
+// ─── C. XRPL builder skills (always listed) ─────────────────────────────────
+
+const xrplSearch: SkillDef = {
+  name: 'xrpl-search',
+  version: '0.1.0',
+  category: 'business-model',
+  description: 'Search the latest XRPL developer resources — docs, XLS standards, XRPLF repos, Ripple insights — to build products. Free, 10 queries/24h.',
+  tier: 't1_read',
+  install: 'npx hypermove add xrpl-search',
+  priceLabel: 'free',
+  composes: ['lib/mcp/search', 'lib/mcp/xrpl-sources'],
+  harness: { errorHandler: true, policy: true },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string' },
+      sourceTypes: { type: 'array', items: { type: 'string', enum: ['docs', 'xls', 'github', 'blog', 'insights'] } },
+      limit: { type: 'integer', maximum: 15 },
+    },
+    required: ['query'],
+  },
+  execute: (a) => {
+    const r = searchXrplResources({
+      query: String(a.query ?? ''),
+      sourceTypes: Array.isArray(a.sourceTypes) ? (a.sourceTypes as XrplSourceType[]) : undefined,
+      limit: a.limit ? Number(a.limit) : undefined,
+    });
+    return { tier: 'free', total: r.total, results: r.results };
+  },
+};
+
+const xrplResearchPro: SkillDef = {
+  name: 'xrpl-research-pro',
+  version: '0.1.0',
+  category: 'business-model',
+  description: 'Deep, web-wide, freshness-ranked XRPL research — neural search + synthesis + structured findings, powered by Exa. Unlocked by the $5/mo XRPL Pro package (RLUSD via x402).',
+  tier: 't3_vector',
+  install: 'npx hypermove add xrpl-research-pro',
+  priceLabel: '$5/mo (RLUSD/x402) · 200 queries/mo',
+  composes: ['Exa', 'lib/mcp/exa-client', 'lib/harness/output-enforcer'],
+  requiresEntitlement: 'xrpl-pro',
+  harness: {
+    errorHandler: true,
+    policy: true,
+    outputEnforcer: { verify: [{ kind: 'schema', required: ['summary', 'resources'] }], onFail: 'self-heal', maxHeals: 1 },
+  },
+  inputSchema: {
+    type: 'object',
+    properties: {
+      query: { type: 'string' },
+      since: { type: 'string', description: 'ISO date — freshness floor for "latest"' },
+      depth: { type: 'string', enum: ['fast', 'deep-lite', 'deep', 'deep-reasoning'], default: 'deep-lite' },
+      category: { type: 'string', enum: ['research paper', 'news', 'docs', 'any'], default: 'any' },
+    },
+    required: ['query'],
+  },
+  execute: async (a) => {
+    const depth = (a.depth ? String(a.depth) : 'deep-lite') as XrplDepth;
+    // deep-reasoning is opt-in (Exa cost guard) — reject unless the flag is set.
+    if (depth === 'deep-reasoning' && !isXrplDeepReasoningEnabled()) {
+      return { summary: 'deep-reasoning is disabled (set FEATURE_XRPL_DEEP_REASONING=true).', resources: [], rejected: true };
+    }
+    return xrplResearch({
+      query: String(a.query ?? ''),
+      since: a.since ? String(a.since) : undefined,
+      depth,
+      category: a.category ? (String(a.category) as 'research paper' | 'news' | 'docs' | 'any') : 'any',
+    });
+  },
+};
+
+/**
+ * The full active skill catalog: the 12 seed skills + the 2 XRPL builder skills.
+ * Always includes the XRPL skills (no feature flag) — single source of truth for
+ * both the MCP tool surface and the /tools listing.
+ */
+export function activeSkillCatalog(): SkillDef[] {
+  return [...SKILL_CATALOG, xrplSearch, xrplResearchPro];
+}
+
 export function getSkillDef(name: string): SkillDef | undefined {
   const bare = name.startsWith('skill.') ? name.slice('skill.'.length) : name;
-  return SKILL_CATALOG.find((s) => s.name === bare);
+  return activeSkillCatalog().find((s) => s.name === bare);
 }
+
+// Keep XRPL schema referenced (the enforcer validates by required-fields, but
+// exporting anchors the schema to the skill for docs/tests).
+export { XRPL_RESEARCH_SCHEMA };

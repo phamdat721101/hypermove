@@ -61,6 +61,13 @@ export interface SkillDef {
   composes?: string[];
   /** Pricing shown in the catalog (display only; gateway meters by tier). */
   priceLabel?: string;
+  /**
+   * When set, the skill is gated behind a time-boxed entitlement of this tier
+   * (e.g. 'xrpl-pro'). The runtime enforces it BEFORE execute() runs — no
+   * entitlement → 402, so the skill body (and any paid provider call) never
+   * runs. Keeps execute() pure (it never sees the userId/session).
+   */
+  requiresEntitlement?: string;
 }
 
 export interface CheckResult {

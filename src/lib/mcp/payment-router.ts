@@ -34,6 +34,8 @@ export interface PaymentReceipt {
   rail: RailId;
   asset: string;
   amount: string;
+  /** Paying address, when the rail can resolve it (e.g. XRPL settlement). */
+  payer?: string;
 }
 
 export interface PaymentRail {

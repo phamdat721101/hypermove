@@ -13,7 +13,7 @@
  */
 
 import { defineSkillTool } from '../harness/runtime';
-import { SKILL_CATALOG, getSkillDef } from './catalog';
+import { SKILL_CATALOG, activeSkillCatalog, getSkillDef } from './catalog';
 import { buildInstallPrompt, installPromptsByHost, mcpConnect, fetchUrl, type Host } from './install-prompt';
 import type { SkillDef } from '../harness/types';
 import type { ToolDef } from '../mcp/tools';
@@ -54,6 +54,17 @@ function skillMd(s: SkillDef): string {
     '',
     `Runs inside the HyperMove harness (MCP tool \`skill.${s.name}\`): observability error-capture${s.harness.policy === false ? '' : ' + sentinel policy'}${s.harness.outputEnforcer ? ' + output-enforcement' : ''}.`,
     s.composes?.length ? `\nComposes: ${s.composes.join(', ')}.` : '',
+    s.requiresEntitlement
+      ? [
+          '',
+          '## Unlock (paid)',
+          `First call returns HTTP 402 with an RLUSD/x402 payment envelope. To unlock:`,
+          `1. Pay $5 in RLUSD on XRPL via x402 — call the MCP tool \`payments.upgrade_xrpl_pro\` with the signed PAYMENT-SIGNATURE as \`proof\`.`,
+          `2. This mints a 30-day Pro entitlement (200 queries/mo).`,
+          `3. Retry \`skill.${s.name}\` — it now runs. Re-up with another $5 payment when the window expires.`,
+          `Check status anytime via \`payments.pro_status\`. (BTC-on-GOAT is an alternate method.)`,
+        ].join('\n')
+      : '',
   ].join('\n');
 }
 
@@ -69,7 +80,7 @@ const skillsListTool: ToolDef = {
   inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'harness-primitive | business-model' } } },
   handler: async (args) => {
     const cat = args.category ? String(args.category) : undefined;
-    const skills = SKILL_CATALOG.filter((s) => !cat || s.category === cat).map(manifestOf);
+    const skills = activeSkillCatalog().filter((s) => !cat || s.category === cat).map(manifestOf);
     return { count: skills.length, skills };
   },
 };
@@ -118,14 +129,14 @@ const skillsInstallPromptTool: ToolDef = {
 
 /** Every catalog skill as a harness-wrapped MCP tool + the registry tools. */
 export function getSkillTools(): ToolDef[] {
-  return [skillsListTool, skillsInstallTool, skillsInstallPromptTool, ...SKILL_CATALOG.map(defineSkillTool)];
+  return [skillsListTool, skillsInstallTool, skillsInstallPromptTool, ...activeSkillCatalog().map(defineSkillTool)];
 }
 
 // ─── Public helpers for the HTTP install routes (/api/skills) ──────────────
 
 /** All skill manifests (for GET /api/skills). */
 export function listSkillManifests(category?: string) {
-  return SKILL_CATALOG.filter((s) => !category || s.category === category).map(manifestOf);
+  return activeSkillCatalog().filter((s) => !category || s.category === category).map(manifestOf);
 }
 
 /** Full install payload for one skill (for GET /api/skills/[name]). */

@@ -222,6 +222,44 @@ const paymentsStatusTool: ToolDef = {
   },
 };
 
+const upgradeXrplProTool: ToolDef = {
+  name: 'payments.upgrade_xrpl_pro',
+  description: 'Unlock the $5/mo XRPL Pro package: settle 5 RLUSD on XRPL via x402 → mint a 30-day Pro entitlement (unlocks skill.xrpl-research-pro). Submit the base64 PAYMENT-SIGNATURE envelope as `proof`. Idempotent on the settlement tx.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      chain: { type: 'string', description: 'xrpl-mainnet | xrpl-testnet' },
+      proof: { type: 'string', description: 'base64 XRPL x402 PAYMENT-SIGNATURE envelope (signed Payment)' },
+    },
+    required: ['chain', 'proof'],
+  },
+  handler: async (args, ctx) => {
+    const { settleProEntitlement } = await import('./paywall');
+    return settleProEntitlement(
+      ctx?.session.userId ?? 'anonymous',
+      { chain: String(args.chain ?? 'xrpl-mainnet'), rail: 'x402', asset: 'RLUSD' },
+      args.proof ? String(args.proof) : undefined,
+    );
+  },
+};
+
+const proStatusTool: ToolDef = {
+  name: 'payments.pro_status',
+  description: 'Report the active XRPL Pro entitlement (expiry + monthly query quota) for the caller.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => {
+    const { findActiveEntitlement, buildProChallenge } = await import('./paywall');
+    const userId = ctx?.session.userId ?? 'anonymous';
+    const ent = await findActiveEntitlement(userId);
+    if (ent) return ent;
+    return { active: false, ...(await buildProChallenge(userId)) };
+  },
+};
+
 // ─── Live cross-chain data (routes through the provider AdapterRouter) ──────
 
 const dataCallTool: ToolDef = {
@@ -280,7 +318,7 @@ export function getTools(): ToolDef[] {
   ];
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
   if (isMcpAgenticEnabled()) tools.push(roadmapTool, ideasTool, skillifyTool);
-  if (isMcpSkillsEnabled()) tools.push(...getSkillTools());
+  if (isMcpSkillsEnabled()) tools.push(upgradeXrplProTool, proStatusTool, ...getSkillTools());
   return tools;
 }
 

@@ -19,10 +19,10 @@ const TIERS = [
   {
     name: 'Pro',
     price: '$5',
-    cadence: 'BTC / month',
-    description: 'Unlimited scans for teams building with AI agents.',
-    features: ['Unlimited MCP generations', 'Hosted MCP endpoint', 'Priority LLM analysis', 'All tools + hosted MCP', 'Email + DM support'],
-    cta: { label: 'Upgrade with BTC', href: '/tools?plan=pro' },
+    cadence: 'RLUSD / month',
+    description: 'Unlimited scans + XRPL deep research for teams building with AI agents.',
+    features: ['Unlimited MCP generations', 'XRPL Research Pro (Exa-powered)', '200 research queries / mo', 'RLUSD on XRPL via x402 · agent-native', 'BTC-on-GOAT alternate · no card'],
+    cta: { label: 'Upgrade with RLUSD', href: '/tools?plan=pro' },
     highlight: true,
   },
   {
@@ -86,7 +86,7 @@ export default function PricingPage() {
       </div>
 
       <p className="mt-10 max-w-2xl text-sm text-hm-grey">
-        <strong className="text-hm-primary">No Stripe.</strong> Payment is a native BTC transfer on GOAT Network, verified on-chain.
+        <strong className="text-hm-primary">No Stripe.</strong> The XRPL Pro tier is paid in RLUSD on XRPL via x402 — one $5 payment unlocks a 30-day window (agents pay just-in-time on a 402; humans upgrade in-app). BTC on GOAT Network stays available as an alternate method, verified on-chain.
       </p>
     </div>
   );

@@ -62,6 +62,11 @@ export function createNPaymentRail(id: RailId): PaymentRail {
     id,
     isMock: false,
     async settle({ selection, amount, proof }): Promise<ServiceResult<PaymentReceipt>> {
+      // XRPL/RLUSD settles through the T54 x402 facilitator, not EIP-3009.
+      if (selection.chain.startsWith('xrpl')) {
+        return settleXrplRlusd(id, selection, amount, proof);
+      }
+
       const pk = process.env.MCP_FACILITATOR_PRIVATE_KEY as `0x${string}` | undefined;
       if (!pk) return fail('npayment', 'facilitator key missing', { code: 'not_configured', hint: 'set MCP_FACILITATOR_PRIVATE_KEY' });
       if (!proof) return fail('npayment', 'missing x402 payment proof', { code: 'no_proof', hint: 'submit the base64 EIP-3009 authorization as `proof`' });
@@ -103,4 +108,65 @@ export function createNPaymentRail(id: RailId): PaymentRail {
       }
     },
   };
+}
+
+/**
+ * Settle a $5 RLUSD payment on XRPL via the T54 x402 facilitator.
+ *
+ * The buyer signs an XRPL Payment and submits the base64 PAYMENT-SIGNATURE
+ * envelope as `proof`; this rail forwards it to the facilitator's `/settle`,
+ * which broadcasts + verifies on-ledger (invoice-bound). No facilitator key is
+ * held here — the buyer signs, the facilitator relays (n-payment's XRPL design).
+ *
+ * Security: the buyer echoes their own `accepted` requirements, so before
+ * settling we bind them to the merchant's terms (payTo = treasury, asset =
+ * RLUSD, amount ≥ price) to prevent underpayment. Returns the same
+ * ServiceResult<PaymentReceipt> as the EVM path (Liskov).
+ */
+async function settleXrplRlusd(
+  id: RailId,
+  selection: PaymentSelection,
+  amount: string,
+  proof?: string,
+): Promise<ServiceResult<PaymentReceipt>> {
+  if (!proof) {
+    return fail('npayment', 'missing XRPL x402 payment signature', {
+      code: 'no_proof',
+      hint: 'submit the base64 PAYMENT-SIGNATURE envelope (signed XRPL Payment) as `proof`',
+    });
+  }
+  const treasury = process.env.XRPL_TREASURY_ADDRESS;
+  if (!treasury) {
+    return fail('npayment', 'XRPL treasury not configured', { code: 'not_configured', hint: 'set XRPL_TREASURY_ADDRESS' });
+  }
+
+  try {
+    const np = await import('n-payment');
+    const network = selection.chain === 'xrpl-mainnet' ? 'mainnet' : 'testnet';
+    const url = process.env.XRPL_FACILITATOR_URL ?? np.defaultFacilitatorUrl(network);
+
+    const env = np.decodePaymentSignatureHeader(proof); // throws on malformed → caught
+    const acc = env.accepted;
+
+    // Bind the buyer-echoed requirements to the merchant's terms.
+    const assetOk = acc.asset === np.RLUSD_HEX || acc.asset === 'RLUSD';
+    if (acc.payTo !== treasury || !assetOk || Number(acc.amount) < Number(amount) - 0.01) {
+      return fail('npayment', 'payment requirements mismatch', {
+        code: 'settle_failed',
+        hint: `payment must deliver ≥ ${amount} RLUSD to ${treasury}`,
+      });
+    }
+
+    const client = new np.XrplFacilitatorClient(url);
+    const r = await client.settle({ paymentPayload: env, paymentRequirements: acc });
+    if (!r.success || !r.transaction) {
+      return fail('npayment', r.errorReason ?? 'xrpl settlement failed', {
+        code: 'settle_failed',
+        hint: 'facilitator rejected the payment; check the signed blob, invoice binding and RLUSD trustline',
+      });
+    }
+    return ok({ txHash: r.transaction, chain: selection.chain, rail: id, asset: selection.asset, amount, payer: r.payer });
+  } catch (err) {
+    return fail('npayment', err instanceof Error ? err.message : String(err), { code: 'settle_failed' });
+  }
 }
