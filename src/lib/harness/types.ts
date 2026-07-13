@@ -2,10 +2,11 @@
  * src/lib/harness/types.ts
  * ------------------------
  * Shared types for the HyperMove agent-skill harness. A skill is a unit an
- * agent can download, install, and run — and (the point of this module) run
- * INSIDE the HyperMove harness: observability tracing + sentinel policy +
- * output-enforcement. Every skill in the /tools catalog is exposed as an MCP
- * tool via defineSkillTool() so it is callable over the MCP transport.
+ * agent can download, install into its OWN workspace (as a SKILL.md), and run
+ * locally by following its procedure — applying the harness pattern
+ * (observability + sentinel policy + output-enforcement). `defineSkillTool()`
+ * is an OPTIONAL adapter that also exposes a skill as an MCP tool; MCP itself is
+ * reserved for external-protocol integration (payments, live data).
  */
 
 import type { PriceTier } from '../mcp/catalog';
@@ -53,21 +54,12 @@ export interface SkillDef {
   inputSchema: Record<string, unknown>;
   /** Which harness layers wrap this skill's execution. */
   harness: HarnessConfig;
-  /** One-command install string surfaced on /tools + skills.install. */
-  install: string;
   /** The skill logic. */
   execute: SkillExecute;
   /** Human-readable composition note (which primitives it composes). */
   composes?: string[];
   /** Pricing shown in the catalog (display only; gateway meters by tier). */
   priceLabel?: string;
-  /**
-   * When set, the skill is gated behind a time-boxed entitlement of this tier
-   * (e.g. 'xrpl-pro'). The runtime enforces it BEFORE execute() runs — no
-   * entitlement → 402, so the skill body (and any paid provider call) never
-   * runs. Keeps execute() pure (it never sees the userId/session).
-   */
-  requiresEntitlement?: string;
 }
 
 export interface CheckResult {

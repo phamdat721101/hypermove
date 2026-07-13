@@ -2,12 +2,12 @@
  * src/lib/skills/install-prompt.ts
  * --------------------------------
  * Generates the copy-paste "install prompt" an agent executes to self-install a
- * HyperMove skill (PRD-I1). One paste wires BOTH modes:
- *   • the autoloading SKILL.md (dropped into the host's skills dir), and
- *   • the harnessed MCP runtime (skill.<name> on the HyperMove gateway).
+ * HyperMove skill. Install is agent-native and local-first: fetch the SKILL.md
+ * and save it into the host's skills dir — no CLI, no npm, no MCP. The skill
+ * then autoloads and runs in the agent's own workspace.
  *
- * No per-host installer code: the agent detects its own host and picks the right
- * skills dir + MCP-connect line from the compact HOST_HINTS table below.
+ * MCP is OPTIONAL and only for external-protocol integration (live cross-chain
+ * data / payments) — never required to install or run a skill.
  */
 
 import type { SkillDef } from '../harness/types';
@@ -76,6 +76,27 @@ export function fetchUrl(name: string): string {
   return `${SITE}/api/skills/${name}?format=md`;
 }
 
+/**
+ * The single source of truth for how a skill is installed — an honest,
+ * agent-native instruction (no CLI, no npm, no MCP). Replaces the old fake
+ * package-manager command: an agent already has fetch + write, and the SKILL.md
+ * IS the skill.
+ */
+export function installLine(name: string): string {
+  return `Fetch ${fetchUrl(name)} and save it as ${name}/SKILL.md in your agent's skills directory. No CLI, no npm, no MCP required.`;
+}
+
+/** Portable terminal one-liner (for humans who prefer a shell), host-aware. */
+export function curlFallback(name: string, host: Host = 'generic'): string {
+  const dest = HOST_HINTS[host].skillsPath(name);
+  // For hosts whose skillsPath is a real path, wrap in mkdir + curl; generic
+  // hosts get a directory hint instead of a runnable path.
+  if (host === 'generic') {
+    return `curl -s "${fetchUrl(name)}" -o "<your-skills-dir>/${name}/SKILL.md"`;
+  }
+  return `mkdir -p "$(dirname ${dest})" && curl -s "${fetchUrl(name)}" -o "${dest}"`;
+}
+
 /** Cursor one-click deep-link (base64 config) + connect map for all hosts. */
 export function mcpConnect(): Record<string, unknown> {
   const cursorConfig = Buffer.from(JSON.stringify({ url: MCP_URL })).toString('base64');
@@ -92,20 +113,15 @@ export function mcpConnect(): Record<string, unknown> {
 /** Universal, host-agnostic install prompt (agent self-detects host). */
 function universalPrompt(name: string): string {
   return [
-    `You are installing the HyperMove agent-skill "${name}". Do all steps, then report.`,
+    `You are installing the HyperMove agent-skill "${name}". It runs in YOUR workspace —`,
+    `no CLI, no npm, no MCP needed. Do the steps, then report.`,
     '',
-    '1) CONNECT the HyperMove MCP gateway (remote, Streamable HTTP) using the line for your host:',
-    `   • Claude Code:      ${HOST_HINTS['claude-code'].mcpConnect}`,
-    `   • Cursor / VS Code: ${HOST_HINTS.cursor.mcpConnect}`,
-    `   • Codex / OpenCode / Gemini / Windsurf / Copilot / any MCP client:`,
-    `                       add MCP server URL  ${MCP_URL}`,
-    '',
-    '2) FETCH the skill definition (either works):',
-    `   • MCP:  call tool  skills.install  with  { "name": "${name}" }`,
-    `   • HTTP: GET ${fetchUrl(name)}`,
+    '1) FETCH the skill definition:',
+    `   • GET ${fetchUrl(name)}`,
+    `   • (already MCP-connected? you can instead call the tool  skills.install  { "name": "${name}" })`,
     '   Keep the returned SKILL.md text.',
     '',
-    "3) SAVE the SKILL.md so it autoloads, into your host's skills directory:",
+    "2) SAVE it so it autoloads, into your host's skills directory:",
     `   • Claude Code:  ${HOST_HINTS['claude-code'].skillsPath(name)}   (or .claude/skills/ for this project)`,
     `   • Cursor:       ${HOST_HINTS.cursor.skillsPath(name)}`,
     `   • Codex:        ${HOST_HINTS.codex.skillsPath(name)}`,
@@ -113,13 +129,15 @@ function universalPrompt(name: string): string {
     `   • Gemini CLI:   ${HOST_HINTS.gemini.skillsPath(name)}`,
     "   • otherwise:    your host's skills or rules directory",
     '',
-    '4) CONFIRM both modes:',
-    "   • the skill's trigger now autoloads from SKILL.md, and",
-    `   • you can call the MCP tool  skill.${name}  — every call runs inside the`,
-    '     HyperMove harness (error-handling + policy sentinel + output-enforcement).',
+    '3) RELOAD. The skill now autoloads from SKILL.md and runs locally by following its',
+    '   own procedure — no HyperMove server or MCP connection required.',
+    '',
+    '4) OPTIONAL — only if this skill needs live cross-chain data or a payment, connect the',
+    `   HyperMove MCP (external-protocol layer): add MCP server  ${MCP_URL}  (transport: http).`,
+    `   Claude Code: ${HOST_HINTS['claude-code'].mcpConnect}`,
     '',
     `REPORT: which host you detected, where you saved the SKILL.md, and the result of a`,
-    `test call to skill.${name}.`,
+    `local test run of the skill.`,
   ].join('\n');
 }
 
@@ -127,17 +145,18 @@ function universalPrompt(name: string): string {
 function hostPrompt(name: string, host: Host): string {
   const h = HOST_HINTS[host];
   return [
-    `Install the HyperMove skill "${name}" in ${h.label}:`,
-    `1) Connect MCP:  ${h.mcpConnect}`,
-    `2) Fetch + save:  GET ${fetchUrl(name)}  →  ${h.skillsPath(name)}  (create the folder if needed)`,
-    `3) Reload so the skill autoloads.`,
-    `4) Confirm you can call skill.${name} — it runs inside the HyperMove harness. Report where you saved it and the test-call result.`,
+    `Install the HyperMove skill "${name}" in ${h.label} — runs locally, no MCP:`,
+    `1) Fetch + save:  GET ${fetchUrl(name)}  →  ${h.skillsPath(name)}  (create the folder if needed)`,
+    `   Shell alt:  ${curlFallback(name, host)}`,
+    `2) Reload so the skill autoloads and runs from its own procedure.`,
+    `3) Optional — only for live chain data / payments: connect MCP  ${h.mcpConnect}`,
+    `Report where you saved it and the local test-run result.`,
   ].join('\n');
 }
 
 /** One-line "share link" variant (khengyun-gist style) for chat brevity. */
 export function shareLinePrompt(name: string): string {
-  return `Install + use the HyperMove skill ${name}: connect MCP ${MCP_URL}, save ${fetchUrl(name)} into your skills dir, then call skill.${name} (harness-wrapped). Confirm both and report.`;
+  return `Install the HyperMove skill ${name}: save ${fetchUrl(name)} into your skills dir — it runs locally, no CLI/npm/MCP. (MCP ${MCP_URL} is optional, only for external protocol like payments / live chain data.) Confirm and report.`;
 }
 
 /** Build the install prompt; host-specific when provided, else universal. */

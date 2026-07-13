@@ -4,7 +4,6 @@ import { useState, useEffect } from 'react';
 import { useAccount } from 'wagmi';
 import { Globe, Sparkles, CheckCircle2, Copy, Check, Download, RefreshCw, Terminal, Wallet } from 'lucide-react';
 import { useWalletModal } from '@/lib/wallet-modal-context';
-import UpgradeModal from '@/components/UpgradeModal';
 
 interface ScanResponse {
   manifest: { name: string; description: string; tools: Array<{ name: string; description: string; inputSchema: unknown }>; sourceUrl: string };
@@ -73,7 +72,7 @@ export default function GenerateContent() {
   const [scanProgress, setScanProgress] = useState(0);
   const [scanStep, setScanStep] = useState('');
   const [quota, setQuota] = useState<{ free_remaining: number; tier: string } | null>(null);
-  const [showUpgrade, setShowUpgrade] = useState(false);
+  const [quotaExceeded, setQuotaExceeded] = useState(false);
 
   // Fetch quota when wallet connects
   useEffect(() => {
@@ -107,7 +106,7 @@ export default function GenerateContent() {
     const quotaCheck = await fetch(`${llmApi}/quota?wallet=${address}`);
     if (quotaCheck.ok) {
       const q = await quotaCheck.json();
-      if (q.tier !== 'pro' && q.free_remaining <= 0) { setShowUpgrade(true); return; }
+      if (q.tier !== 'pro' && q.free_remaining <= 0) { setQuotaExceeded(true); return; }
     }
 
     setError('');
@@ -302,14 +301,22 @@ export default function GenerateContent() {
           </div>
         )}
       </div>
-      <UpgradeModal
-        isOpen={showUpgrade}
-        onClose={() => setShowUpgrade(false)}
-        onSuccess={() => {
-          setShowUpgrade(false);
-          refreshQuota();
-        }}
-      />
+      {quotaExceeded && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={() => setQuotaExceeded(false)} />
+          <div className="relative z-10 w-full max-w-sm rounded-xl border border-hm-accent bg-white p-6 shadow-2xl text-center">
+            <h3 className="font-heading text-lg font-semibold text-hm-primary">You&apos;ve used your 5 free scans</h3>
+            <p className="mt-2 text-sm text-hm-grey">
+              Keep going by connecting your agent over MCP — the first 5 MCP calls are free too,
+              then you pay only per call in USDC/RLUSD via x402 (no subscription, no card).
+            </p>
+            <a href="/mcp-connect" className="mt-5 inline-block w-full rounded-lg bg-hm-purple hover:bg-hm-purple/90 px-4 py-3 text-sm font-semibold text-white transition-colors">
+              Connect via MCP →
+            </a>
+            <button onClick={() => setQuotaExceeded(false)} className="mt-3 text-xs text-hm-grey hover:text-hm-dark">Close</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

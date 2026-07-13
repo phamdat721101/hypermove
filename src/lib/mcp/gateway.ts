@@ -12,7 +12,7 @@ import { createHash } from 'node:crypto';
 import { withClient } from '../db';
 import { isMcpPaywallEnabled, isMcpRateLimitEnabled } from '../platform-flag';
 import { getTool, getTools } from './tools';
-import { checkAndConsume } from './rate-limit';
+import { checkAndConsume, FREE_TIER_LIMIT } from './rate-limit';
 import { buildChallenge, findActiveSession, consumeSession, settlePayment } from './paywall';
 import type { McpSession } from './auth';
 
@@ -50,7 +50,7 @@ export async function callTool(input: {
         if (!rate.allowed) {
           const proof = headers?.get('x-payment');
           if (!proof) {
-            return { error: { code: -32402, message: `Payment required — free tier exceeded (10 / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };
+            return { error: { code: -32402, message: `Payment required — free tier exceeded (${FREE_TIER_LIMIT} / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };
           }
           const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
           if (!settled.ok) return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
@@ -60,7 +60,7 @@ export async function callTool(input: {
     } else if (isMcpRateLimitEnabled()) {
       const rate = await checkAndConsume(session.userId);
       if (!rate.allowed) {
-        return { error: { code: -32402, message: `Rate limit exceeded (10 / 24h)`, data: { retry_after_free_hours: rate.resetInHours } } };
+        return { error: { code: -32402, message: `Rate limit exceeded (${FREE_TIER_LIMIT} / 24h)`, data: { retry_after_free_hours: rate.resetInHours } } };
       }
     }
   }

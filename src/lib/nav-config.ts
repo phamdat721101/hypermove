@@ -22,7 +22,6 @@ export const TOP_NAV: readonly NavLink[] = [
   { href: '/mcp-connect', label: 'Connect' },
   { href: '/tools', label: 'Tools' },
   { href: '/registry', label: 'Registry', soon: true },
-  { href: '/pricing', label: 'Pricing' },
 ];
 
 export interface DocsSection {

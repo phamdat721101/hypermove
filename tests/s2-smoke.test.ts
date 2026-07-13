@@ -13,11 +13,6 @@ describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
       'src/app/api/paid-endpoint/route.ts',
       'src/app/api/mcp/route.ts',
       'src/app/api/revenue/route.ts',
-      'src/app/portal/page.tsx',
-      'src/app/portal/actions.ts',
-      'src/components/LiveAgentDemo.tsx',
-      'src/components/CodeExamplePicker.tsx',
-      'src/components/RevenueAndReceipt.tsx',
       'src/components/BundleRequestForm.tsx',
       'src/lib/agent.ts',
       'src/lib/cache.ts',
@@ -44,13 +39,17 @@ describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
     expect(src).toContain('402');
   });
 
-  it('.well-known/webmcp.json advertises 2 tools (post-S2)', () => {
+  it('.well-known/webmcp.json advertises the gateway tool set + per-call monetize block', () => {
     const manifest = JSON.parse(read('public/.well-known/webmcp.json'));
-    expect(manifest.tools).toHaveLength(2);
-    expect(manifest.tools.map((t: { name: string }) => t.name).sort()).toEqual([
-      'payment.x402',
-      'reputation.read',
-    ]);
+    const names = manifest.tools.map((t: { name: string }) => t.name);
+    expect(names).toContain('search');
+    expect(names).toContain('payments.settle');
+    const settle = manifest.tools.find((t: { name: string }) => t.name === 'payments.settle');
+    expect(settle.monetize.freeTier).toBe('5 / 24h');
+    // Four rails advertised (EVM/GOAT/Stellar USDC + XRPL RLUSD).
+    expect(settle.monetize.assets.xrpl).toBe('RLUSD');
+    expect(settle.monetize.assets.stellar).toBe('USDC');
+    expect(settle.monetize.rails).toEqual(['x402', 'mpp']);
   });
 
   it('cache TtlLruCache + DailyBudget behave correctly', async () => {

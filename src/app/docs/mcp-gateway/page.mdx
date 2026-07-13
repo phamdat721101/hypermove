@@ -4,7 +4,7 @@ export const metadata = { title: 'MCP Gateway — agent connectivity for cross-c
 
 > One endpoint — `https://hypermove.xyz/api/mcp` — makes cross-chain web3 agent-callable.
 > Search a unified catalog, pull daily news + AI insight, and pay per query on the
-> network of your choice. WorkOS sign-in, 10 free queries / 24h, then metered
+> network of your choice. WorkOS sign-in, 5 free queries / 24h, then metered
 > `$0.001–$0.10` via x402/MPP. Modeled on Stellar Raven's proven pattern.
 
 The whole gateway lives behind `FEATURE_HYPERMOVE_MCP_GATEWAY_V1`. When off, `/api/mcp`
@@ -24,6 +24,15 @@ serves the legacy 2-tool surface unchanged (60-second rollback).
 
 > `execute` (sandboxed code) and real-time `stream.subscribe` are deferred to v1.1.
 
+## Agent-skills install & run locally — MCP is optional
+
+HyperMove agent-skills are **self-contained**: fetch a skill's SKILL.md from
+`GET /api/skills/<name>?format=md`, save it into your host's skills directory, and it
+autoloads and runs **in your own workspace by following its procedure — no MCP connection
+required**. The gateway above is only for the *external-protocol* layer: connect it when a
+skill needs live cross-chain data (`data.call`) or a payment (`payments.settle`). Browse the
+catalog at `GET /api/skills`.
+
 ## 1 — Connect your wallet (required by default)
 
 `/api/mcp` requires a key — there is no anonymous free tier. **[hypermove.xyz/mcp-connect](/mcp-connect)**
@@ -42,7 +51,7 @@ the master flag alone routes to the legacy 2-tool surface, which never checks au
 
 Local dev needs no WorkOS: set `HYPERMOVE_DEV_UNAUTHENTICATED=true` and call from `localhost`.
 
-## 2 — Search (free tier: 10 / 24h)
+## 2 — Search (free tier: 5 / 24h)
 
 ```bash
 curl -s https://hypermove.xyz/api/mcp \

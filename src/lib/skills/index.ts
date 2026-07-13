@@ -1,20 +1,26 @@
 /**
  * src/lib/skills/index.ts
  * -----------------------
- * Public barrel for the HyperMove /tools skill registry. Exposes:
- *   • getSkillTools()  → every catalog skill as a harness-wrapped MCP ToolDef
- *   • skills.list      → browse the catalog (manifests) over MCP
- *   • skills.install   → get the install command + synthesized skill.md +
- *                        hypermove.json manifest for one skill
+ * Public barrel for the HyperMove /tools skill registry.
  *
- * getTools() (mcp/tools.ts) concatenates getSkillTools() behind the
- * isMcpSkillsEnabled() flag, so every skill is automatically callable over the
- * MCP transport (the server iterates getTools()).
+ * Skills are self-contained agent-skills: they install into the agent's OWN
+ * workspace (a SKILL.md saved in the host's skills dir) and run locally by
+ * following their own procedure — the MCP gateway is NOT their execution host.
+ * MCP is reserved for external-protocol integration (payments, live cross-chain
+ * data). `defineSkillTool()` (harness/runtime) remains available as an OPTIONAL
+ * adapter for anyone who also wants to expose a skill as an MCP tool.
+ *
+ * Exposes:
+ *   • getSkillTools()  → discovery/install helper tools (skills.list / .install /
+ *                        .install_prompt). They return a runnable SKILL.md; they
+ *                        do NOT execute skills. HTTP /api/skills works identically.
  */
 
-import { defineSkillTool } from '../harness/runtime';
 import { SKILL_CATALOG, activeSkillCatalog, getSkillDef } from './catalog';
-import { buildInstallPrompt, installPromptsByHost, mcpConnect, fetchUrl, type Host } from './install-prompt';
+import {
+  buildInstallPrompt, installPromptsByHost, mcpConnect, fetchUrl,
+  installLine, curlFallback, MCP_URL, SITE, HOST_HINTS, type Host,
+} from './install-prompt';
 import type { SkillDef } from '../harness/types';
 import type { ToolDef } from '../mcp/tools';
 
@@ -24,7 +30,6 @@ function manifestOf(s: SkillDef) {
     version: s.version,
     category: s.category,
     description: s.description,
-    tool: `skill.${s.name}`,
     tier: s.tier,
     price: s.priceLabel ?? null,
     composes: s.composes ?? [],
@@ -34,48 +39,106 @@ function manifestOf(s: SkillDef) {
       outputEnforcer: s.harness.outputEnforcer ? s.harness.outputEnforcer.verify.map((v) => v.kind) : false,
       docExtract: s.harness.docExtract ?? false,
     },
-    install: s.install,
+    install: installLine(s.name),
   };
 }
 
-/** Synthesize the open-format SKILL.md (Markdown + YAML frontmatter). */
+/** Human-readable "definition of done" from the output-enforcer verify config. */
+function verifyContract(s: SkillDef): string {
+  const oe = s.harness.outputEnforcer;
+  if (!oe) return 'the output is present and well-formed';
+  const parts = oe.verify.map((v) => {
+    switch (v.kind) {
+      case 'nonempty': return 'output is non-empty';
+      case 'json': return 'output is valid JSON';
+      case 'schema': return `output includes: ${v.required.join(', ')}`;
+      case 'math': return `${v.itemsField} sums to ${v.totalField}`;
+      default: return 'output is well-formed';
+    }
+  });
+  const onFail = oe.onFail === 'self-heal'
+    ? `if a check fails, feed the failure back and retry up to ${oe.maxHeals ?? 1}×, then stop`
+    : 'if a check fails, block the output (do not ship it)';
+  return `${parts.join('; ')} — ${onFail}`;
+}
+
+/** Only skills whose work genuinely needs live external data surface an integration note. */
+function externalIntegration(s: SkillDef): string | null {
+  const c = (s.composes ?? []).join(' ');
+  if (/\bExa\b|exa-client/.test(c)) {
+    return 'This step needs live web data — use your own web/search tool, or the HyperMove MCP tool `data.call` (external-protocol layer).';
+  }
+  return null;
+}
+
+/**
+ * Synthesize the open-format, SELF-CONTAINED SKILL.md (Markdown + YAML
+ * frontmatter). The skill installs into the agent's workspace and runs locally
+ * by following the procedure below — no MCP required. MCP is referenced only as
+ * an optional external-protocol integration.
+ */
 function skillMd(s: SkillDef): string {
-  return [
+  const policyStep = s.harness.policy === false ? '' : ' and apply your cost / rate / prompt-injection policy';
+  const schema = s.inputSchema as { properties?: Record<string, unknown>; required?: string[] };
+  const argsJson = JSON.stringify(schema?.properties ?? {}, null, 2);
+  const required = schema?.required?.length ? schema.required.join(', ') : 'none';
+  const integration = externalIntegration(s);
+
+  const lines: string[] = [
     '---',
     `name: ${s.name}`,
     `version: ${s.version}`,
     `description: ${s.description}`,
-    `install: ${s.install}`,
+    'license: MIT',
+    `homepage: ${SITE}`,
+    `install: ${installLine(s.name)}`,
     '---',
     '',
     `# ${s.name}`,
     '',
     s.description,
     '',
-    `Runs inside the HyperMove harness (MCP tool \`skill.${s.name}\`): observability error-capture${s.harness.policy === false ? '' : ' + sentinel policy'}${s.harness.outputEnforcer ? ' + output-enforcement' : ''}.`,
-    s.composes?.length ? `\nComposes: ${s.composes.join(', ')}.` : '',
-    s.requiresEntitlement
-      ? [
-          '',
-          '## Unlock (paid)',
-          `First call returns HTTP 402 with an RLUSD/x402 payment envelope. To unlock:`,
-          `1. Pay $5 in RLUSD on XRPL via x402 — call the MCP tool \`payments.upgrade_xrpl_pro\` with the signed PAYMENT-SIGNATURE as \`proof\`.`,
-          `2. This mints a 30-day Pro entitlement (200 queries/mo).`,
-          `3. Retry \`skill.${s.name}\` — it now runs. Re-up with another $5 payment when the window expires.`,
-          `Check status anytime via \`payments.pro_status\`. (BTC-on-GOAT is an alternate method.)`,
-        ].join('\n')
-      : '',
-  ].join('\n');
+    '## Run it (in your workspace — no MCP required)',
+    '',
+    'This is a self-contained agent-skill. Once this SKILL.md is in your skills',
+    'directory it autoloads and runs locally by following the procedure below —',
+    'no HyperMove server or MCP connection is needed to install or run it.',
+    '',
+    `**Inputs** (required: ${required}):`,
+    '',
+    '```json',
+    argsJson,
+    '```',
+    '',
+    '**Procedure** — apply the HyperMove harness pattern locally:',
+    `1. Validate the inputs above${policyStep}.`,
+    `2. Do the task: ${s.description}`,
+    `3. Definition of done: ${verifyContract(s)}.`,
+  ];
+  if (integration) lines.push(`4. ${integration}`);
+  if (s.composes?.length) lines.push('', `Composes (harness primitives you apply above): ${s.composes.join(', ')}.`);
+  lines.push(
+    '',
+    '## External protocol (optional, via HyperMove MCP)',
+    '',
+    'The skill runs fully locally. Connect the HyperMove MCP only if you need the',
+    'external-protocol layer — live cross-chain data (`data.call`) or to make/receive',
+    'a payment (`payments.settle`, x402/mpp · USDC/RLUSD):',
+    '',
+    `- add MCP server \`${MCP_URL}\` (transport: http)`,
+    `- Claude Code: \`${HOST_HINTS['claude-code'].mcpConnect}\``,
+  );
+  return lines.join('\n');
 }
 
 /** The hypermove.json harness declaration for a skill. */
 function hypermoveJson(s: SkillDef) {
-  return { harness: s.harness, tier: s.tier, tool: `skill.${s.name}`, price: s.priceLabel ?? null };
+  return { harness: s.harness, tier: s.tier, price: s.priceLabel ?? null };
 }
 
 const skillsListTool: ToolDef = {
   name: 'skills.list',
-  description: 'Browse the HyperMove /tools skill catalog — harness-wrapped agent-skills you can install and call over MCP.',
+  description: 'Browse the HyperMove skill catalog — self-contained agent-skills you install into your own workspace (they run locally; MCP is not required).',
   tier: 't1_read',
   inputSchema: { type: 'object', properties: { category: { type: 'string', description: 'harness-primitive | business-model' } } },
   handler: async (args) => {
@@ -87,7 +150,7 @@ const skillsListTool: ToolDef = {
 
 const skillsInstallTool: ToolDef = {
   name: 'skills.install',
-  description: 'Get the install command + SKILL.md + hypermove.json manifest for one skill (open skill.md format; installs into any of 20+ agents).',
+  description: 'Get the install instruction + self-contained SKILL.md for one skill (open SKILL.md format; saves into any agent host and runs locally — no MCP needed).',
   tier: 't1_read',
   inputSchema: { type: 'object', properties: { name: { type: 'string' } }, required: ['name'] },
   handler: async (args) => {
@@ -95,12 +158,12 @@ const skillsInstallTool: ToolDef = {
     if (!s) return { ok: false, error: 'not_found', hint: 'call skills.list to see available skills' };
     return {
       ok: true,
-      install: s.install,
-      tool: `skill.${s.name}`,
-      // Copy-paste install prompt (PRD-I1): one paste wires BOTH the autoloading
-      // SKILL.md and the harnessed MCP tool skill.<name>.
+      // Honest, agent-native install: fetch the SKILL.md and save it locally.
+      install: installLine(s.name),
+      curlFallback: curlFallback(s.name),
       installPrompt: buildInstallPrompt(s),
       installPromptsByHost: installPromptsByHost(s),
+      // MCP is optional — only for the external-protocol layer (payments / live data).
       mcpConnect: mcpConnect(),
       fetchUrl: fetchUrl(s.name),
       'skill.md': skillMd(s),
@@ -112,7 +175,7 @@ const skillsInstallTool: ToolDef = {
 
 const skillsInstallPromptTool: ToolDef = {
   name: 'skills.install_prompt',
-  description: 'Return ONLY the copy-paste install prompt for a skill (optionally tightened for a host). Paste it into any agent to self-install: it wires the autoloading SKILL.md + the harnessed MCP tool skill.<name>.',
+  description: 'Return ONLY the copy-paste install prompt for a skill (optionally tightened for a host). Paste it into any agent to fetch + save the SKILL.md; the skill then runs locally in the workspace — no MCP needed.',
   tier: 't1_read',
   inputSchema: {
     type: 'object',
@@ -127,9 +190,14 @@ const skillsInstallPromptTool: ToolDef = {
   },
 };
 
-/** Every catalog skill as a harness-wrapped MCP tool + the registry tools. */
+/**
+ * Discovery/install helper tools only. Skills themselves are NOT exposed as MCP
+ * execution tools — they install and run in the agent's workspace. Use
+ * defineSkillTool() (harness/runtime) explicitly if you want the optional MCP
+ * adapter for a specific skill.
+ */
 export function getSkillTools(): ToolDef[] {
-  return [skillsListTool, skillsInstallTool, skillsInstallPromptTool, ...activeSkillCatalog().map(defineSkillTool)];
+  return [skillsListTool, skillsInstallTool, skillsInstallPromptTool];
 }
 
 // ─── Public helpers for the HTTP install routes (/api/skills) ──────────────
@@ -145,6 +213,7 @@ export function getSkillInstall(name: string) {
   if (!s) return null;
   return {
     ...manifestOf(s),
+    curlFallback: curlFallback(s.name),
     installPrompt: buildInstallPrompt(s),
     installPromptsByHost: installPromptsByHost(s),
     mcpConnect: mcpConnect(),

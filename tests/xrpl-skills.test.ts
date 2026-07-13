@@ -74,41 +74,56 @@ describe('skills catalog: XRPL skills always listed', () => {
   });
 });
 
-describe('pro entitlement (no DB → dev semantics)', () => {
-  it('buildProChallenge is a 402 RLUSD envelope', async () => {
-    const { buildProChallenge } = await import('../src/lib/mcp/paywall');
-    const c = await buildProChallenge('user-x');
-    expect(c.status).toBe(402);
-    expect(c.error).toBe('payment_required');
-    expect(c.asset).toBe('RLUSD');
-    expect(c.entitlement).toBe('30-day');
-    // No XRPL_TREASURY_ADDRESS in CI → header is null but the envelope metadata stands.
-    expect('paymentRequiredHeader' in c).toBe(true);
+describe('xrpl-research-pro: free to try (no entitlement gate)', () => {
+  it('is listed with no requiresEntitlement and a free-to-try label', async () => {
+    const { activeSkillCatalog } = await import('../src/lib/skills/catalog');
+    const skill = activeSkillCatalog().find((s) => s.name === 'xrpl-research-pro')!;
+    expect(skill).toBeTruthy();
+    expect('requiresEntitlement' in skill).toBe(false);
+    expect(skill.priceLabel).toBe('free to try');
   });
 
-  it('mintEntitlement returns a 30-day xrpl-pro window (synthetic without DB)', async () => {
-    const { mintEntitlement } = await import('../src/lib/mcp/paywall');
-    const ent = await mintEntitlement('user-1', 'rTEST', 'tx-abc');
-    expect(ent.tier).toBe('xrpl-pro');
-    expect(new Date(ent.expiresAt).getTime()).toBeGreaterThan(Date.now());
-    expect(ent.monthlyQueryCap).toBeGreaterThan(0);
-  });
-
-  it('findActiveEntitlement returns null without DB', async () => {
-    const { findActiveEntitlement } = await import('../src/lib/mcp/paywall');
-    expect(await findActiveEntitlement('nobody')).toBeNull();
-  });
-});
-
-describe('paid-skill guard: 402 before execute', () => {
-  it('xrpl-research-pro returns 402 when no entitlement (skill body never runs)', async () => {
+  it('runs through the harness (no 402) — skill body executes', async () => {
     const { activeSkillCatalog } = await import('../src/lib/skills/catalog');
     const { defineSkillTool } = await import('../src/lib/harness/runtime');
     const skill = activeSkillCatalog().find((s) => s.name === 'xrpl-research-pro')!;
-    expect(skill.requiresEntitlement).toBe('xrpl-pro');
     const tool = defineSkillTool(skill);
-    const out = (await tool.handler({ query: 'x' }, { session: { userId: 'u-402' } as never })) as Record<string, unknown>;
-    expect(out.status).toBe(402);
-    expect(out.error).toBe('payment_required');
+    const out = (await tool.handler({ query: 'x' }, { session: { userId: 'u-free' } as never })) as Record<string, unknown>;
+    expect(out.status).not.toBe(402);
+    expect(out.skill).toBe('xrpl-research-pro');
+  });
+});
+
+describe('local-first agent-skills + honest install (nim-skill enforced)', () => {
+  it('(a) no surfaced install string uses a fake npx CLI', async () => {
+    const { listSkillManifests } = await import('../src/lib/skills');
+    for (const m of listSkillManifests()) {
+      expect(m.install).not.toMatch(/npx hypermove/);
+    }
+  });
+
+  it('(b) every skill install resolves to /api/skills/<name>?format=md', async () => {
+    const { listSkillManifests } = await import('../src/lib/skills');
+    for (const m of listSkillManifests()) {
+      expect(m.install).toContain(`/api/skills/${m.name}?format=md`);
+    }
+  });
+
+  it('(c) every SKILL.md is self-contained — runs locally, no mandatory skill.<name> MCP call', async () => {
+    const { SKILL_CATALOG, getSkillMd } = await import('../src/lib/skills');
+    for (const s of SKILL_CATALOG) {
+      const md = getSkillMd(s.name)!;
+      expect(md, s.name).toContain('no MCP required');
+      expect(md, s.name).toContain(`/api/skills/${s.name}?format=md`);
+      // must NOT instruct calling the skill.<name> MCP execution tool
+      expect(md.includes(`skill.${s.name}`), `${s.name} SKILL.md references its MCP tool`).toBe(false);
+    }
+  });
+
+  it('(d) the MCP surface exposes NO skill.<name> execution tools (discovery helpers remain)', async () => {
+    const { getTools } = await import('../src/lib/mcp/tools');
+    const names = getTools().map((t) => t.name);
+    expect(names.some((n) => n.startsWith('skill.'))).toBe(false);
+    expect(names).toContain('skills.install');
   });
 });

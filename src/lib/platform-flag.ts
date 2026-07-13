@@ -82,9 +82,10 @@ export function isMcpAgenticEnabled(): boolean {
 }
 
 /**
- * HyperMove /tools skill registry — harness-wrapped agent-skills exposed as MCP
- * tools (skill.*, skills.list, skills.install). Opt-out (default ON when the
- * gateway is on), consistent with the other gateway sub-flags; disable with
+ * HyperMove /tools skill registry — DISCOVERY/INSTALL helper tools only
+ * (skills.list / skills.install / skills.install_prompt). Skills themselves
+ * install & run in the agent's workspace (SKILL.md); they are NOT exposed as MCP
+ * execution tools. Opt-out (default ON when the gateway is on); disable with
  * FEATURE_HYPERMOVE_TOOLS=false.
  */
 export function isMcpSkillsEnabled(): boolean {

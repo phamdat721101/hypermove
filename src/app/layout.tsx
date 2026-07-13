@@ -59,7 +59,6 @@ function Footer() {
             <ul className="space-y-3 text-sm text-hm-dark/70">
               <li><a href="/tools/generate" className="hover:text-hm-purple">MCP Generator</a></li>
               <li><a href="/tools" className="hover:text-hm-purple">Tools Catalog</a></li>
-              <li><a href="/pricing" className="hover:text-hm-purple">Pricing</a></li>
               <li><a href="/docs/quickstart" className="hover:text-hm-purple">API Docs</a></li>
             </ul>
           </div>

@@ -1,7 +1,7 @@
 {
   "version": "2.0",
   "name": "hypermove.xyz",
-  "description": "The HyperMove MCP Gateway — one Model Context Protocol endpoint for cross-chain web3 data (EVM + Stellar + XRPL), daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment.",
+  "description": "The HyperMove MCP Gateway — one Model Context Protocol endpoint for external-protocol integration: cross-chain web3 data (EVM + Stellar + XRPL), daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment. Agent-skills install & run locally in your workspace (GET /api/skills) — MCP is not required to install or run a skill.",
   "homepage": "https://hypermove.xyz",
   "license": "MIT",
   "transport": {
@@ -13,6 +13,7 @@
     "mcp": "/api/mcp",
     "health": "/api/mcp/health",
     "spec": "/api/mcp/spec",
+    "skills": "/api/skills",
     "bundles": "/bundles.json",
     "authorize": "/api/mcp/authorize",
     "connect": "/mcp-connect"
@@ -27,8 +28,8 @@
     { "name": "skillify", "description": "Codify a task into a reusable skill spec." },
     {
       "name": "payments.settle",
-      "description": "Settle a payment via n-payment (x402/MPP) to unlock a paid session.",
-      "monetize": { "tiers": { "t1_read": "0.001", "t2_realtime": "0.01", "t3_vector": "0.10" }, "asset": "USDC", "freeTier": "10 / 24h" }
+      "description": "Settle a payment via n-payment (x402/MPP) to unlock a paid session. 5 free calls / 24h, then per-call across four rails.",
+      "monetize": { "tiers": { "t1_read": "0.001", "t2_realtime": "0.01", "t3_vector": "0.10" }, "rails": ["x402", "mpp"], "assets": { "evm": "USDC", "xrpl": "RLUSD", "goat": "USDC", "stellar": "USDC" }, "freeTier": "5 / 24h" }
     }
   ],
   "signature": null

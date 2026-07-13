@@ -339,10 +339,10 @@ export default function HomePage() {
             <div className="flex-1 flex gap-6">
               <div className="flex-1 bg-hm-bg rounded-xl p-6">
                 <Shield className="h-8 w-8 text-hm-purple mb-3" />
-                <h3 className="font-heading text-lg font-medium mb-2 text-hm-primary">Always know what you pay</h3>
-                <p className="text-sm text-hm-grey mb-4">Dynamic BTC pricing with no hidden fees. $5/month equivalent.</p>
-                <Link href="/pricing" className="btn-secondary">
-                  Pricing details <ArrowRight className="h-3 w-3" />
+                <h3 className="font-heading text-lg font-medium mb-2 text-hm-primary">Pay only per call</h3>
+                <p className="text-sm text-hm-grey mb-4">5 free calls, then per-call USDC/RLUSD via x402 — no subscription, no card.</p>
+                <Link href="/mcp-connect" className="btn-secondary">
+                  Connect via MCP <ArrowRight className="h-3 w-3" />
                 </Link>
               </div>
               <div className="flex-1 bg-hm-bg rounded-xl p-6">

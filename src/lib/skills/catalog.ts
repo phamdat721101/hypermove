@@ -1,9 +1,12 @@
 /**
  * src/lib/skills/catalog.ts
  * -------------------------
- * The 12 seed skills shown on /tools. Each is a SkillDef — the runtime wraps
- * its execute() in the HyperMove harness (observability + sentinel +
- * output-enforcer) and exposes it as the MCP tool `skill.<name>`.
+ * The 12 seed skills shown on /tools. Each is a SkillDef — a self-contained
+ * agent-skill that installs into the agent's OWN workspace (as a SKILL.md) and
+ * runs locally by following its procedure. HyperMove's own runtime wraps
+ * execute() in the harness (observability + sentinel + output-enforcer) when it
+ * runs a skill server-side; `defineSkillTool()` is an OPTIONAL MCP adapter. MCP
+ * itself is reserved for external-protocol integration (payments, live data).
  *
  * Skills whose real work needs an external provider (Upstage, DeepSeek,
  * Playwright) execute a deterministic PLAN and report `providerConfigured`
@@ -27,7 +30,6 @@ const errorHandler: SkillDef = {
   category: 'harness-primitive',
   description: 'Structured error capture + trace + recursive self-heal feedback for any wrapped call.',
   tier: 't1_read',
-  install: 'npx hypermove add hm-error-handler',
   priceLabel: 'free',
   composes: ['lib/observability'],
   harness: { errorHandler: true, policy: true },
@@ -45,7 +47,6 @@ const outputEnforcer: SkillDef = {
   category: 'harness-primitive',
   description: 'Enforce-don\'t-instruct verify-gate: check arbitrary output against required fields; report pass/fail.',
   tier: 't1_read',
-  install: 'npx hypermove add hm-output-enforcer',
   priceLabel: 'free',
   composes: ['lib/harness/output-enforcer'],
   harness: { errorHandler: true, policy: true },
@@ -68,7 +69,6 @@ const docExtract: SkillDef = {
   category: 'harness-primitive',
   description: 'Parse PDF/image/Office → structured data with an auto-generated or provided extraction schema (Upstage).',
   tier: 't2_realtime',
-  install: 'npx hypermove add hm-doc-extract',
   priceLabel: '$0.02/page',
   composes: ['Upstage Document Parser', 'lib/harness/output-enforcer'],
   harness: {
@@ -96,7 +96,6 @@ const localMcp: SkillDef = {
   category: 'harness-primitive',
   description: 'Privacy-first local FastMCP server config — sensitive documents never leave the premises.',
   tier: 't1_read',
-  install: 'npx hypermove add hm-local-mcp',
   priceLabel: 'free / $49-mo managed',
   composes: ['FastMCP 3.0 (local + Skills provider)'],
   harness: { errorHandler: true, policy: true },
@@ -116,7 +115,6 @@ const inferenceRouter: SkillDef = {
   category: 'harness-primitive',
   description: 'Route simple queries to a 99%-cheaper open model (DeepSeek V4), hard ones to a frontier model; report est. savings.',
   tier: 't1_read',
-  install: 'npx hypermove add hm-inference-router',
   priceLabel: '5% of savings / $19-mo',
   composes: ['LiteLLM', 'DeepSeek V4'],
   harness: { errorHandler: true, policy: true },
@@ -145,7 +143,6 @@ const searchHarness: SkillDef = {
   category: 'harness-primitive',
   description: 'Goal-framing search: force a one-sentence goal, run parallel retrieval, cut RAG "caveman-query" tokens ~95%.',
   tier: 't1_read',
-  install: 'npx hypermove add hm-search-harness',
   priceLabel: '$0.001/query',
   composes: ['Mixedbread goal-framing'],
   harness: { errorHandler: true, policy: true },
@@ -172,8 +169,7 @@ const digitalSdr: SkillDef = {
   category: 'business-model',
   description: 'Digital SDR in a Box — scrape, enrich, draft personalized outreach under a strict $20/day spend cap.',
   tier: 't2_realtime',
-  install: 'npx hypermove add hm-digital-sdr',
-  priceLabel: '$3,000 setup + per-run',
+  priceLabel: 'free to try',
   composes: ['hm-inference-router', 'hm-output-enforcer', 'sentinel:maxSpendPerDay=20'],
   harness: {
     errorHandler: true,
@@ -199,8 +195,7 @@ const smartInferenceRouter: SkillDef = {
   category: 'business-model',
   description: 'Smart Inference Router (pro) — compress a client\'s search/support loops; outcome-gated on a live 70%+ token-bill cut.',
   tier: 't2_realtime',
-  install: 'npx hypermove add hm-smart-inference-router',
-  priceLabel: '$3,000 integration (outcome-gated)',
+  priceLabel: 'free to try',
   composes: ['hm-inference-router', 'lib/observability'],
   harness: { errorHandler: true, policy: true },
   inputSchema: { type: 'object', properties: { monthlyTokenBillUsd: { type: 'number' } }, required: ['monthlyTokenBillUsd'] },
@@ -222,8 +217,7 @@ const oracleGapSearch: SkillDef = {
   category: 'business-model',
   description: 'Oracle-Gap Search Harness — kill RAG context-bloat with goal-framing + parallel search (~95% token cut).',
   tier: 't3_vector',
-  install: 'npx hypermove add hm-oracle-gap-search',
-  priceLabel: '$3,000 integration (outcome-gated)',
+  priceLabel: 'free to try',
   composes: ['hm-search-harness', 'hm-output-enforcer'],
   harness: {
     errorHandler: true,
@@ -243,8 +237,7 @@ const sentinelPrecommit: SkillDef = {
   category: 'business-model',
   description: 'Sentinel pre-commit hook + Cognitive Debt Sentry — block uncompiled/untested agent commits; feed failures back.',
   tier: 't2_realtime',
-  install: 'npx hypermove add hm-sentinel-precommit',
-  priceLabel: '$3,000 setup + $99-mo',
+  priceLabel: 'free to try',
   composes: ['hm-output-enforcer', 'sentinel', 'hm-error-handler'],
   harness: { errorHandler: true, policy: true },
   inputSchema: {
@@ -273,8 +266,7 @@ const apDeskParser: SkillDef = {
   category: 'business-model',
   description: 'Offline AP desk — parse invoice PDFs → validated CSV, math-check line-items sum to total, zero data egress.',
   tier: 't2_realtime',
-  install: 'npx hypermove add hm-ap-desk-parser',
-  priceLabel: '$3,000 setup + $0.02/page',
+  priceLabel: 'free to try',
   composes: ['hm-doc-extract', 'hm-local-mcp', 'hm-output-enforcer'],
   harness: {
     errorHandler: true,
@@ -302,8 +294,7 @@ const brandAdStudio: SkillDef = {
   category: 'business-model',
   description: 'YC-style Brand & Ad-Creative Studio — WebGL shader renders + Playwright 4-second perfect-loop video ads.',
   tier: 't2_realtime',
-  install: 'npx hypermove add hm-brand-ad-studio',
-  priceLabel: '$3,000 setup + per-render',
+  priceLabel: 'free to try',
   composes: ['hm-output-enforcer', 'sentinel', 'WebGL', 'Playwright'],
   harness: {
     errorHandler: true,
@@ -343,7 +334,6 @@ const xrplSearch: SkillDef = {
   category: 'business-model',
   description: 'Search the latest XRPL developer resources — docs, XLS standards, XRPLF repos, Ripple insights — to build products. Free, 10 queries/24h.',
   tier: 't1_read',
-  install: 'npx hypermove add xrpl-search',
   priceLabel: 'free',
   composes: ['lib/mcp/search', 'lib/mcp/xrpl-sources'],
   harness: { errorHandler: true, policy: true },
@@ -370,12 +360,10 @@ const xrplResearchPro: SkillDef = {
   name: 'xrpl-research-pro',
   version: '0.1.0',
   category: 'business-model',
-  description: 'Deep, web-wide, freshness-ranked XRPL research — neural search + synthesis + structured findings, powered by Exa. Unlocked by the $5/mo XRPL Pro package (RLUSD via x402).',
+  description: 'Deep, web-wide, freshness-ranked XRPL research — neural search + synthesis + structured findings, powered by Exa. Free to try (metered by the shared free-call tier; deep-reasoning depth is cost-guarded by FEATURE_XRPL_DEEP_REASONING).',
   tier: 't3_vector',
-  install: 'npx hypermove add xrpl-research-pro',
-  priceLabel: '$5/mo (RLUSD/x402) · 200 queries/mo',
+  priceLabel: 'free to try',
   composes: ['Exa', 'lib/mcp/exa-client', 'lib/harness/output-enforcer'],
-  requiresEntitlement: 'xrpl-pro',
   harness: {
     errorHandler: true,
     policy: true,

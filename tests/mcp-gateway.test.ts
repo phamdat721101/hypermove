@@ -173,11 +173,35 @@ describe('payment routing', () => {
     expect(a).toEqual(b);
   });
 
-  it('402 challenge advertises tiers + chains', () => {
+  it('402 challenge advertises tiers + all four rails (EVM-USDC / XRPL-RLUSD / GOAT-USDC / Stellar-USDC)', () => {
     const c = buildChallenge('t1_read', 3)['x-payment-required'];
     expect(c.amount).toBe(TIER_PRICE_USD.t1_read);
     expect(c.chains.length).toBeGreaterThan(0);
     expect(c.select_via_headers).toContain('X-Payment-Chain');
+    // All four rails' chains are advertised.
+    expect(c.chains).toContain('goat-mainnet');
+    expect(c.chains).toContain('xrpl-mainnet');
+    expect(c.chains).toContain('stellar-mainnet');
+    expect(c.chains.some((ch) => ch.startsWith('base'))).toBe(true);
+    // Assets cover USDC (EVM/GOAT/Stellar) + RLUSD (XRPL).
+    expect(c.assets).toContain('USDC');
+    expect(c.assets).toContain('RLUSD');
+    // Both rails are offered via facilitators.
+    expect(c.facilitators.x402).toBeTruthy();
+    expect(c.facilitators.mpp).toBeTruthy();
+  });
+
+  it('GOAT-USDC + Stellar-USDC settlement fails honestly (not-live) via the real rail', async () => {
+    const { createNPaymentRail } = await import('@/lib/mcp/npayment-rails');
+    const rail = createNPaymentRail('x402');
+    for (const chain of ['goat-mainnet', 'stellar-mainnet']) {
+      const res = await rail.settle({ selection: { chain, rail: 'x402', asset: 'USDC' }, amount: '0.001', userId: 'u', proof: 'p' });
+      expect(res.ok).toBe(false);
+      if (!res.ok) {
+        expect(['unsupported_chain', 'no_proof', 'not_configured', 'settle_failed']).toContain(res.error.code);
+        expect(res.error.hint).toBeTruthy(); // honest, actionable hint (never a fabricated receipt)
+      }
+    }
   });
 });
 

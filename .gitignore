@@ -34,6 +34,9 @@ coverage/
 .nyc_output/
 *.lcov
 
+# --- nim-skill harness: local traces + agent-audit memory (never commit) ---
+.nim/
+
 # --- credentials + secrets (NEVER commit) ----------------------------
 # Environment files: ignore every variant except documented examples.
 .env

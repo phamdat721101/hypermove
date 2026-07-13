@@ -1,7 +1,7 @@
 /**
  * src/lib/mcp/rate-limit.ts
  * -------------------------
- * Free tier: 10 queries per rolling 24h per user. Durable counter in
+ * Free tier: 5 queries per rolling 24h per user. Durable counter in
  * mcp_rate_counters keyed by sha256(userId + hourBucket); the rolling window is
  * the sum of the last 24 hourly buckets. DB-absent → allow (dev / mock-first).
  */
@@ -9,7 +9,7 @@
 import { createHash } from 'node:crypto';
 import { withClient } from '../db';
 
-export const FREE_TIER_LIMIT = 10;
+export const FREE_TIER_LIMIT = 5;
 const WINDOW_HOURS = 24;
 
 export interface RateResult {

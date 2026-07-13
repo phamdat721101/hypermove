@@ -119,7 +119,6 @@ The Dockerfile uses Next.js `output: 'standalone'` mode (~150 MB final image).
 | `/` | Homepage + live agent cinematic |
 | `/docs/quickstart` | 5-minute n-payment recipe |
 | `/docs/n-payment` | n-payment integration guide (27 chains, 14 protocols) |
-| `/pricing` | 3-tier USDC-only pricing |
 | `/portal` | Bundle catalog + email registry form |
 | `/registry`, `/dashboard` | Sprint 3 stubs |
 | `/.well-known/webmcp.json` | Machine-readable WebMCP manifest |

@@ -11,7 +11,6 @@ const navItems = [
   { href: '/mcp-connect', label: 'Connect' },
   { href: '/tools', label: 'Tools' },
   { href: '/docs', label: 'Docs' },
-  { href: '/pricing', label: 'Pricing' },
 ];
 
 export default function Navbar() {

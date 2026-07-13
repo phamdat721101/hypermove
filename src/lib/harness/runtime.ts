@@ -68,7 +68,7 @@ export async function runHarnessed(
   });
 
   const result = await wrapped(args, agentId);
-  return { ...result, harness: harnessSummary(skill.harness), install: skill.install };
+  return { ...result, harness: harnessSummary(skill.harness) };
 }
 
 /** Turn a SkillDef into a gateway ToolDef (name `skill.<name>`). */
@@ -80,17 +80,6 @@ export function defineSkillTool(skill: SkillDef): ToolDef {
     inputSchema: skill.inputSchema,
     handler: async (args: Record<string, unknown>, ctx?: ToolContext) => {
       const userId = ctx?.session.userId ?? 'anonymous';
-      // Paid-skill gate: enforce the time-boxed entitlement BEFORE execute()
-      // runs, so no entitlement → 402 and the (paid) skill body never runs.
-      if (skill.requiresEntitlement) {
-        const { findActiveEntitlement, consumeEntitlementQuota, buildProChallenge } = await import('../mcp/paywall');
-        const entitlement = await findActiveEntitlement(userId);
-        if (!entitlement) return await buildProChallenge(userId);
-        const quota = await consumeEntitlementQuota(userId);
-        if (!quota.allowed) {
-          return { ok: false, status: 402, error: 'quota_exceeded', used: quota.used, cap: quota.cap, hint: 'monthly Pro query cap reached — re-up or wait for the window to reset' };
-        }
-      }
       return runHarnessed(skill, args, userId);
     },
   };
