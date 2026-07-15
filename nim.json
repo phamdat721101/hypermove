@@ -1,0 +1,20 @@
+{
+  "harness": {
+    "cache": {
+      "provider": "auto",
+      "strategy": "prefix",
+      "ttl": "1h",
+      "minTokens": 1024,
+      "roi": true,
+      "breakEvenReads": 2
+    },
+    "enforcer": {
+      "maxHeals": 2,
+      "mode": "strict"
+    },
+    "monitor": {
+      "exporter": "file",
+      "file": ".nim/traces.jsonl"
+    }
+  }
+}

@@ -31,6 +31,12 @@ export function decide(method: string, chain: string): RouteDecision {
   if (base === 'xrpl') {
     return { primary: 'xrpl', fallback: ['mock'], reason: 'XRPL served by the public JSON-RPC adapter' };
   }
+  if (base === 'flare' || base === 'coston2' || base === 'songbird') {
+    return { primary: 'flare', fallback: ['mock'], reason: 'Flare served by the keyless public-RPC + FTSO adapter' };
+  }
+  if (base === 'goat') {
+    return { primary: 'goat', fallback: ['mock'], reason: 'GOAT served by the keyless goat-geth adapter' };
+  }
   if (NON_EVM.has(base)) {
     return { primary: 'moralis', fallback: ['quicknode', 'mock'], reason: 'non-EVM chain best served by Moralis' };
   }

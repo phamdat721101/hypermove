@@ -15,7 +15,7 @@ import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
 import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
-import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled } from '../platform-flag';
+import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 
@@ -273,6 +273,101 @@ const skillifyTool: ToolDef = {
   handler: (args) => skillify(String(args.task ?? '')),
 };
 
+// ─── Builder brief synthesis (M4, nim-harnessed) ───────────────────────────
+
+const flareBriefTool: ToolDef = {
+  name: 'flare.builder.brief',
+  description: 'Synthesize a Flare builder brief: FTSO feeds, FAssets, FDC, FCC capabilities + corpus grounding + news. Deterministic, nim-enforcer verified.',
+  tier: 't3_vector',
+  inputSchema: { type: 'object', properties: {}, required: [] },
+  handler: async () => {
+    const { buildBrief } = await import('./briefs');
+    return buildBrief('flare-mainnet');
+  },
+};
+
+const xrplBriefTool: ToolDef = {
+  name: 'xrpl.builder.brief',
+  description: 'Synthesize an XRPL builder brief: MPT, vault, lending, amendments capabilities + corpus grounding + news. Deterministic, nim-enforcer verified.',
+  tier: 't3_vector',
+  inputSchema: { type: 'object', properties: {}, required: [] },
+  handler: async () => {
+    const { buildBrief } = await import('./briefs');
+    return buildBrief('xrpl-mainnet');
+  },
+};
+
+const goatBriefTool: ToolDef = {
+  name: 'goat.builder.brief',
+  description: 'Synthesize a GOAT Network builder brief: BTC-native settlement, lending, MPP capabilities + corpus grounding + news. Deterministic, nim-enforcer verified.',
+  tier: 't3_vector',
+  inputSchema: { type: 'object', properties: {}, required: [] },
+  handler: async () => {
+    const { buildBrief } = await import('./briefs');
+    return buildBrief('goat-mainnet');
+  },
+};
+
+// ─── XRPL settlement synthesis (M1 Task17) ──────────────────────────────────
+
+const xrplSettlementQuoteTool: ToolDef = {
+  name: 'xrpl.settlement.quote',
+  description: 'Compare RLUSD vs native XRP settlement cost/finality for an amount (Rule #33: native XRP for high-frequency micropayments, no trustline).',
+  tier: 't2_realtime',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      amount: { type: 'string', description: 'Amount in USD (e.g. "0.01")' },
+      treasury: { type: 'string', description: 'Treasury account (r-address) for trustline check' },
+    },
+    required: ['amount'],
+  },
+  handler: async (args) => {
+    const amount = Number(args.amount ?? '0.01');
+    // Rule #33: native XRP for high-frequency micropayments (no trustline, deterministic fee)
+    const xrpFee = 0.000012; // ~12 drops average
+    const rlusFee = 0.000012; // Same fee, but requires trustline
+    return {
+      amount,
+      recommendation: amount < 1 ? 'XRP' : 'RLUSD',
+      rationale: amount < 1 ? 'Native XRP: no trustline required, deterministic fee (Rule #33)' : 'RLUSD: stable value for larger invoices',
+      xrp: { feeXrp: xrpFee, trustlineRequired: false, finality: '~4s' },
+      rlusd: { feeXrp: rlusFee, trustlineRequired: true, finality: '~4s' },
+      rule: 'Rule #33: agentic settlement rotates RLUSD → native XRP for high-frequency micropayments',
+    };
+  },
+};
+
+const xrplX402StatusTool: ToolDef = {
+  name: 'xrpl.x402.status',
+  description: 'T54 XRPL x402 facilitator health + supported assets + trustline status for a treasury account.',
+  tier: 't1_read',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      treasury: { type: 'string', description: 'Treasury account (r-address) to check trustline status' },
+    },
+    required: [],
+  },
+  handler: async (args) => {
+    // T54 facilitator status (best-effort; no network if unavailable)
+    const facilitatorUrl = process.env.XRPL_FACILITATOR_URL ?? 'https://xrpl-x402.t54.ai';
+    let facilitatorHealth = 'unknown';
+    try {
+      const res = await fetch(`${facilitatorUrl}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
+      facilitatorHealth = res.ok ? 'healthy' : 'degraded';
+    } catch {
+      facilitatorHealth = 'unreachable';
+    }
+    return {
+      facilitator: { url: facilitatorUrl, health: facilitatorHealth },
+      supportedAssets: ['XRP', 'RLUSD'],
+      treasury: args.treasury ? { account: String(args.treasury), trustlineCheck: 'not_implemented' } : null,
+      hint: 'HyperMove integrates T54 for XRPL x402 settlement. Set XRPL_FACILITATOR_URL to override.',
+    };
+  },
+};
+
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
@@ -281,6 +376,8 @@ export function getTools(): ToolDef[] {
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
   if (isMcpAgenticEnabled()) tools.push(roadmapTool, ideasTool, skillifyTool);
   if (isMcpSkillsEnabled()) tools.push(...getSkillTools());
+  if (isMcpBuilderBriefEnabled()) tools.push(flareBriefTool, xrplBriefTool, goatBriefTool);
+  if (isMcpXrplV3Enabled()) tools.push(xrplSettlementQuoteTool, xrplX402StatusTool);
   return tools;
 }
 

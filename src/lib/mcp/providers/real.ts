@@ -225,6 +225,11 @@ export function createXrpl(): HttpProvider {
         case 'xrplAmmInfo': return rpc('amm_info', p.amm ? { amm: p.amm } : { asset: p.asset, asset2: p.asset2 });
         case 'xrplTx': return rpc('tx', { transaction: String(p.txHash ?? p.transaction ?? '') });
         case 'xrplLedger': return rpc('ledger', { ledger_index: p.ledgerIndex ?? 'validated' });
+        // M1 — XRPL deepening (MPT, vault, lending+amendment, amendments)
+        case 'xrplMptIssuance': return rpc('ledger_entry', { mpt_issuance: String(p.mptIssuanceID ?? p.issuanceID ?? '') });
+        case 'xrplVaultInfo': return rpc('ledger_entry', { vault_id: String(p.vaultID ?? '') });
+        case 'xrplLendingStatus': return rpc('ledger_entry', { lending_pool: String(p.lendingPoolID ?? p.poolID ?? '') });
+        case 'xrplAmendments': return rpc('ledger', { ledger_index: 'validated', transactions: false, expand: false, owner_funds: false });
         default: return null;
       }
     },

@@ -66,6 +66,24 @@ const METHOD_MANIFEST: readonly MethodSpec[] = [
   { method: 'xrplAmmInfo', services: ['xrpl'], description: 'XRPL Automated Market Maker (AMM) pool state.', signature: 'xrplAmmInfo(chain: "xrpl-mainnet", asset: Asset, asset2: Asset): Amm', tier: 't2_realtime' },
   { method: 'xrplTx', services: ['xrpl'], description: 'XRPL transaction detail by hash.', signature: 'xrplTx(chain: "xrpl-mainnet", txHash: string): Txn', tier: 't1_read' },
   { method: 'xrplLedger', services: ['xrpl'], description: 'XRPL ledger header + metadata.', signature: 'xrplLedger(chain: "xrpl-mainnet", ledgerIndex?: string): Ledger', tier: 't1_read' },
+  // ── Flare (keyless public RPC + FTSO free oracle) — M2 FEATURE_MCP_FLARE_V1 ─
+  { method: 'flareFtsoFeed', services: ['flare'], description: 'FTSOv2 block-latency price feed (free 1000-feed decentralized oracle) by feed name or bytes21 id.', signature: 'flareFtsoFeed(chain: "flare-mainnet", feed: string): { price: number, value: string, decimals: number, timestamp: number }', tier: 't2_realtime' },
+  { method: 'flareFtsoAnchor', services: ['flare'], description: 'FTSO anchor / custom-feed value (FIP.13) by feed name + category.', signature: 'flareFtsoAnchor(chain: "flare-mainnet", feed: string, category?: string): FeedValue', tier: 't2_realtime' },
+  { method: 'flareFassetsFxrp', services: ['flare'], description: 'FXRP mint capacity + collateral state (FAssets AssetManager). Corpus-grounded until interface verified.', signature: 'flareFassetsFxrp(chain: "flare-mainnet"): FxrpState', tier: 't1_read' },
+  { method: 'flareFassetsAgents', services: ['flare'], description: 'FAssets agent registry (AgentOwnerRegistry). Corpus-grounded until interface verified.', signature: 'flareFassetsAgents(chain: "flare-mainnet"): Agent[]', tier: 't1_read' },
+  { method: 'flareFdcAttestation', services: ['flare'], description: 'FDC V2 attestation state (4 types). Corpus-grounded until interface verified.', signature: 'flareFdcAttestation(chain: "flare-mainnet"): AttestationState', tier: 't1_read' },
+  { method: 'flareFccStatus', services: ['flare'], description: 'FCC confidential-compute + PMW availability status. Corpus-grounded until interface verified.', signature: 'flareFccStatus(chain: "flare-mainnet"): FccStatus', tier: 't1_read' },
+  // GOAT Network (M3) — generic EVM reads + GOAT-native methods
+  { method: 'goat.ethCall', services: ['goat'], description: 'Generic EVM eth_call on GOAT (goat-geth RPC).', signature: 'goat.ethCall(chain: "goat-mainnet", to: Address, data: Hex): Hex', tier: 't2_realtime' },
+  { method: 'goat.yieldRate', services: ['goat'], description: 'Native BTC-denominated yield rate + source. Corpus-grounded until BitVM2 contract verified.', signature: 'goat.yieldRate(chain: "goat-mainnet"): { rate: number | null, source: string }', tier: 't1_read' },
+  { method: 'goat.settlementStatus', services: ['goat'], description: 'BitVM2 settlement finality status (Bitcoin-secured). Corpus-grounded until contract verified.', signature: 'goat.settlementStatus(chain: "goat-mainnet"): { status: string, source: string }', tier: 't1_read' },
+  { method: 'goat.identity', services: ['goat'], description: 'ERC-8004 agent identity + reputation on GOAT. Corpus-grounded until contract verified.', signature: 'goat.identity(chain: "goat-mainnet", agent?: Address): { identity: unknown, source: string }', tier: 't1_read' },
+  { method: 'goat.lendingPosition', services: ['goat'], description: 'BTC-collateral position + available USDC borrow. Corpus-grounded until n-payment integration wired.', signature: 'goat.lendingPosition(chain: "goat-mainnet"): { position: unknown, source: string }', tier: 't1_read' },
+  // XRPL deepening (M1) — MPT, vault, lending+amendment, amendments
+  { method: 'xrplMptIssuance', services: ['xrpl'], description: 'Multi-Purpose Token (XLS-33) issuance state: outstanding amount, flags, holder count.', signature: 'xrplMptIssuance(chain: "xrpl-mainnet", issuanceID: string): MptIssuance', tier: 't1_read' },
+  { method: 'xrplVaultInfo', services: ['xrpl'], description: 'XLS-65 single-asset-vault state (shares = MPTs), supplied/liquid balances. Amendment-dependent.', signature: 'xrplVaultInfo(chain: "xrpl-mainnet", vaultID: string): VaultInfo', tier: 't1_read' },
+  { method: 'xrplLendingStatus', services: ['xrpl'], description: 'XLS-66 lending protocol state + amendment-vote status. Returns "not_yet_mainnet" if amendment inactive.', signature: 'xrplLendingStatus(chain: "xrpl-mainnet", poolID?: string): LendingStatus', tier: 't1_read' },
+  { method: 'xrplAmendments', services: ['xrpl'], description: 'Enabled + in-voting amendments (fixCleanup, XLS-65/66). Feature-gate awareness.', signature: 'xrplAmendments(chain: "xrpl-mainnet"): { enabled: string[], voting: { amendment: string, support: number }[] }', tier: 't1_read' },
 ];
 
 function tokenize(...parts: string[]): string[] {

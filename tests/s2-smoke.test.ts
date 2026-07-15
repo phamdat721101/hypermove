@@ -46,8 +46,9 @@ describe('hypermove-app · S2 + S2.1 ship-gate smoke', () => {
     expect(names).toContain('payments.settle');
     const settle = manifest.tools.find((t: { name: string }) => t.name === 'payments.settle');
     expect(settle.monetize.freeTier).toBe('5 / 24h');
-    // Four rails advertised (EVM/GOAT/Stellar USDC + XRPL RLUSD).
-    expect(settle.monetize.assets.xrpl).toBe('RLUSD');
+    // XRPL supports RLUSD + XRP (Rule #33: native XRP for high-frequency micropayments).
+    expect(settle.monetize.assets.xrpl).toContain('RLUSD');
+    expect(settle.monetize.assets.xrpl).toContain('XRP');
     expect(settle.monetize.assets.stellar).toBe('USDC');
     expect(settle.monetize.rails).toEqual(['x402', 'mpp']);
   });

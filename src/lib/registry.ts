@@ -55,7 +55,7 @@ export interface Protocol {
 }
 
 export const PROTOCOLS: readonly Protocol[] = [
-  { id: 'x402',            name: 'x402',                 summary: 'HTTP 402 + WWW-Authenticate handshake',           chains: ['goat-mainnet','base-mainnet','base-sepolia','arbitrum-mainnet','optimism-mainnet'], accent: 'primary' },
+  { id: 'x402',            name: 'x402',                 summary: 'HTTP 402 + WWW-Authenticate handshake',           chains: ['goat-mainnet','base-mainnet','base-sepolia','arbitrum-mainnet','optimism-mainnet','xrpl-mainnet'], accent: 'primary' },
   { id: 'eip-3009',        name: 'EIP-3009',             summary: 'Authorized USDC transfer (no gas to agent)',      chains: ['base-mainnet','base-sepolia','arbitrum-mainnet','polygon-mainnet'], accent: 'primary' },
   { id: 'mpp',             name: 'MPP',                  summary: 'Multi-Party Payment for split settlements',       chains: ['goat-mainnet','base-mainnet'], accent: 'secondary' },
   { id: 'stellar-channels',name: 'Stellar Channels',     summary: 'Sub-cent micropayments off-chain settle',         chains: ['stellar-mainnet'], accent: 'tertiary' },

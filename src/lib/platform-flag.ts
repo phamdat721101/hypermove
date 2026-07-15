@@ -101,3 +101,50 @@ export function isMcpSkillsEnabled(): boolean {
 export function isXrplDeepReasoningEnabled(): boolean {
   return process.env.FEATURE_XRPL_DEEP_REASONING === 'true';
 }
+
+// ─── MCP v3.0 "Web3-Builder Output Gateway" flags ──────────────────────────
+//
+// v3.0 semantics differ from v2.0: every v3.0 sub-flag is OPT-IN (default OFF)
+// so the byte-identical rollback contract holds until a module is explicitly
+// switched on. Each is still master-gated — flipping the gateway master off
+// (FEATURE_HYPERMOVE_MCP_GATEWAY_V1=false) disables them regardless.
+
+/** Opt-in v3.0 sub-flag: master-gated AND explicitly enabled. Default OFF. */
+function v3Flag(name: string): boolean {
+  return isMcpGatewayEnabled() && process.env[name] === 'true';
+}
+
+/** M2 — Flare adapter (FTSO free oracle + FAssets + FDC + FCC). */
+export function isMcpFlareEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_FLARE_V1');
+}
+
+/** M3 — GOAT data adapter (goat-geth reads + yield/settlement/identity/lending). */
+export function isMcpGoatEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_GOAT_V1');
+}
+
+/** M5 — GOAT settlement rail (dogfood: settle HyperMove's own MCP on GOAT). */
+export function isMcpGoatRailEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_GOAT_RAIL');
+}
+
+/** M5 — settlement-asset choice XRP|RLUSD on XRPL (Rule #33). */
+export function isMcpAssetChoiceEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_ASSET_CHOICE');
+}
+
+/** M4 — builder.brief synthesis tier (nim-cache + nim-enforcer gated). */
+export function isMcpBuilderBriefEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_BUILDER_BRIEF');
+}
+
+/** M1 — XRPL deepening (MPT/vault/lending+amendment/settlement-quote/x402). */
+export function isMcpXrplV3Enabled(): boolean {
+  return v3Flag('FEATURE_MCP_XRPL_V3');
+}
+
+/** M6 — MCP resources + prompts exposure. */
+export function isMcpResourcesEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_RESOURCES');
+}

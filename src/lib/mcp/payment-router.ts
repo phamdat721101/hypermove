@@ -11,6 +11,7 @@ import { createHash } from 'node:crypto';
 import { ok, fail, type ServiceResult } from './envelope';
 import { CHAINS, PROTOCOLS, chainById } from '../registry';
 import { createNPaymentRail, isRealPaymentsConfigured } from './npayment-rails';
+import { isMcpGoatRailEnabled, isMcpAssetChoiceEnabled } from '../platform-flag';
 
 export type RailId = 'x402' | 'mpp';
 
@@ -54,8 +55,14 @@ function chainsFor(protocolId: string): Set<string> {
 function assetsFor(chain: string): string[] {
   const assets = new Set<string>(['USDC']);
   if (chainsFor('rlusd').has(chain)) assets.add('RLUSD');
-  if (chain.startsWith('xrpl')) assets.add('RLUSD');
+  if (chain.startsWith('xrpl')) {
+    assets.add('RLUSD');
+    // Rule #33: native XRP for high-frequency micropayments (no trustline)
+    if (isMcpAssetChoiceEnabled()) assets.add('XRP');
+  }
   if (chain.startsWith('stellar')) assets.add('MGUSD');
+  // GOAT native currency is BTC (WGBTC), not USDC
+  if (chain.startsWith('goat') && isMcpGoatRailEnabled()) assets.add('BTC');
   assets.add('USDT');
   return Array.from(assets).sort();
 }

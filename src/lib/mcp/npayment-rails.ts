@@ -31,6 +31,11 @@ const USDC: Record<string, `0x${string}`> = {
   'arbitrum-mainnet': '0xaf88d065e77c8cC2239327C5EDb3A432268e5831',
   'optimism-mainnet': '0x0b2C639c533813f4Aa9D7837CAf62653d097Ff85',
   'polygon-mainnet': '0x3c499c542cEF5E3811e1192ce70d8cc03d5c3359',
+  // GOAT mainnet (dogfood: HyperMove settles its own MCP on the funder's chain)
+  // NOTE: as of 2026-07-15, GOAT mainnet has no native USDC (native currency is BTC).
+  // The GOAT rail is advertised but will return an honest hint until USDC is deployed.
+  // Settlement in native BTC/WGBTC is a future path behind a separate flag.
+  'goat-mainnet': '0x0000000000000000000000000000000000000000', // sentinel: USDC-not-deployed
 };
 
 /** Settlement credentials present → use the real rail; otherwise mock. */
@@ -44,8 +49,15 @@ async function resolveEvmChain(chain: string): Promise<import('viem').Chain | nu
   const map: Record<string, string> = {
     'base-mainnet': 'base', 'base-sepolia': 'baseSepolia',
     'arbitrum-mainnet': 'arbitrum', 'optimism-mainnet': 'optimism', 'polygon-mainnet': 'polygon',
+    'goat-mainnet': 'goat', 'goat-testnet': 'goatTestnet', // GOAT chain objects (custom or from viem if available)
   };
   const key = map[chain];
+  // viem doesn't ship GOAT chains; fall back to a minimal chain definition for RPC access.
+  if ((chain === 'goat-mainnet' || chain === 'goat-testnet') && !chains[key]) {
+    const { GOAT_CHAIN_IDS, GOAT_RPC } = await import('./providers/chain-constants');
+    const id = chain === 'goat-mainnet' ? GOAT_CHAIN_IDS.goat : GOAT_CHAIN_IDS['goat-testnet'];
+    return { id, name: chain, nativeCurrency: { name: 'Bitcoin', symbol: 'BTC', decimals: 18 }, rpcUrls: { default: { http: [GOAT_RPC[chain.split('-')[0]]] } } } as unknown as import('viem').Chain;
+  }
   return key ? chains[key] ?? null : null;
 }
 
@@ -73,6 +85,13 @@ export function createNPaymentRail(id: RailId): PaymentRail {
 
       const usdc = USDC[selection.chain];
       const viemChain = await resolveEvmChain(selection.chain);
+      // GOAT USDC sentinel (zero address) → honest hint, not a fake receipt
+      if (usdc === '0x0000000000000000000000000000000000000000') {
+        return fail('npayment', 'USDC not deployed on GOAT mainnet', {
+          code: 'unsupported_chain',
+          hint: 'GOAT native currency is BTC. Native BTC settlement is planned; USDC-on-GOAT is not yet deployed. Use base/arbitrum/optimism/polygon for USDC.',
+        });
+      }
       if (!usdc || !viemChain) {
         return fail('npayment', `no EIP-3009 settlement route for ${selection.chain}`, { code: 'unsupported_chain', hint: `real x402 settlement supports: ${Object.keys(USDC).join(', ')}` });
       }

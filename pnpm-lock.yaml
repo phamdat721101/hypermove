@@ -44,6 +44,9 @@ importers:
       next:
         specifier: 14.2.18
         version: 14.2.18(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      nim-skill:
+        specifier: github:phamdat721101/nim-skill
+        version: https://codeload.github.com/phamdat721101/nim-skill/tar.gz/550c2a0250b92e92451760a203d367004ac94ec3
       pg:
         specifier: 8.13.1
         version: 8.13.1
@@ -1050,6 +1053,10 @@ packages:
     resolution: {integrity: sha512-yPVavfyCcRhmorC7rWlkHn15b4wDVgVmBA7kV4QVBsF7kv/9TKJAbAXVTxvTnwP8HHKjRCJDClKbciiYS7p0DQ==}
     engines: {node: '>=16'}
 
+  commander@13.1.0:
+    resolution: {integrity: sha512-/rFeCpNJQbhSZjGVwO9RFV3xPqbnERS8MmIQzCtD/zl6gpJuV/bMLuN92oG3F7d8oDEHHRrujSXNUr8fpjntKw==}
+    engines: {node: '>=18'}
+
   commander@2.20.3:
     resolution: {integrity: sha512-GpVkmM8vF2vQUkj2LvZmD35JxeJOLCwJ9cUkugyk2nuhbv3+mJvpLYYt+0+USMxE+oj+ey/lJEnhZw75x/OMcQ==}
 
@@ -1977,6 +1984,12 @@ packages:
         optional: true
       sass:
         optional: true
+
+  nim-skill@https://codeload.github.com/phamdat721101/nim-skill/tar.gz/550c2a0250b92e92451760a203d367004ac94ec3:
+    resolution: {tarball: https://codeload.github.com/phamdat721101/nim-skill/tar.gz/550c2a0250b92e92451760a203d367004ac94ec3}
+    version: 0.3.0
+    engines: {node: '>=20'}
+    hasBin: true
 
   node-fetch@2.7.0:
     resolution: {integrity: sha512-c4FRfUm/dbcWZ7U+1Wq0AwCyFL+3nt2bEw05wfxSz+DWpWsitgmSgYmy2dQdWyKC1694ELPqMs/YzUSNozLt8A==}
@@ -3777,6 +3790,8 @@ snapshots:
 
   commander@11.1.0: {}
 
+  commander@13.1.0: {}
+
   commander@2.20.3:
     optional: true
 
@@ -4893,6 +4908,11 @@ snapshots:
     transitivePeerDependencies:
       - '@babel/core'
       - babel-plugin-macros
+
+  nim-skill@https://codeload.github.com/phamdat721101/nim-skill/tar.gz/550c2a0250b92e92451760a203d367004ac94ec3:
+    dependencies:
+      commander: 13.1.0
+      zod: 3.25.76
 
   node-fetch@2.7.0:
     dependencies:

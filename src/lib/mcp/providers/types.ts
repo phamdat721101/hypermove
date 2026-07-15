@@ -9,7 +9,7 @@
 
 import type { ServiceResult } from '../envelope';
 
-export type ProviderName = 'moralis' | 'alchemy' | 'quicknode' | 'stellar' | 'xrpl' | 'mock';
+export type ProviderName = 'moralis' | 'alchemy' | 'quicknode' | 'stellar' | 'xrpl' | 'flare' | 'goat' | 'mock';
 
 /** A normalized cross-provider call. `method` is a canonical operation id. */
 export interface ProviderCall {

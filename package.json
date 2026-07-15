@@ -28,6 +28,7 @@
     "motion": "^12.42.0",
     "n-payment": "^0.30.1",
     "next": "14.2.18",
+    "nim-skill": "github:phamdat721101/nim-skill",
     "pg": "8.13.1",
     "porto": "^0.2.37",
     "react": "18.3.1",
