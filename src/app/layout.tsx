@@ -27,7 +27,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="min-h-screen flex flex-col bg-white text-hm-dark">
         <Web3Provider>
-          <div className="relative">
+          <div className="relative flex-1 flex flex-col">
             <Navbar />
             <main className="flex-1">{children}</main>
           </div>

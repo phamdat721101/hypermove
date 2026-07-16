@@ -11,7 +11,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
   const [helpful, setHelpful] = useState<'none' | 'yes' | 'no'>('none');
 
   return (
-    <div className="section-container pt-24 pb-8">
+    <div className="section-container pt-28 pb-16 flex-1">
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
         {/* Sidebar */}
         <aside className="lg:col-span-3 rounded-xl border border-hm-accent bg-white p-4 h-fit sticky top-20 shadow-sm">
@@ -33,27 +33,7 @@ export default function DocsLayout({ children }: { children: React.ReactNode }) 
         </aside>
 
         {/* Content */}
-        <main className="lg:col-span-9 rounded-xl border border-hm-accent bg-white p-6 md:p-8 shadow-sm prose prose-sm max-w-none
-          prose-headings:text-hm-primary
-          prose-p:text-hm-dark
-          prose-li:text-hm-dark
-          prose-strong:text-hm-primary
-          prose-code:text-hm-purple
-          prose-a:text-hm-purple
-          prose-blockquote:text-hm-dark
-          prose-blockquote:border-hm-purple/30
-          prose-pre:bg-[#f5f5f7] prose-pre:text-hm-dark prose-pre:rounded-xl prose-pre:border-none
-          prose-ol:text-hm-dark
-          prose-ul:text-hm-dark
-          [&_blockquote_strong]:text-hm-primary
-          [&_li_strong]:text-hm-primary
-          [&_blockquote_code]:text-hm-purple
-          [&_blockquote_code]:bg-transparent
-          [&_blockquote_code]:p-0
-          [&_h1]:text-hm-primary
-          [&_h2]:text-hm-primary
-          [&_h3]:text-hm-primary
-        ">
+        <main className="lg:col-span-9 rounded-xl border border-hm-accent bg-white p-8 md:p-10 shadow-sm max-w-none">
           {children}
 
           {/* Feedback */}
