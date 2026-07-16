@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { ArrowRight, Cloud, Zap, Shield, Layers } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { SCRIPT } from '@/lib/agent';
 
 const integrationTabs = [
@@ -54,6 +54,14 @@ function CodeTabs() {
 export default function HomePage() {
   const [terminalLines, setTerminalLines] = useState<Array<{ label: string; detail?: string; kind: string }>>([]);
   const [terminalState, setTerminalState] = useState<'idle' | 'running' | 'done'>('idle');
+  const terminalRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll terminal to bottom when new lines appear
+  useEffect(() => {
+    if (terminalRef.current) {
+      terminalRef.current.scrollTop = terminalRef.current.scrollHeight;
+    }
+  }, [terminalLines]);
 
   // Auto-run the demo dynamically on load and loop it — rendered entirely
   // client-side from the shared SCRIPT (no API calls, no agent budget spend),
@@ -108,7 +116,7 @@ export default function HomePage() {
       </section> */}
 
       {/* MCP-tools hero — animated gradient backdrop restores the color effect */}
-      <section className="relative overflow-hidden pt-32 pb-20">
+      <section className="relative overflow-hidden pt-32 pb-20 min-h-[500px]">
         <canvas
           id="gradient-canvas"
           className="absolute inset-0 -z-10 h-full w-full"
@@ -145,76 +153,64 @@ export default function HomePage() {
 
       {/* Graphic Grid */}
       <section className="bg-hm-bg py-12">
-        <div className="section-container">
-          <div className="grid grid-cols-3 grid-rows-3 gap-6">
-            <div className="col-span-1 row-span-1 rounded-2xl bg-white shadow-lg p-6 flex flex-col justify-center">
-              <p className="text-3xl font-bold text-hm-purple">27+</p>
-              <p className="text-sm text-hm-grey mt-1">Chains</p>
-            </div>
-            <div className="col-span-2 row-span-3 rounded-2xl overflow-hidden bg-[#0a0a1a] shadow-xl flex flex-col">
-              {/* Terminal header */}
-              <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-                <div className="flex items-center space-x-3">
-                  <div className="flex space-x-2">
-                    <div className="h-3 w-3 rounded-full bg-red-400" />
-                    <div className="h-3 w-3 rounded-full bg-yellow-400" />
-                    <div className="h-3 w-3 rounded-full bg-green-400" />
-                  </div>
-                  <span className="text-xs text-gray-400 font-mono uppercase tracking-wider">agent.sh · live demo</span>
+        <div className="section-container space-y-6">
+          {/* Terminal Demo — full width */}
+          <div className="rounded-2xl overflow-hidden bg-[#0a0a1a] shadow-xl flex flex-col">
+            {/* Terminal header */}
+            <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
+              <div className="flex items-center space-x-3">
+                <div className="flex space-x-2">
+                  <div className="h-3 w-3 rounded-full bg-red-400" />
+                  <div className="h-3 w-3 rounded-full bg-yellow-400" />
+                  <div className="h-3 w-3 rounded-full bg-green-400" />
                 </div>
-                <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-                  terminalState === 'done' ? 'border-green-400 text-green-400' : 
-                  terminalState === 'running' ? 'border-hm-purple/40 text-hm-purple' : 
-                  'border-gray-600 text-gray-400'
-                }`}>
-                  {terminalState === 'done' ? '✓ PAID' : terminalState === 'running' ? 'STREAMING' : 'READY'}
-                </span>
+                <span className="text-xs text-gray-400 font-mono uppercase tracking-wider">agent.sh · live demo</span>
               </div>
-              {/* Terminal body */}
-              <div className="p-5 font-mono text-sm flex-1 overflow-y-auto">
-                <p className="text-gray-400">
-                  <span className="text-green-400">~</span> <span className="text-blue-400">$</span> agent run --target hypermove.xyz
-                </p>
-                {terminalLines.length > 0 && (
-                  <div className="mt-3 flex flex-col gap-1.5">
-                    {terminalLines.map((frame, i) => (
-                      <div key={i}>
-                        <p className={`${
-                          frame.kind === 'paywall.200' || frame.kind === 'done' ? 'text-green-400' :
-                          frame.kind === 'paywall.402' ? 'text-yellow-400' :
-                          frame.kind === 'revenue.tick' ? 'text-emerald-400' :
-                          'text-gray-300'
-                        }`}>
-                          <span className="text-blue-400">›</span> {frame.label}
-                        </p>
-                        {frame.detail && <p className="ml-4 text-gray-500 text-xs">{frame.detail}</p>}
-                      </div>
-                    ))}
-                  </div>
-                )}
-                {terminalState === 'running' && <span className="inline-block w-2 h-4 bg-hm-purple animate-pulse mt-2" />}
-              </div>
-              {/* Terminal footer */}
-              <div className="flex items-center justify-between border-t border-white/10 px-4 py-2 mt-auto">
-                <div className="text-xs text-gray-400 font-mono uppercase tracking-wider">
-                  Revenue ticker <span className="text-green-400 text-lg font-bold ml-2">${terminalState === 'done' ? '0.01' : '0.00'}</span>
-                  <span className="ml-2">· {terminalState === 'done' ? '1' : '0'} calls</span>
+              <span className={`rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+                terminalState === 'done' ? 'border-green-400 text-green-400' : 
+                terminalState === 'running' ? 'border-hm-purple/40 text-hm-purple' : 
+                'border-gray-600 text-gray-400'
+              }`}>
+                {terminalState === 'done' ? '✓ PAID' : terminalState === 'running' ? 'STREAMING' : 'READY'}
+              </span>
+            </div>
+            {/* Terminal body */}
+            <div ref={terminalRef} className="p-5 font-mono text-sm h-[320px] overflow-y-auto">
+              <p className="text-gray-400">
+                <span className="text-green-400">~</span> <span className="text-blue-400">$</span> agent run --target hypermove.xyz
+              </p>
+              {terminalLines.length > 0 && (
+                <div className="mt-3 flex flex-col gap-1.5">
+                  {terminalLines.map((frame, i) => (
+                    <div key={i}>
+                      <p className={`${
+                        frame.kind === 'paywall.200' || frame.kind === 'done' ? 'text-green-400' :
+                        frame.kind === 'paywall.402' ? 'text-yellow-400' :
+                        frame.kind === 'revenue.tick' ? 'text-emerald-400' :
+                        'text-gray-300'
+                      }`}>
+                        <span className="text-blue-400">›</span> {frame.label}
+                      </p>
+                      {frame.detail && <p className="ml-4 text-gray-500 text-xs">{frame.detail}</p>}
+                    </div>
+                  ))}
                 </div>
-                <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-gray-400">
-                  <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
-                  Live demo
-                </span>
+              )}
+              {terminalState === 'running' && <span className="inline-block w-2 h-4 bg-hm-purple animate-pulse mt-2" />}
+            </div>
+            {/* Terminal footer */}
+            <div className="flex items-center justify-between border-t border-white/10 px-4 py-2 mt-auto">
+              <div className="text-xs text-gray-400 font-mono uppercase tracking-wider">
+                Revenue ticker <span className="text-green-400 text-lg font-bold ml-2">${terminalState === 'done' ? '0.01' : '0.00'}</span>
+                <span className="ml-2">· {terminalState === 'done' ? '1' : '0'} calls</span>
               </div>
-            </div>
-            <div className="col-span-1 row-span-1 rounded-2xl bg-white shadow-lg p-6 flex flex-col justify-center">
-              <p className="text-3xl font-bold text-hm-purple">14</p>
-              <p className="text-sm text-hm-grey mt-1">Protocols</p>
-            </div>
-            <div className="col-span-1 row-span-1 rounded-2xl bg-white shadow-lg p-6 flex flex-col justify-center">
-              <p className="text-3xl font-bold text-hm-purple">5 min</p>
-              <p className="text-sm text-hm-grey mt-1">To first paid call</p>
+              <span className="flex items-center gap-2 text-xs font-mono uppercase tracking-wider text-gray-400">
+                <span className="h-2 w-2 rounded-full bg-green-400 animate-pulse" />
+                Live demo
+              </span>
             </div>
           </div>
+
         </div>
       </section>
 

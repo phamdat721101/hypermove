@@ -3,38 +3,13 @@
 import { useEffect, useState } from 'react';
 import { useAccount, useSignMessage } from 'wagmi';
 import { useWalletModal } from '@/lib/wallet-modal-context';
+import { Plug, Shield, Zap, Copy, Check } from 'lucide-react';
 
-/**
- * /mcp-connect — the human-facing surface for the MCP Gateway.
- *
- * Two independent gaps fixed here:
- *
- * 1. Origin: every curl example used to hardcode `https://hypermove.xyz`,
- *    which is wrong on any other deploy (localhost, a VPS behind duckdns,
- *    a staging domain). Fixed by deriving the base URL from the browser's
- *    own `window.location.origin` — this page never needs to know its host.
- *
- * 2. Auth key issuance: the only path to a bearer token was WorkOS OAuth.
- *    On a web3 product where every other paid flow already asks the user to
- *    connect a wallet (WalletConnect.tsx + wagmi, wired app-wide via
- *    Web3Provider in layout.tsx), forcing a *separate* identity system for
- *    MCP is inconsistent and adds a second login the user never asked for.
- *    Fixed by adding a wallet-signature login: connect wallet → sign one
- *    message → POST to /api/mcp/wallet-auth → same storeToken() the WorkOS
- *    path already uses, just keyed by wallet address instead of a WorkOS id.
- */
 type GatewayState = { gatewayEnabled: boolean; authRequired: boolean } | null;
 
 const MCP_CLIENTS = ['Kiro / Cursor / Claude CLI', 'Claude Desktop / Windsurf', 'curl (raw)'] as const;
 type McpClient = (typeof MCP_CLIENTS)[number];
 
-/**
- * Renders how to CONNECT an MCP client — not how to call a REST API. /api/mcp
- * is a real MCP server (Streamable HTTP), so agents add it to their MCP config
- * (`mcpServers`), or bridge stdio clients via `mcp-remote`. The raw-curl tab
- * includes the mandatory `Accept: application/json, text/event-stream` header
- * that the Streamable-HTTP transport requires (a plain JSON POST gets 406).
- */
 function McpConfigBlock({ origin, token }: { origin: string; token?: string }) {
   const [client, setClient] = useState<McpClient>(MCP_CLIENTS[0]);
   const [copied, setCopied] = useState(false);
@@ -66,14 +41,14 @@ function McpConfigBlock({ origin, token }: { origin: string; token?: string }) {
   const snippet = snippets[client];
 
   return (
-    <div className="mt-4 overflow-hidden rounded-lg border border-neutral-700 bg-neutral-900">
-      <div className="flex items-center justify-between border-b border-neutral-800 px-3 py-2">
+    <div className="mt-4 overflow-hidden rounded-xl border border-hm-accent bg-[#0a0a1a]">
+      <div className="flex items-center justify-between border-b border-white/10 px-3 py-2">
         <div className="flex flex-wrap gap-1">
           {MCP_CLIENTS.map((c) => (
             <button
               key={c}
               onClick={() => setClient(c)}
-              className={`rounded px-2 py-1 text-[11px] ${client === c ? 'bg-neutral-700 text-neutral-100' : 'text-neutral-400 hover:text-neutral-200'}`}
+              className={`rounded px-2.5 py-1 text-[11px] font-medium transition-colors ${client === c ? 'bg-hm-purple text-white' : 'text-gray-400 hover:text-white'}`}
             >
               {c}
             </button>
@@ -85,12 +60,13 @@ function McpConfigBlock({ origin, token }: { origin: string; token?: string }) {
             setCopied(true);
             setTimeout(() => setCopied(false), 2000);
           }}
-          className="shrink-0 rounded border border-neutral-700 px-2 py-1 text-[11px] text-neutral-200 hover:bg-neutral-800"
+          className="shrink-0 flex items-center gap-1 rounded border border-white/20 px-2 py-1 text-[11px] text-gray-300 hover:bg-white/10"
         >
+          {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
           {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
-      <pre className="overflow-x-auto p-3 text-xs text-neutral-300">{snippet}</pre>
+      <pre className="overflow-x-auto p-4 text-xs text-gray-300 leading-relaxed">{snippet}</pre>
     </div>
   );
 }
@@ -101,24 +77,62 @@ export default function McpConnectPage() {
   const origin = useOrigin();
 
   return (
-    <main className="mx-auto max-w-2xl px-4 py-16">
-      <p className="mb-2 text-xs font-medium uppercase tracking-wider text-neutral-500">MCP Gateway</p>
-      <h1 className="text-3xl font-semibold tracking-tight text-neutral-100">Connect your agent</h1>
-      <p className="mt-3 text-sm text-neutral-400">
-        Call <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">{origin}/api/mcp</code> from
-        any MCP-compatible agent. 10 free queries / 24h, then metered x402/MPP.
-      </p>
+    <div className="section-container pt-28 pb-20 flex-1">
+      <div className="max-w-2xl mx-auto">
+        {/* Header */}
+        <div className="mb-8">
+          <span className="inline-block rounded-full border border-hm-accent bg-hm-muted px-3 py-1 text-xs font-mono text-hm-grey uppercase tracking-wider">
+            MCP Gateway
+          </span>
+          <h1 className="mt-4 font-heading text-4xl font-bold text-hm-primary sm:text-5xl">
+            Connect your agent
+          </h1>
+          <p className="mt-4 max-w-2xl text-hm-grey">
+            Call <code className="rounded bg-hm-muted px-1.5 py-0.5 font-mono text-xs text-hm-purple">{origin}/api/mcp</code> from
+            any MCP-compatible agent. 10 free queries / 24h, then metered x402/MPP.
+          </p>
+        </div>
 
-      {token ? (
-        <TokenPanel token={token} origin={origin} />
-      ) : state === null ? (
-        <p className="mt-8 text-sm text-neutral-500">Checking gateway status…</p>
-      ) : state.authRequired ? (
-        <WalletAuthPanel origin={origin} />
-      ) : (
-        <NoAuthPanel gatewayEnabled={state.gatewayEnabled} origin={origin} />
-      )}
-    </main>
+        {/* Features row */}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
+          <div className="flex items-center gap-3 rounded-xl border border-hm-accent bg-white p-4">
+            <Plug className="h-5 w-5 text-hm-purple shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-hm-primary">Streamable HTTP</p>
+              <p className="text-xs text-hm-grey">Real MCP protocol</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-hm-accent bg-white p-4">
+            <Zap className="h-5 w-5 text-hm-purple shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-hm-primary">10 free / day</p>
+              <p className="text-xs text-hm-grey">No card required</p>
+            </div>
+          </div>
+          <div className="flex items-center gap-3 rounded-xl border border-hm-accent bg-white p-4">
+            <Shield className="h-5 w-5 text-hm-purple shrink-0" />
+            <div>
+              <p className="text-sm font-medium text-hm-primary">Wallet auth</p>
+              <p className="text-xs text-hm-grey">Sign once, no gas</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Auth / Token section */}
+        {token ? (
+          <TokenPanel token={token} origin={origin} />
+        ) : state === null ? (
+          <div className="mt-8 text-center py-8">
+            <div className="h-6 w-6 border-2 border-hm-purple border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="mt-3 text-sm text-hm-grey">Checking gateway status…</p>
+          </div>
+        ) : state.authRequired ? (
+          <WalletAuthPanel origin={origin} />
+        ) : (
+          <NoAuthPanel gatewayEnabled={state.gatewayEnabled} origin={origin} />
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -130,57 +144,50 @@ function useTokenFromQuery(): string | null {
   return token;
 }
 
-/** The page's own origin — never hardcode a domain; works on hypermove.xyz, a VPS, or localhost. */
 function useOrigin(): string {
   const [origin, setOrigin] = useState('');
   useEffect(() => setOrigin(window.location.origin), []);
   return origin;
 }
 
-/** Fetches /api/mcp/health once and exposes the two flags the UI branches on. */
 function useGatewayState(): GatewayState {
   const [state, setState] = useState<GatewayState>(null);
-
   useEffect(() => {
     let cancelled = false;
     fetch('/api/mcp/health')
       .then((res) => res.json())
       .then((body: { gateway_enabled?: boolean; auth_required?: boolean }) => {
-        if (!cancelled) {
-          setState({ gatewayEnabled: !!body.gateway_enabled, authRequired: !!body.auth_required });
-        }
+        if (!cancelled) setState({ gatewayEnabled: !!body.gateway_enabled, authRequired: !!body.auth_required });
       })
       .catch(() => {
-        // Health check itself failed — treat as "no auth required" so the
-        // page still shows a usable curl example instead of stalling.
         if (!cancelled) setState({ gatewayEnabled: false, authRequired: false });
       });
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
-
   return state;
 }
 
-/** Shown when the gateway doesn't require sign-in — flagged as an insecure/unintended
- *  state rather than a neutral one, since the intended default is auth-required. */
 function NoAuthPanel({ gatewayEnabled, origin }: { gatewayEnabled: boolean; origin: string }) {
   return (
-    <div className="mt-8 rounded-xl border border-amber-500/30 bg-amber-500/5 p-5">
-      <p className="text-sm font-medium text-amber-300">⚠ No sign-in required — anyone can call this endpoint</p>
-      <p className="mt-1 text-xs text-neutral-400">
-        {gatewayEnabled
-          ? 'FEATURE_MCP_AUTH_WORKOS is off. Set it to "true" (with FEATURE_HYPERMOVE_MCP_GATEWAY_V1=true) to require a wallet-signed key for every request.'
-          : 'FEATURE_HYPERMOVE_MCP_GATEWAY_V1 is off, so /api/mcp serves the legacy payment.x402 + reputation.read tools and never checks auth — setting FEATURE_MCP_AUTH_WORKOS alone has no effect until this master flag is also on.'}
-      </p>
-      <p className="mt-3 text-xs text-neutral-400">Add this to your MCP client config — it&apos;s a real MCP server (Streamable HTTP), not a REST endpoint.</p>
+    <div className="rounded-xl border border-hm-accent bg-white p-6 shadow-sm">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-hm-purple/10 p-2">
+          <Plug className="h-5 w-5 text-hm-purple" />
+        </div>
+        <div>
+          <p className="text-sm font-medium text-hm-primary">No sign-in required</p>
+          <p className="mt-1 text-xs text-hm-grey">
+            {gatewayEnabled
+              ? 'Auth is disabled. Set FEATURE_MCP_AUTH_WORKOS=true to require wallet-signed keys.'
+              : 'Gateway is in legacy mode. Add this to your MCP client config — it works without authentication.'}
+          </p>
+        </div>
+      </div>
       <McpConfigBlock origin={origin} />
     </div>
   );
 }
 
-/** Shown when auth is required — connect wallet, sign one message, get a bearer token. */
 function WalletAuthPanel({ origin }: { origin: string }) {
   const { address, isConnected } = useAccount();
   const { open } = useWalletModal();
@@ -213,27 +220,39 @@ function WalletAuthPanel({ origin }: { origin: string }) {
   }
 
   return (
-    <div className="mt-8 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-      <p className="text-sm font-medium text-emerald-300">Connect your wallet to get a key</p>
-      <p className="mt-1 text-xs text-neutral-400">
-        One signature (free, no gas) proves you own the address. No account, no password.
-      </p>
-      {!isConnected ? (
-        <button onClick={open} className="mt-4 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-medium text-neutral-950 hover:bg-emerald-400">
-          Connect Wallet →
-        </button>
-      ) : (
-        <button
-          onClick={getKey}
-          disabled={signing || issuing}
-          className="mt-4 rounded-lg bg-emerald-500 px-5 py-2.5 text-sm font-medium text-neutral-950 hover:bg-emerald-400 disabled:opacity-50"
-        >
-          {signing || issuing ? 'Signing…' : `Sign in as ${address?.slice(0, 6)}...${address?.slice(-4)}`}
-        </button>
-      )}
-      {error && <p className="mt-3 text-xs text-red-400">{error}</p>}
-      <p className="mt-4 text-xs text-neutral-500">
-        Prefer WorkOS? <a href={`${origin}/api/mcp/authorize`} className="underline hover:text-neutral-300">Sign in with email →</a>
+    <div className="rounded-xl border border-hm-purple/20 bg-hm-purple/5 p-6">
+      <div className="flex items-start gap-3">
+        <div className="rounded-full bg-hm-purple/10 p-2">
+          <Shield className="h-5 w-5 text-hm-purple" />
+        </div>
+        <div>
+          <p className="font-medium text-hm-primary">Connect your wallet to get a key</p>
+          <p className="mt-1 text-sm text-hm-grey">
+            One signature (free, no gas) proves you own the address. No account, no password.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-6">
+        {!isConnected ? (
+          <button onClick={open} className="rounded-lg bg-hm-purple px-6 py-3 text-sm font-semibold text-white hover:bg-hm-purple/90 transition-colors">
+            Connect Wallet →
+          </button>
+        ) : (
+          <button
+            onClick={getKey}
+            disabled={signing || issuing}
+            className="rounded-lg bg-hm-purple px-6 py-3 text-sm font-semibold text-white hover:bg-hm-purple/90 disabled:opacity-50 transition-colors"
+          >
+            {signing || issuing ? 'Signing…' : `Sign in as ${address?.slice(0, 6)}...${address?.slice(-4)}`}
+          </button>
+        )}
+      </div>
+
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+
+      <p className="mt-4 text-xs text-hm-grey">
+        Prefer WorkOS? <a href={`${origin}/api/mcp/authorize`} className="text-hm-purple underline hover:text-hm-purple/80">Sign in with email →</a>
       </p>
     </div>
   );
@@ -243,26 +262,40 @@ function TokenPanel({ token, origin }: { token: string; origin: string }) {
   const [copied, setCopied] = useState(false);
 
   return (
-    <div className="mt-8 rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5">
-      <p className="text-sm font-medium text-emerald-300">Connected — here is your key</p>
-      <p className="mt-1 text-xs text-neutral-400">
-        Shown once. Store it now; it is not recoverable if lost (revoke + reconnect instead).
-      </p>
-      <div className="mt-4 flex items-center gap-2">
-        <code className="flex-1 truncate rounded-lg bg-neutral-900 px-3 py-2 text-xs text-neutral-200">{token}</code>
-        <button
-          onClick={() => {
-            void navigator.clipboard.writeText(token);
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }}
-          className="shrink-0 rounded-lg border border-neutral-700 px-3 py-2 text-xs text-neutral-200 hover:bg-neutral-800"
-        >
-          {copied ? 'Copied' : 'Copy'}
-        </button>
+    <div className="space-y-6">
+      <div className="rounded-xl border border-green-200 bg-green-50 p-6">
+        <div className="flex items-start gap-3">
+          <div className="rounded-full bg-green-100 p-2">
+            <Check className="h-5 w-5 text-green-600" />
+          </div>
+          <div>
+            <p className="font-medium text-green-800">Connected — here is your key</p>
+            <p className="mt-1 text-sm text-green-700/70">
+              Shown once. Store it now; it is not recoverable if lost (revoke + reconnect instead).
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-4 flex items-center gap-2">
+          <code className="flex-1 truncate rounded-lg bg-white border border-green-200 px-3 py-2.5 text-xs font-mono text-hm-dark">{token}</code>
+          <button
+            onClick={() => {
+              void navigator.clipboard.writeText(token);
+              setCopied(true);
+              setTimeout(() => setCopied(false), 2000);
+            }}
+            className="shrink-0 rounded-lg bg-hm-purple px-4 py-2.5 text-xs font-medium text-white hover:bg-hm-purple/90"
+          >
+            {copied ? 'Copied!' : 'Copy'}
+          </button>
+        </div>
       </div>
-      <p className="mt-4 text-xs text-neutral-400">Add this to your MCP client config (the key is embedded as a Bearer header):</p>
-      <McpConfigBlock origin={origin} token={token} />
+
+      <div className="rounded-xl border border-hm-accent bg-white p-6 shadow-sm">
+        <p className="text-sm font-medium text-hm-primary mb-1">Add to your MCP client config</p>
+        <p className="text-xs text-hm-grey">The key is embedded as a Bearer header automatically.</p>
+        <McpConfigBlock origin={origin} token={token} />
+      </div>
     </div>
   );
 }
