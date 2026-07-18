@@ -21,7 +21,8 @@ afterEach(() => {
 
 describe('builder.brief tools', () => {
   it('are NOT registered when FEATURE_MCP_BUILDER_BRIEF is off', () => {
-    delete process.env.FEATURE_MCP_BUILDER_BRIEF;
+    // v4.0: v3Flag() defaults ON (opt-out). Explicit '=false' is now the off-switch.
+    process.env.FEATURE_MCP_BUILDER_BRIEF = 'false';
     const tools = getTools();
     expect(tools.find((t) => t.name === 'flare.builder.brief')).toBeUndefined();
     expect(tools.find((t) => t.name === 'xrpl.builder.brief')).toBeUndefined();
@@ -37,7 +38,7 @@ describe('builder.brief tools', () => {
   });
 
   it('returns error when flag is off', async () => {
-    delete process.env.FEATURE_MCP_BUILDER_BRIEF;
+    process.env.FEATURE_MCP_BUILDER_BRIEF = 'false';
     const result = await buildBrief('flare-mainnet');
     expect(result.ok).toBe(false);
     if (!result.ok) {

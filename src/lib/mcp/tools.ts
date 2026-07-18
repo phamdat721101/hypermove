@@ -15,7 +15,7 @@ import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
 import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
-import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled } from '../platform-flag';
+import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 
@@ -368,16 +368,166 @@ const xrplX402StatusTool: ToolDef = {
   },
 };
 
+// ─── XLS-65/66 amendment gate (N1) ──────────────────────────────────────────
+//
+// Single Responsibility: this is the ONE place that decides whether a
+// vault/lending read is safe to attempt on mainnet today. Both tools below
+// compose it rather than duplicating the amendment-vote check.
+
+const XRPL_LENDING_AMENDMENTS: Record<'vault' | 'lending', string[]> = {
+  vault: ['SingleAssetVault'],
+  lending: ['SingleAssetVault', 'Lending'],
+};
+
+async function withAmendmentGate(
+  chain: string,
+  kind: 'vault' | 'lending',
+  read: () => Promise<unknown>,
+): Promise<unknown> {
+  const { buildRouter } = await import('./providers');
+  const amendments = XRPL_LENDING_AMENDMENTS[kind];
+  const status = (await buildRouter().dispatch({ chain, method: 'xrplAmendments', params: {} })) as {
+    data?: { enabled?: string[] };
+  };
+  const enabled = status?.data?.enabled ?? [];
+  const missing = amendments.filter((a) => !enabled.includes(a));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      reason: 'amendment_not_active',
+      amendments: missing,
+      hint: 'XLS-65/66 not yet activated on mainnet. Call xrpl.hub.trending for the current validator-vote percentage, or target Devnet.',
+    };
+  }
+  return read();
+}
+
+const xrplVaultInfoTool: ToolDef = {
+  name: 'xrpl.vault.info',
+  description: 'XLS-65 single-asset-vault state (shares = MPTs, supplied/liquid balances). Returns a structured amendment_not_active response if the SingleAssetVault amendment is not yet active on the target chain.',
+  tier: 't1_read',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      chain: { type: 'string', description: 'default xrpl-mainnet' },
+      vaultIndex: { type: 'string', description: 'the Vault ledger-object index' },
+    },
+  },
+  handler: async (args) => {
+    const chain = String(args.chain ?? 'xrpl-mainnet');
+    return withAmendmentGate(chain, 'vault', async () => {
+      const { buildRouter } = await import('./providers');
+      return buildRouter().dispatch({ chain, method: 'xrplVaultInfo', params: { vaultIndex: args.vaultIndex } });
+    });
+  },
+};
+
+const xrplLendingStatusTool: ToolDef = {
+  name: 'xrpl.lending.status',
+  description: 'XLS-66 lending-protocol state (LoanBroker/Loan). Returns a structured amendment_not_active response if the Lending amendment is not yet active on the target chain.',
+  tier: 't1_read',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      chain: { type: 'string', description: 'default xrpl-mainnet' },
+      loanIndex: { type: 'string' },
+      loanBrokerIndex: { type: 'string' },
+    },
+  },
+  handler: async (args) => {
+    const chain = String(args.chain ?? 'xrpl-mainnet');
+    return withAmendmentGate(chain, 'lending', async () => {
+      const { buildRouter } = await import('./providers');
+      return buildRouter().dispatch({
+        chain,
+        method: 'xrplLendingStatus',
+        params: { loanIndex: args.loanIndex, loanBrokerIndex: args.loanBrokerIndex },
+      });
+    });
+  },
+};
+
+// ─── N2 — XRPFi yield aggregator ────────────────────────────────────────────
+
+const xrplYieldCompareTool: ToolDef = {
+  name: 'xrpl.yield.compare',
+  description: 'Compare live XRP/RLUSD yield venues (Soil, Flare-Monarq, Doppler) by rate, lock-up, model, and bridge requirement. Source-labeled, not investment advice.',
+  tier: 't2_realtime',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      maxLockupDays: { type: 'number', description: 'Filter out venues with a longer fixed lock-up than this' },
+      requireNoBridge: { type: 'boolean', description: 'Only show XRPL-native venues (exclude venues requiring a cross-chain bridge step)' },
+    },
+  },
+  handler: async (args) => {
+    const { compareYield } = await import('./xrpfi-sources');
+    return compareYield({
+      maxLockupDays: args.maxLockupDays as number | undefined,
+      requireNoBridge: args.requireNoBridge as boolean | undefined,
+    });
+  },
+};
+
+// ─── N3 — XRPL toolkit directory ───────────────────────────────────────────
+
+const xrplToolkitListTool: ToolDef = {
+  name: 'xrpl.toolkit.list',
+  description: 'Canonical list of SDKs, CLIs, facilitators, and agent skills for building XRPL agentic-payment integrations (sourced from xrpl-ai.org/resources).',
+  tier: 't1_read',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      category: { type: 'string', description: 'sdk | facilitator | security | spec | protocol | cli | agent-skills | credit | docs | mcp' },
+      installableOnly: { type: 'boolean' },
+    },
+  },
+  handler: async (args) => {
+    const { listToolkit } = await import('./xrpl-toolkit');
+    return { entries: listToolkit({ category: args.category as any, installableOnly: args.installableOnly as boolean | undefined }) };
+  },
+};
+
+// ─── N4 — XRPL AI Hub trending insight ─────────────────────────────────────
+
+const xrplHubTrendingTool: ToolDef = {
+  name: 'xrpl.hub.trending',
+  description: 'Live snapshot of the XRPL AI Hub agentic-payments index (total payments, active merchants, provider concentration) plus the current XLS-65/66 lending-amendment vote status.',
+  tier: 't3_vector',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async () => {
+    const { trendingSummary } = await import('./xrpl-hub-index');
+    const { buildRouter } = await import('./providers');
+    const lendingAmendmentStatus = await buildRouter().dispatch({ chain: 'xrpl-mainnet', method: 'xrplAmendments', params: {} });
+    return { ...trendingSummary(), lendingAmendmentStatus };
+  },
+};
+
+// ─── N5 — FXRP bridge status ───────────────────────────────────────────────
+
+const flareBridgeStatusTool: ToolDef = {
+  name: 'flare.fassets.bridgeStatus',
+  description: 'FXRP bridge lifecycle, adoption stats, and use cases — the XRP-to-Flare cross-chain path via FAssets.',
+  tier: 't1_read',
+  inputSchema: { type: 'object', properties: {} },
+  handler: async () => {
+    const { buildRouter } = await import('./providers');
+    return buildRouter().dispatch({ chain: 'flare-mainnet', method: 'flareFassetsBridgeStatus', params: {} });
+  },
+};
+
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
     paymentsSettleTool, paymentsStatusTool, dataCallTool,
+    xrplToolkitListTool, // N3 — canonical toolkit directory, always available (pure reference data)
   ];
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
   if (isMcpAgenticEnabled()) tools.push(roadmapTool, ideasTool, skillifyTool);
   if (isMcpSkillsEnabled()) tools.push(...getSkillTools());
   if (isMcpBuilderBriefEnabled()) tools.push(flareBriefTool, xrplBriefTool, goatBriefTool);
-  if (isMcpXrplV3Enabled()) tools.push(xrplSettlementQuoteTool, xrplX402StatusTool);
+  if (isMcpXrplV3Enabled()) tools.push(xrplSettlementQuoteTool, xrplX402StatusTool, xrplVaultInfoTool, xrplLendingStatusTool, xrplYieldCompareTool, xrplHubTrendingTool);
+  if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   return tools;
 }
 

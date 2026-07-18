@@ -163,6 +163,25 @@ export SENTRY_DSN=https://<key>@<org>.ingest.sentry.io/<project>
 # HyperMove lazy-imports @sentry/nextjs — install it only if you enable this.
 ```
 
+## MCP v4.0 — XRPL Ecosystem Native
+
+The v3.0 XRPL/Flare/GOAT gateway (deep XRPL reads, Flare FTSO, builder briefs,
+resources/prompts) now ships **on by default** — the old opt-in sub-flags
+(`FEATURE_MCP_XRPL_V3`, `FEATURE_MCP_FLARE_V1`, `FEATURE_MCP_BUILDER_BRIEF`,
+`FEATURE_MCP_RESOURCES`, etc.) are opt-**out** (`=false` to disable), matching
+the v2.0 gateway's rollback discipline.
+
+v4.0 adds four tools answering what the real XRPL ecosystem hubs (xrpl-ai.org,
+aigent.run) show builders actually ask for:
+
+| Tool | Answers | Flag |
+|---|---|---|
+| `xrpl.yield.compare` | "What's the best XRP/RLUSD yield right now?" — Soil vs Flare-Monarq vs Doppler, source-labeled | `FEATURE_MCP_XRPL_V3` |
+| `xrpl.toolkit.list` | "How do I accept x402 on XRPL?" — 12-entry canonical SDK/CLI/facilitator directory | always on |
+| `xrpl.hub.trending` | "What's trending on XRPL agentic payments?" — live hub index + amendment-vote status | `FEATURE_MCP_XRPL_V3` |
+| `flare.fassets.bridgeStatus` | "How does XRP→FXRP bridging work?" — lifecycle + adoption stats | `FEATURE_MCP_FLARE_V1` |
+| `xrpl.vault.info` / `xrpl.lending.status` | XLS-65/66 vault + lending state, gated by a live amendment-activation check (returns `amendment_not_active` instead of a raw RPC error while the amendment is still mid-vote) | `FEATURE_MCP_XRPL_V3` |
+
 ## Architecture
 
 - **Framework:** Next.js 14 App Router · TypeScript strict · Tailwind · MDX

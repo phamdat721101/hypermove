@@ -40,6 +40,13 @@ export const XRPL_ALLOWLIST: readonly string[] = [
   'ripple.com/insights',
   'dev.flare.network/fxrp',
   'docs.t54.ai',
+  // v4.0 (N1/G3) — the two live XRPL ecosystem hubs this corpus previously
+  // had zero awareness of. See xrpfi-sources.ts / xrpl-toolkit.ts / xrpl-hub-index.ts.
+  'xrpl-ai.org',
+  't54.ai',
+  // Reference hub only (xrpl-toolkit.ts) — not a yield-data source. See the
+  // aigent.run entry's description for why its unverified venues are excluded.
+  'aigent.run',
 ] as const;
 
 /**

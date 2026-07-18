@@ -32,6 +32,11 @@ function fixture(input: ProviderCall): unknown {
       return { chain, number: 20_000_000 + seededInt(seed, 100_000), hash: `0x${createHash('sha256').update(seed).digest('hex').slice(0, 40)}` };
     case 'getGasPrice':
       return { chain, gwei: (seededInt(seed, 100) + 1).toString() };
+    case 'xrplAmendments':
+      // Deterministic: SingleAssetVault/Lending appear "voting" (not enabled) by
+      // default so amendment-gated tools exercise the honest not-yet-active path
+      // in mock mode too, matching the real mainnet state as of this writing.
+      return { enabled: ['fixCleanup', 'AMM'], voting: [{ amendment: 'SingleAssetVault', support: 62 }, { amendment: 'Lending', support: 58 }] };
     case 'getWalletTxns':
     case 'getTokenTransfers':
       return { chain, address: addr, txns: Array.from({ length: 3 }, (_, i) => ({

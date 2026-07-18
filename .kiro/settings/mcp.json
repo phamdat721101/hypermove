@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "hypermove": {
+      "url": "https://www.hypermove.xyz/api/mcp",
+      "headers": {
+        "Authorization": "Bearer a2NoF8kTYORcWoD6rQjZL2ZKUJnY6DYFX8LvtNgVdzU"
+      }
+    }
+  }
+}

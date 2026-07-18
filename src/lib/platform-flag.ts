@@ -104,14 +104,18 @@ export function isXrplDeepReasoningEnabled(): boolean {
 
 // ─── MCP v3.0 "Web3-Builder Output Gateway" flags ──────────────────────────
 //
-// v3.0 semantics differ from v2.0: every v3.0 sub-flag is OPT-IN (default OFF)
-// so the byte-identical rollback contract holds until a module is explicitly
-// switched on. Each is still master-gated — flipping the gateway master off
+// v4.0 update: v3.0 sub-flags now match v2.0 semantics — default ON, opt-OUT
+// via an explicit `=false`. The six weeks of v3.0 engineering (Flare/GOAT
+// adapters, builder.brief synthesis, XRPL deepening, resources/prompts) sat
+// fully coded but unreachable behind the old opt-in default; every code path
+// already has honest `softEmpty`/mock fallbacks for anything not yet
+// contract-verified, so flipping the default carries no new runtime risk.
+// Each flag is still master-gated — flipping the gateway master off
 // (FEATURE_HYPERMOVE_MCP_GATEWAY_V1=false) disables them regardless.
 
-/** Opt-in v3.0 sub-flag: master-gated AND explicitly enabled. Default OFF. */
+/** v3.0 sub-flag: master-gated, opt-OUT via explicit `=false`. Default ON. */
 function v3Flag(name: string): boolean {
-  return isMcpGatewayEnabled() && process.env[name] === 'true';
+  return isMcpGatewayEnabled() && process.env[name] !== 'false';
 }
 
 /** M2 — Flare adapter (FTSO free oracle + FAssets + FDC + FCC). */

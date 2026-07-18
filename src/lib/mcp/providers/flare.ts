@@ -37,6 +37,8 @@ const FTSOV2_ABI = parseAbi([
 const FTSO_METHODS = new Set(['flareFtsoFeed', 'flareFtsoAnchor']);
 /** Registered + discoverable, but honestly not-live (grounded in corpus, not fabricated). */
 const CORPUS_ONLY = new Set(['flareFassetsFxrp', 'flareFassetsAgents', 'flareFdcAttestation', 'flareFccStatus']);
+/** N5 — corpus-grounded (not live-contract) FXRP bridge lifecycle + adoption data. */
+const BRIDGE_STATUS_METHODS = new Set(['flareFassetsBridgeStatus']);
 const GENERIC = new Set(['getBlock', 'getGasPrice']);
 const FLARE_NETWORKS = new Set(['flare', 'coston2', 'songbird']);
 
@@ -51,7 +53,10 @@ export class FlareProvider implements DataProvider {
   private readonly ftsoV2 = new Map<string, Address>();
 
   supports(method: string, chain: string): boolean {
-    return FLARE_NETWORKS.has(chain.split('-')[0]) && (FTSO_METHODS.has(method) || CORPUS_ONLY.has(method) || GENERIC.has(method));
+    return (
+      FLARE_NETWORKS.has(chain.split('-')[0]) &&
+      (FTSO_METHODS.has(method) || CORPUS_ONLY.has(method) || BRIDGE_STATUS_METHODS.has(method) || GENERIC.has(method))
+    );
   }
 
   private client(network: string): PublicClient {
@@ -108,6 +113,24 @@ export class FlareProvider implements DataProvider {
           `${input.method} is not yet wired to a verified on-chain read`,
           'grounded in the flare-sources corpus via *.builder.brief; live read pending interface verification',
         );
+      }
+      if (BRIDGE_STATUS_METHODS.has(input.method)) {
+        return ok({
+          asset: 'FXRP',
+          description: '1:1 representation of XRP on Flare. Mint by sending XRP on XRPL; Flare Data Connector verifies the event; FXRP is minted on Songbird/Flare.',
+          mintedToDate: '155M+ FXRP minted in first 7 months (flare.network/products/fassets, captured 2026-07-18)',
+          lifecycle: [
+            '1. Send XRP on XRPL',
+            '2. Flare Data Connector verifies the external-chain event',
+            '3. FXRP minted on Flare/Songbird',
+            '4. Use FXRP in DeFi (trade / lend-borrow / vaults)',
+            '5. Redeem back to native XRP on XRPL',
+          ],
+          useCases: ['Trade & provide liquidity', 'Lend & borrow (collateral)', 'Vaults & strategies', 'Exchange-native XRPFi via Flare Smart Accounts'],
+          note: 'Live mint-capacity and per-agent-vault state require a verified on-chain read against the AssetManager contract — not yet wired (pending interface verification, see flareFassetsFxrp).',
+          source: 'https://flare.network/products/fassets',
+          network,
+        });
       }
       return softEmpty(this.name, `unsupported flare method ${input.method}`);
     } catch (err) {

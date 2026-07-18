@@ -202,6 +202,26 @@ export function createStellar(): HttpProvider {
   });
 }
 
+/**
+ * rippled's `feature` RPC returns a map keyed by amendment hash, each valued
+ * `{ name, enabled, majority? }`. Flatten to the { enabled, voting } shape the
+ * catalog documents (xrplAmendments signature) so callers never touch the
+ * raw hash-keyed structure.
+ */
+function normalizeAmendments(raw: unknown): unknown {
+  const result = (raw as { result?: Record<string, unknown> } | null)?.result;
+  const features = result?.features as Record<string, { name?: string; enabled?: boolean; majority?: number }> | undefined;
+  if (!features) return raw ?? null;
+  const enabled: string[] = [];
+  const voting: { amendment: string; support: number }[] = [];
+  for (const f of Object.values(features)) {
+    if (!f.name) continue;
+    if (f.enabled) enabled.push(f.name);
+    else if (typeof f.majority === 'number') voting.push({ amendment: f.name, support: f.majority });
+  }
+  return { enabled, voting };
+}
+
 // ─── XRPL (public JSON-RPC) — keyless public endpoints ─────────────────────
 
 export function createXrpl(): HttpProvider {
@@ -227,12 +247,26 @@ export function createXrpl(): HttpProvider {
         case 'xrplLedger': return rpc('ledger', { ledger_index: p.ledgerIndex ?? 'validated' });
         // M1 — XRPL deepening (MPT, vault, lending+amendment, amendments)
         case 'xrplMptIssuance': return rpc('ledger_entry', { mpt_issuance: String(p.mptIssuanceID ?? p.issuanceID ?? '') });
-        case 'xrplVaultInfo': return rpc('ledger_entry', { vault_id: String(p.vaultID ?? '') });
-        case 'xrplLendingStatus': return rpc('ledger_entry', { lending_pool: String(p.lendingPoolID ?? p.poolID ?? '') });
-        case 'xrplAmendments': return rpc('ledger', { ledger_index: 'validated', transactions: false, expand: false, owner_funds: false });
+        // XLS-65: Vault is addressed by its own ledger-object index, not a bare
+        // sub-field. Callers pass the object index directly (vaultIndex/index).
+        case 'xrplVaultInfo': {
+          const index = String(p.vaultIndex ?? p.index ?? '');
+          return index ? rpc('ledger_entry', { index }) : null;
+        }
+        // XLS-66: LoanBroker / Loan are distinct object types, each addressed
+        // by their own ledger-object index.
+        case 'xrplLendingStatus': {
+          const loanIndex = String(p.loanIndex ?? '');
+          const loanBrokerIndex = String(p.loanBrokerIndex ?? '');
+          const index = loanIndex || loanBrokerIndex;
+          return index ? rpc('ledger_entry', { index }) : null;
+        }
+        // XLS-65/66 amendment-vote status. rippled's `feature` RPC method
+        // (not `ledger`) returns per-amendment {enabled, majority} state.
+        case 'xrplAmendments': return rpc('feature', {});
         default: return null;
       }
     },
-    normalize: (raw) => (raw as { result?: unknown } | null)?.result ?? raw ?? null,
+    normalize: (raw, input) => (input.method === 'xrplAmendments' ? normalizeAmendments(raw) : (raw as { result?: unknown } | null)?.result ?? raw ?? null),
   });
 }

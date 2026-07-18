@@ -44,9 +44,9 @@ describe('xrpl-sources: free lexical search', () => {
     expect(r.results.every((x) => x.source_type === 'xls')).toBe(true);
   });
 
-  it('allowlist has the 7 curated domains', async () => {
+  it('allowlist has the 10 curated domains (7 original + xrpl-ai.org/t54.ai/aigent.run added in v4.0)', async () => {
     const { XRPL_ALLOWLIST } = await import('../src/lib/mcp/xrpl-sources');
-    expect(XRPL_ALLOWLIST.length).toBe(7);
+    expect(XRPL_ALLOWLIST.length).toBe(10);
   });
 });
 

@@ -1,7 +1,7 @@
 {
-  "version": "3.0",
+  "version": "4.0",
   "name": "hypermove.xyz",
-  "description": "The HyperMove MCP Gateway v3.0 — one Model Context Protocol endpoint for external-protocol integration: cross-chain web3 data (EVM + Stellar + XRPL + Flare + GOAT), FTSO oracle, builder briefs, daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment. Agent-skills install & run locally in your workspace (GET /api/skills) — MCP is not required to install or run a skill.",
+  "description": "The HyperMove MCP Gateway v4.0 — one Model Context Protocol endpoint for external-protocol integration: cross-chain web3 data (EVM + Stellar + XRPL + Flare + GOAT), FTSO oracle, builder briefs, XRPL ecosystem tools (yield comparison, toolkit directory, hub trending, FXRP bridge status), daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment. Agent-skills install & run locally in your workspace (GET /api/skills) — MCP is not required to install or run a skill.",
   "homepage": "https://hypermove.xyz",
   "license": "MIT",
   "transport": {
@@ -31,9 +31,15 @@
     { "name": "insight.roadmap", "description": "Synthesize a product-upgrade roadmap from news + capabilities." },
     { "name": "ideas.generate", "description": "Generate grounded product/feature ideas." },
     { "name": "skillify", "description": "Codify a task into a reusable skill spec." },
-    { "name": "flare.builder.brief", "description": "Flare builder brief: FTSO + FAssets + FDC + FCC capabilities + corpus + news. Opt-in (FEATURE_MCP_BUILDER_BRIEF)." },
-    { "name": "xrpl.builder.brief", "description": "XRPL builder brief: MPT + vault + lending + amendments + corpus + news. Opt-in (FEATURE_MCP_XRPL_V3)." },
-    { "name": "goat.builder.brief", "description": "GOAT builder brief: BTC-native settlement + lending + MPP + corpus + news. Opt-in (FEATURE_MCP_BUILDER_BRIEF)." },
+    { "name": "flare.builder.brief", "description": "Flare builder brief: FTSO + FAssets + FDC + FCC capabilities + corpus + news. On by default (opt-out via FEATURE_MCP_BUILDER_BRIEF=false)." },
+    { "name": "xrpl.builder.brief", "description": "XRPL builder brief: MPT + vault + lending + amendments + corpus + news. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
+    { "name": "goat.builder.brief", "description": "GOAT builder brief: BTC-native settlement + lending + MPP + corpus + news. On by default (opt-out via FEATURE_MCP_BUILDER_BRIEF=false)." },
+    { "name": "xrpl.vault.info", "description": "XLS-65 single-asset-vault state. Returns a structured amendment_not_active response until SingleAssetVault activates on mainnet. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
+    { "name": "xrpl.lending.status", "description": "XLS-66 lending-protocol state (LoanBroker/Loan). Returns a structured amendment_not_active response until Lending activates on mainnet. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
+    { "name": "xrpl.yield.compare", "description": "Compare live XRP/RLUSD yield venues (Soil, Flare-Monarq, Doppler) by rate, lock-up, model, bridge requirement. Source-labeled, not investment advice. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
+    { "name": "xrpl.toolkit.list", "description": "Canonical directory of SDKs, CLIs, facilitators, agent skills for XRPL agentic payments (sourced from xrpl-ai.org/resources). Always available." },
+    { "name": "xrpl.hub.trending", "description": "Live XRPL AI Hub index snapshot (agentic payments, merchants, provider concentration) + current amendment-vote status. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
+    { "name": "flare.fassets.bridgeStatus", "description": "FXRP bridge lifecycle, adoption stats, use cases \u2014 the XRP-to-Flare cross-chain path. On by default (opt-out via FEATURE_MCP_FLARE_V1=false)." },
     {
       "name": "payments.settle",
       "description": "Settle a payment via n-payment (x402/MPP) to unlock a paid session. 5 free calls / 24h, then per-call across four rails.",
@@ -41,13 +47,13 @@
     }
   ],
   "resources": [
-    { "uri": "ftso://feeds/{feedId}", "name": "FTSO Price Feed", "description": "Live block-latency price feed from Flare FTSO. Opt-in (FEATURE_MCP_RESOURCES)." },
-    { "uri": "xrpl://amendments", "name": "XRPL Amendments", "description": "Enabled + in-voting amendments. Opt-in (FEATURE_MCP_RESOURCES + FEATURE_MCP_XRPL_V3)." },
-    { "uri": "flare://fxrp/capacity", "name": "FXRP Bridge Capacity", "description": "FAssets XRP bridge capacity. Opt-in (FEATURE_MCP_RESOURCES + FEATURE_MCP_FLARE)." }
+    { "uri": "ftso://feeds/{feedId}", "name": "FTSO Price Feed", "description": "Live block-latency price feed from Flare FTSO. On by default (opt-out via FEATURE_MCP_RESOURCES=false)." },
+    { "uri": "xrpl://amendments", "name": "XRPL Amendments", "description": "Enabled + in-voting amendments. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_XRPL_V3=false)." },
+    { "uri": "flare://fxrp/capacity", "name": "FXRP Bridge Capacity", "description": "FAssets XRP bridge capacity. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_FLARE_V1=false)." }
   ],
   "prompts": [
-    { "name": "builder.brief", "description": "Synthesize a decision-ready builder brief for a chain. Opt-in (FEATURE_MCP_BUILDER_BRIEF)." },
-    { "name": "settlement.quote", "description": "Compare RLUSD vs XRP settlement cost/finality. Opt-in (FEATURE_MCP_XRPL_V3)." }
+    { "name": "builder.brief", "description": "Synthesize a decision-ready builder brief for a chain. On by default (opt-out via FEATURE_MCP_BUILDER_BRIEF=false)." },
+    { "name": "settlement.quote", "description": "Compare RLUSD vs XRP settlement cost/finality. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." }
   ],
   "signature": null
 }
