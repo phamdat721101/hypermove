@@ -1,0 +1,97 @@
+package backup
+
+import (
+	"crypto/rand"
+	"errors"
+	"fmt"
+	"math/big"
+
+	"github.com/flare-foundation/tee-node/pkg/wallets/backup"
+
+	"github.com/ethereum/go-ethereum/crypto/secp256k1"
+)
+
+var P = secp256k1.S256().N
+var Zero = big.NewInt(0)
+
+// SplitToShamirShares generates Shamir secret shares for the provided value.
+func SplitToShamirShares(val *big.Int, numShares uint64, threshold uint64) ([]backup.ShamirShare, error) {
+	// Verify minimum isn't greater than shares; there is no way to recreate
+	// the original polynomial in our current setup, therefore it doesn't make
+	// sense to generate fewer shares than are needed to reconstruct the secret.
+	if threshold > numShares {
+		return nil, errors.New("num shares smaller than threshold")
+	}
+	if threshold <= 0 {
+		return nil, errors.New("threshold should be positive")
+	}
+
+	polynomial := make([]*big.Int, threshold)
+	polynomial[0] = new(big.Int).Set(val)
+	var err error
+	for i := uint64(1); i < threshold; i++ {
+		polynomial[i], err = rand.Int(rand.Reader, P)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	shamirShares := make([]backup.ShamirShare, numShares)
+	for i := range numShares {
+		shamirShares[i] = backup.ShamirShare{
+			X: big.NewInt(int64(i + 1)),
+			Y: evalPolynomial(polynomial, big.NewInt(int64(i+1))),
+		}
+	}
+
+	return shamirShares, nil
+}
+
+func evalPolynomial(polynomial []*big.Int, value *big.Int) *big.Int {
+	// the function is used only on polynomials whose slice representation has length at least one
+	degree := len(polynomial) - 1
+	result := new(big.Int).Set(polynomial[degree])
+
+	for s := degree - 1; s >= 0; s-- {
+		result = result.Mul(result, value)
+		result = result.Add(result, polynomial[s])
+		result = result.Mod(result, P)
+	}
+
+	return result
+}
+
+// CombineShamirShares joins shares assuming that the threshold is at
+// exactly the length of the input.
+func CombineShamirShares(shamirShares []backup.ShamirShare) (*big.Int, error) {
+	for i, share := range shamirShares {
+		if share.X == nil || share.Y == nil {
+			return nil, fmt.Errorf("share %d has nil coordinate", i)
+		}
+	}
+
+	result := big.NewInt(0)
+
+	// Lagrange interpolation
+	for i, share := range shamirShares {
+		prod := new(big.Int).Set(share.Y)
+		for j, shareJ := range shamirShares {
+			if i == j {
+				continue
+			}
+			prod.Mul(prod, shareJ.X)
+			denom := new(big.Int).Sub(shareJ.X, share.X)
+			if denom.Cmp(Zero) == 0 {
+				return nil, errors.New("double share error") // this should never happen, duplication tests should catch this before we get here
+			}
+			denom.ModInverse(denom, P)
+			prod.Mul(prod, denom)
+			prod.Mod(prod, P)
+		}
+
+		result.Add(result, prod)
+		result.Mod(result, P)
+	}
+
+	return result, nil
+}

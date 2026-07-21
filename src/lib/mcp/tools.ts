@@ -15,7 +15,7 @@ import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
 import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
-import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled } from '../platform-flag';
+import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpAttestationEnabled, isMcpFccEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 
@@ -516,6 +516,141 @@ const flareBridgeStatusTool: ToolDef = {
   },
 };
 
+// ─── Confidential MCP tool tier (Sub-PRD A: attestation; Sub-PRD B: FCC) ────
+//
+// confidential.attest is the trust primitive; flare.confidential.* tools wrap
+// themselves in withAttestationGate() from confidential.ts rather than
+// re-deriving the check. Priced via the new `confidential` tier (Sub-PRD C) —
+// only the actual gated execution (flareConfidentialSwapTool) uses it; the
+// cheap pre-checks stay at t2_realtime/t1_read.
+
+const confidentialAttestTool: ToolDef = {
+  name: 'confidential.attest',
+  description: 'Verify a TEE remote-attestation quote before calling any confidential.* or flare.confidential.* tool. Returns a real verification result — never a mocked quote.',
+  tier: 't2_realtime',
+  inputSchema: {
+    type: 'object',
+    properties: { quote: { type: 'string', description: 'base64 TEE attestation quote from the calling enclave' } },
+    required: [],
+  },
+  handler: async (args) => {
+    const { verifyAttestation } = await import('./confidential');
+    return verifyAttestation({ quote: args.quote as string | undefined });
+  },
+};
+
+const flareConfidentialSwapTool: ToolDef = {
+  name: 'flare.confidential.swap',
+  description: 'Execute a confidential swap on Flare via FCC/PMW (XRPL-only PMW scope at launch). Requires a valid confidential.attest quote. Returns a structured fcc_not_live refusal until FCC is deployed on Songbird.',
+  tier: 'confidential',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      quote: { type: 'string', description: 'attestation quote from confidential.attest' },
+      chain: { type: 'string', description: 'default songbird (FCC canary network)' },
+      amount: { type: 'string' },
+    },
+    required: ['quote'],
+  },
+  handler: async (args) => {
+    const { withAttestationGate } = await import('./confidential');
+    return withAttestationGate(args.quote as string, async () => {
+      const { buildRouter } = await import('./providers');
+      return buildRouter().dispatch({
+        chain: String(args.chain ?? 'songbird'),
+        method: 'flareConfidentialSwap',
+        params: { amount: args.amount },
+      });
+    });
+  },
+};
+
+const flareConfidentialStatusTool: ToolDef = {
+  name: 'flare.confidential.status',
+  description: 'Check whether Flare Confidential Compute (FCC) is live on a given network — the honest pre-check before attempting a confidential swap.',
+  tier: 't1_read',
+  inputSchema: { type: 'object', properties: { chain: { type: 'string' } } },
+  handler: async (args) => {
+    const { buildRouter } = await import('./providers');
+    return buildRouter().dispatch({ chain: String(args.chain ?? 'songbird'), method: 'flareConfidentialStatus', params: {} });
+  },
+};
+
+// ─── flare.token.save / flare.token.profile (2026-07-20) ───────────────────
+//
+// Implements the user-supplied Token Profile schema. Independent of both the
+// confidential.* tools and flare.instruct.dispatch — see platform-flag.ts's
+// isMcpTokenProfileEnabled() doc comment.
+
+const flareTokenSaveTool: ToolDef = {
+  name: 'flare.token.save',
+  description: 'Compute and persist a structured Token Profile for a Flare token (native FLR/WFLR, FAssets FXRP/FBTC/FDOGE). Live-reads what is verifiable on-chain (registry-resolved AssetManager address, ERC-20 metadata, FTSO feed ID); honestly nulls or corpus-labels what is not a live read.',
+  tier: 't2_realtime',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tokenSymbol: { type: 'string', description: 'e.g. FLR, WFLR, FXRP, FBTC, FDOGE' },
+      network: { type: 'string', enum: ['flare', 'coston2', 'songbird', 'coston'], description: 'default flare' },
+    },
+    required: ['tokenSymbol'],
+  },
+  handler: async (args) => {
+    const { saveTokenProfile } = await import('./flare-token-profile');
+    return saveTokenProfile({ tokenSymbol: String(args.tokenSymbol), network: args.network as 'flare' | 'coston2' | 'songbird' | 'coston' | undefined });
+  },
+};
+
+const flareTokenProfileTool: ToolDef = {
+  name: 'flare.token.profile',
+  description: 'Retrieve a Token Profile for a Flare token — a previously saved one (flare.token.save), or computed fresh if none exists yet.',
+  tier: 't1_read',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      tokenSymbol: { type: 'string' },
+      network: { type: 'string', enum: ['flare', 'coston2', 'songbird', 'coston'] },
+    },
+    required: ['tokenSymbol'],
+  },
+  handler: async (args) => {
+    const { getTokenProfile } = await import('./flare-token-profile');
+    return getTokenProfile({ tokenSymbol: String(args.tokenSymbol), network: args.network as 'flare' | 'coston2' | 'songbird' | 'coston' | undefined });
+  },
+};
+
+// ─── flare.instruct.dispatch (2026-07-20) ───────────────────────────────────
+//
+// Bridges an MCP call to HyperMove's own Flare Compute Extension
+// (services/tee-extension/) — submits an instruction to InstructionSender and
+// polls ext-proxy for the result. Independent of the confidential.* tools above
+// (see platform-flag.ts's isMcpInstructEnabled() doc comment for why it's not
+// nested under isMcpConfidentialEnabled()).
+
+const flareInstructDispatchTool: ToolDef = {
+  name: 'flare.instruct.dispatch',
+  description: 'Submit an instruction (financial action or generic agent task) to HyperMove\'s Flare Compute Extension and return the confidentially-executed result. Financial actions (SWAP/SETTLE) currently return an honest not-yet-implemented refusal — Protocol Managed Wallets\' third-party signing interface is not yet published. Generic agent tasks (COMPUTE) are similarly stubbed pending real task-execution logic.',
+  tier: 't2_realtime',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      opType: { type: 'string', enum: ['FINANCIAL_ACTION', 'GENERIC_AGENT_TASK'] },
+      opCommand: { type: 'string', enum: ['SWAP', 'SETTLE'], description: 'required when opType is FINANCIAL_ACTION' },
+      message: { type: 'object' },
+      network: { type: 'string', description: 'default coston2' },
+    },
+    required: ['opType', 'message'],
+  },
+  handler: async (args) => {
+    const { dispatchInstruction } = await import('./flare-instruct');
+    return dispatchInstruction({
+      opType: args.opType as 'FINANCIAL_ACTION' | 'GENERIC_AGENT_TASK',
+      opCommand: args.opCommand as 'SWAP' | 'SETTLE' | undefined,
+      message: (args.message as Record<string, unknown>) ?? {},
+      network: args.network as string | undefined,
+    });
+  },
+};
+
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
@@ -528,6 +663,10 @@ export function getTools(): ToolDef[] {
   if (isMcpBuilderBriefEnabled()) tools.push(flareBriefTool, xrplBriefTool, goatBriefTool);
   if (isMcpXrplV3Enabled()) tools.push(xrplSettlementQuoteTool, xrplX402StatusTool, xrplVaultInfoTool, xrplLendingStatusTool, xrplYieldCompareTool, xrplHubTrendingTool);
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
+  if (isMcpAttestationEnabled()) tools.push(confidentialAttestTool);
+  if (isMcpFccEnabled()) tools.push(flareConfidentialSwapTool, flareConfidentialStatusTool);
+  if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
+  if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
   return tools;
 }
 

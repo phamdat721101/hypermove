@@ -152,3 +152,51 @@ export function isMcpXrplV3Enabled(): boolean {
 export function isMcpResourcesEnabled(): boolean {
   return v3Flag('FEATURE_MCP_RESOURCES');
 }
+
+// ─── Confidential MCP Tool Tier (Flare-oracle-only + XRPL-native settlement) ─
+//
+// Master flag + 3 independently-disableable sub-flags, following the exact
+// v3Flag() cascade above. FEATURE_MCP_CONFIDENTIAL_V1=false disables all three
+// new tools + the new price tier with zero other observable change (<30s
+// rollback). Each sub-flag off never causes another sub-flag's tool to
+// misbehave — every tool checks its own flag first.
+
+/** Master flag for the confidential tool tier. Default ON, opt-out via `=false`. */
+export function isMcpConfidentialEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_CONFIDENTIAL_V1');
+}
+
+/** confidential.attest + withAttestationGate(). Master-gated. */
+export function isMcpAttestationEnabled(): boolean {
+  return isMcpConfidentialEnabled() && process.env.FEATURE_MCP_ATTESTATION !== 'false';
+}
+
+/** flare.confidential.swap / flare.confidential.status (FCC-aware). Master-gated. */
+export function isMcpFccEnabled(): boolean {
+  return isMcpConfidentialEnabled() && process.env.FEATURE_MCP_FCC_V1 !== 'false';
+}
+
+/** XRPL-only settlement for the `confidential` price tier. Master-gated. */
+export function isMcpConfidentialXrplSettlementEnabled(): boolean {
+  return isMcpConfidentialEnabled() && process.env.FEATURE_MCP_CONFIDENTIAL_XRPL_SETTLEMENT !== 'false';
+}
+
+// ─── TEE-Proxy Instruction Dispatch + Token Profile (2026-07-20) ────────────
+//
+// Two independent top-level masters, NOT nested under isMcpConfidentialEnabled()
+// above — flare.instruct.dispatch also handles the non-financial, t2_realtime-priced
+// generic-agent-task path, so coupling its rollback to the confidential cascade would
+// let disabling attestation tooling silently disable a non-confidential capability too.
+// See biz-team/bd-team/research/hypermove/2026-07-20-tee-proxy-fcc-extension-token-profile/
+// 03-architecture-and-design.md ("Why a new top-level master flag") for the full rationale.
+
+/** flare.instruct.dispatch — submits an instruction to services/tee-extension's
+ *  InstructionSender contract and polls ext-proxy for the result. Default ON. */
+export function isMcpInstructEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_INSTRUCT_V1');
+}
+
+/** flare.token.save / flare.token.profile. Default ON. Independent of the two flags above. */
+export function isMcpTokenProfileEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_TOKEN_PROFILE_V1');
+}

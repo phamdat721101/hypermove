@@ -38,6 +38,15 @@ CREATE TABLE IF NOT EXISTS hypermove_registry_requests (
 CREATE INDEX IF NOT EXISTS idx_hmrr_email        ON hypermove_registry_requests(email);
 CREATE INDEX IF NOT EXISTS idx_hmrr_requested_at ON hypermove_registry_requests(requested_at DESC);
 
+-- ─── flare.token.save / flare.token.profile (2026-07-20) ──────────────────
+CREATE TABLE IF NOT EXISTS hypermove_token_profiles (
+  token_symbol  TEXT NOT NULL,
+  flare_network TEXT NOT NULL,
+  profile       JSONB NOT NULL,
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (token_symbol, flare_network)
+);
+
 CREATE TABLE IF NOT EXISTS hypermove_generated_mcps (
   id            BIGSERIAL PRIMARY KEY,
   source_url    TEXT NOT NULL,

@@ -19,6 +19,7 @@ import {
   selectRail,
   supportedNetworks,
   validateSelection,
+  validateConfidentialSelection,
   type PaymentReceipt,
   type PaymentSelection,
 } from './payment-router';
@@ -27,6 +28,7 @@ export const TIER_PRICE_USD: Record<PriceTier, string> = {
   t1_read: '0.001',
   t2_realtime: '0.01',
   t3_vector: '0.10',
+  confidential: '0.50', // attestation-gated Flare confidential execution, XRPL-settled only
 };
 
 const SESSION_QUOTA = 100;
@@ -34,7 +36,13 @@ const SESSION_TTL_MS = 3_600_000; // 1 hour
 
 /** The x402 payment-required challenge (advertises the full selection matrix). */
 export function buildChallenge(tier: PriceTier, resetInHours: number) {
-  const nets = supportedNetworks();
+  // The confidential tier settles exclusively via XRPL (Sub-PRD C) — narrow
+  // the advertised chains so a well-behaved agent client sees the right
+  // options up front instead of discovering the restriction only after a
+  // failed attempt. Every other tier's challenge is unchanged.
+  const nets = tier === 'confidential'
+    ? supportedNetworks().filter((n) => n.chain.startsWith('xrpl'))
+    : supportedNetworks();
   return {
     'x-payment-required': {
       chains: nets.map((n) => n.chain),
@@ -123,7 +131,9 @@ export async function settleSelection(
   selection: Partial<PaymentSelection>,
   proof?: string,
 ): Promise<SettleResult> {
-  const validated = validateSelection(selection);
+  const validated = tier === 'confidential'
+    ? validateConfidentialSelection(selection)
+    : validateSelection(selection);
   if (!validated.ok) return { ok: false, error: validated.error.message, hint: validated.error.hint };
 
   const sel: PaymentSelection = validated.data;

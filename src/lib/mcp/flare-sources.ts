@@ -26,6 +26,7 @@ export const FLARE_CORPUS: readonly CorpusResource[] = [
   { title: 'FXRP overview', url: 'https://dev.flare.network/fxrp/overview', snippet: 'Bridge XRP into Flare smart contracts as FXRP to access Flare DeFi (lending, DEX) while XRPL-native lending is still in amendment voting.', source_type: 'docs', date: '2026-07-15' },
   { title: 'FDC — Flare Data Connector', url: 'https://dev.flare.network/fdc/overview', snippet: 'Attestation layer providing verifiable cross-chain data availability; underpins FXRP and FCC.', source_type: 'docs', date: '2026-07-15' },
   { title: 'FCC — Flare Confidential Compute', url: 'https://dev.flare.network/fcc/overview', snippet: 'TEE-backed confidential compute (Songbird canary first). PMW (Protocol Managed Wallets) is XRPL-only at launch.', source_type: 'docs', date: '2026-07-15' },
+  { title: 'FCC governance vote + Songbird canary', url: 'https://flare.network/news/flare-confidential-compute-votes-to-launch-on-songbird', snippet: 'FCC (TEEs + upgraded FDC + Protocol Managed Wallets) targets Songbird canary deployment; governance vote July 6-13 2026. PMW is XRPL-only at launch — enables XRPL RWA DeFi without manual bridging.', source_type: 'docs', date: '2026-07-19' },
   { title: 'Flare network configuration', url: 'https://dev.flare.network/network/overview', snippet: 'Flare Mainnet chainId 14 (RPC flare-api.flare.network), Coston2 114, Songbird 19. EVM-compatible, ~1.8s blocks.', source_type: 'reference', date: '2026-07-15' },
 ];
 

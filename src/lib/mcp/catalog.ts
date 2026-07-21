@@ -13,7 +13,7 @@
 
 import { CHAINS, PROTOCOLS } from '../registry';
 
-export type PriceTier = 't1_read' | 't2_realtime' | 't3_vector';
+export type PriceTier = 't1_read' | 't2_realtime' | 't3_vector' | 'confidential';
 export type CatalogKind = 'operation' | 'chain' | 'protocol' | 'dapp';
 
 export interface CatalogEntry {

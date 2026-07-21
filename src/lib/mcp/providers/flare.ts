@@ -39,6 +39,13 @@ const FTSO_METHODS = new Set(['flareFtsoFeed', 'flareFtsoAnchor']);
 const CORPUS_ONLY = new Set(['flareFassetsFxrp', 'flareFassetsAgents', 'flareFdcAttestation', 'flareFccStatus']);
 /** N5 — corpus-grounded (not live-contract) FXRP bridge lifecycle + adoption data. */
 const BRIDGE_STATUS_METHODS = new Set(['flareFassetsBridgeStatus']);
+/**
+ * Confidential MCP tool tier (Sub-PRD B) — FCC/PMW-aware methods. Gated on a
+ * genuine external-state check (isFccLiveOnNetwork), never a static flag:
+ * softEmpty until FCC is confirmed live on Songbird, same "wrong on-chain call
+ * is worse than an honest not-live-yet" discipline as CORPUS_ONLY above.
+ */
+const FCC_METHODS = new Set(['flareConfidentialSwap', 'flareConfidentialStatus']);
 const GENERIC = new Set(['getBlock', 'getGasPrice']);
 const FLARE_NETWORKS = new Set(['flare', 'coston2', 'songbird']);
 
@@ -55,7 +62,7 @@ export class FlareProvider implements DataProvider {
   supports(method: string, chain: string): boolean {
     return (
       FLARE_NETWORKS.has(chain.split('-')[0]) &&
-      (FTSO_METHODS.has(method) || CORPUS_ONLY.has(method) || BRIDGE_STATUS_METHODS.has(method) || GENERIC.has(method))
+      (FTSO_METHODS.has(method) || CORPUS_ONLY.has(method) || BRIDGE_STATUS_METHODS.has(method) || FCC_METHODS.has(method) || GENERIC.has(method))
     );
   }
 
@@ -89,6 +96,43 @@ export class FlareProvider implements DataProvider {
     }
     const fallback = FTSOV2_FALLBACK[network] as Address | undefined;
     return fallback ?? null;
+  }
+
+  /**
+   * FCC live-status check — queries the same FlareContractRegistry pattern as
+   * resolveFtsoV2() (no duplicated ABI/registry constants) for a
+   * "FlareConfidentialCompute" registry entry. Songbird-only (FCC ships to
+   * Songbird canary first); fails closed on ANY error — a registry lookup
+   * failing is treated as not-live, never assumed live.
+   */
+  private async isFccLiveOnNetwork(network: string, client: PublicClient): Promise<boolean> {
+    if (network !== 'songbird') return false;
+    try {
+      const addr = (await client.readContract({
+        address: FLARE_CONTRACT_REGISTRY as Address,
+        abi: REGISTRY_ABI,
+        functionName: 'getContractAddressByName',
+        args: ['FlareConfidentialCompute'], // exact registry name TBD on real deployment
+      })) as Address;
+      return !!addr && !/^0x0+$/.test(addr);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Real FCC-backed execution path — implemented once FCC ships. This stub is
+   * intentionally incomplete per Sub-PRD B's explicit scope boundary: the real
+   * contract interface is not yet publicly available (dev.flare.network/fcc/overview),
+   * so guessing an ABI here would risk a wrong on-chain call — worse than an
+   * honest "not yet implemented" refusal. Unreachable until isFccLiveOnNetwork()
+   * returns true, which cannot happen until Flare's registry has the contract.
+   */
+  private async executeFccConfidential(input: ProviderCall): Promise<ServiceResult<unknown>> {
+    return fail(this.name, `${input.method} is not yet implemented — FCC interface not finalized`, {
+      code: 'fcc_not_implemented',
+      hint: 'FCC live-status was detected on-chain, but the real execution ABI is not yet published. Track dev.flare.network/fcc/overview for the interface spec.',
+    });
   }
 
   async call(input: ProviderCall): Promise<ServiceResult<unknown>> {
@@ -131,6 +175,17 @@ export class FlareProvider implements DataProvider {
           source: 'https://flare.network/products/fassets',
           network,
         });
+      }
+      if (FCC_METHODS.has(input.method)) {
+        const live = await this.isFccLiveOnNetwork(network, client);
+        if (!live) {
+          return softEmpty(
+            this.name,
+            `${input.method} requires Flare Confidential Compute, not yet live on ${network}`,
+            'FCC governance vote + Songbird canary deployment pending. Check flare.fassets.bridgeStatus-style tooling or dev.flare.network/fcc/overview for current status. PMW is XRPL-only at launch.',
+          );
+        }
+        return this.executeFccConfidential(input);
       }
       return softEmpty(this.name, `unsupported flare method ${input.method}`);
     } catch (err) {

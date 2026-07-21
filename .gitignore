@@ -37,6 +37,9 @@ coverage/
 # --- nim-skill harness: local traces + agent-audit memory (never commit) ---
 .nim/
 
+# --- Kiro agent memory: local task-tracking notes (never commit) -----
+.kiro/memory/
+
 # --- credentials + secrets (NEVER commit) ----------------------------
 # Environment files: ignore every variant except documented examples.
 .env

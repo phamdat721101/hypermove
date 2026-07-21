@@ -16,5 +16,8 @@
       "exporter": "file",
       "file": ".nim/traces.jsonl"
     }
+  },
+  "workrule": {
+    "logFile": ".nim/agent-support-log.md"
   }
 }

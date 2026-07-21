@@ -90,7 +90,13 @@ async function recordCall(c: {
   sessionId?: string; started: number; outcome: 'ok' | 'error' | 'soft_empty';
 }): Promise<void> {
   const bytes = safeByteLen(c.result);
-  const paramsHash = createHash('sha256').update(JSON.stringify(c.args ?? '')).digest('hex').slice(0, 32);
+  // Confidential-tool args (attestation quotes) are never persisted in plaintext
+  // via the standard ledger path — redacted to key names only (success criterion 5).
+  const CONFIDENTIAL_TOOL_PREFIX = ['confidential.', 'flare.confidential.'];
+  const argsForLog = CONFIDENTIAL_TOOL_PREFIX.some((p) => c.tool.startsWith(p))
+    ? { redacted: true, argKeys: Object.keys((c.args as Record<string, unknown>) ?? {}) }
+    : c.args;
+  const paramsHash = createHash('sha256').update(JSON.stringify(argsForLog ?? '')).digest('hex').slice(0, 32);
   await withClient(async (client) => {
     await client.query(
       `INSERT INTO mcp_calls (user_id, session_id, tool_name, tier, params_hash, response_bytes, latency_ms, outcome)

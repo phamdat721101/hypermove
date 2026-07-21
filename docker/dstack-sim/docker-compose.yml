@@ -1,0 +1,60 @@
+# docker/dstack-sim/docker-compose.yml
+# ---------------------------------------------------------------------------
+# Local TEE attestation sandbox for HyperMove's Confidential MCP tool tier.
+#
+# What this is for:
+#   `confidential.attest` (src/lib/mcp/confidential.ts) calls out to a real TEE
+#   attestation-verification provider at TEE_ATTESTATION_PROVIDER_URL. In
+#   production that's Phala Cloud (cloud-api.phala.com). For local dev/test you
+#   need something to point at that doesn't require real TEE hardware or a
+#   cloud account — that's Phala's own `dstack-simulator`.
+#
+# IMPORTANT — verified 2026-07-19: as of this writing, Phala does NOT publish a
+# pre-built Docker Hub image for the dstack simulator. Their own docs
+# (docs.phala.com/dstack/local-development) only document a build-from-source
+# flow (clone the dstack repo, run its `build.sh`, run the resulting binary
+# directly — it is a Rust binary that exposes local Unix sockets, not an HTTP
+# server out of the box). Guessing an image name/tag here would violate the
+# "never fabricate" discipline this feature is built around, so this compose
+# file documents the manual steps instead of referencing an unconfirmed image.
+#
+# Manual setup (run on the host, NOT inside this compose file, until Phala
+# ships an official image):
+#   1. curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
+#   2. git clone https://github.com/Dstack-TEE/dstack.git
+#   3. cd dstack/sdk/simulator && ./build.sh
+#   4. ./dstack-simulator
+#      → creates dstack.sock / tappd.sock / external.sock / guest.sock in the
+#        simulator directory (Unix sockets, not a TCP port).
+#   5. export DSTACK_SIMULATOR_ENDPOINT=/absolute/path/to/dstack.sock
+#
+# The simulator's native interface is Unix-socket RPC (dstack SDK clients talk
+# to it directly), not the HTTP `/attestations/verify` shape
+# `verifyAttestation()` expects from Phala Cloud. If you want an HTTP-shaped
+# local stand-in instead of running against the real Phala Cloud API, the
+# simplest option today is a small local HTTP shim in front of the simulator's
+# socket (not shipped here — out of scope for this ship, see
+# .kiro/memory/hypermove-confidential-mcp.md for the note). Until such a shim
+# exists, local dev of `confidential.attest` exercises the honest
+# `softEmpty`/`not_configured` path by default (no TEE_ATTESTATION_PROVIDER_URL
+# set) — which is itself a legitimate, tested code path, not a gap.
+#
+# Once a real HTTP-speaking endpoint (this simulator + a shim, or a real Phala
+# Cloud sandbox project) is reachable, point HyperMove at it via:
+#   TEE_ATTESTATION_PROVIDER_URL=http://localhost:8090
+#
+# This file is kept minimal (one service) per the "small, focused, honestly
+# gated" convention already used elsewhere in this repo.
+
+# No `services:` block is defined here. This is intentional, not an omission:
+# there is no confirmed public dstack-simulator image or Dockerfile to build
+# from as of 2026-07-19 (see header note). Shipping a `services:` entry with a
+# guessed image tag or an unbuildable `build:` context would silently fail (or
+# worse, silently pull the wrong image) the first time someone runs
+# `docker compose up` — worse than clearly documenting the manual steps above.
+#
+# Fast-follow once Phala publishes an official image, or once someone in this
+# repo builds + publishes the HTTP shim described above: replace this comment
+# block with a real `services: dstack-sim: image: ...` entry.
+services: {}
+

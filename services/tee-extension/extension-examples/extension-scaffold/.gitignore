@@ -1,0 +1,34 @@
+.env*
+*.env
+!*.example
+
+# Coston/Coston2 proxy configs (contain DB credentials)
+config/proxy/extension_proxy.coston.toml
+config/proxy/extension_proxy.coston.docker.toml
+config/proxy/extension_proxy.coston2.toml
+config/proxy/extension_proxy.coston2.docker.toml
+config/extension.env
+out/
+cache/
+.DS_Store
+
+# Compiled Go binaries
+tools/start-*
+tools/allow-*
+tools/deploy-*
+tools/register-*
+tools/run-*
+
+# Generated contract bindings (produced by scripts/generate-bindings.sh)
+tools/pkg/contracts/*/autogen.go
+tools/pkg/contracts/*/*.abi
+tools/pkg/contracts/*/*.bin
+
+docs/superpowers
+
+notes/
+
+# Private deployment guide (SSH, redeploy instructions)
+DEPLOYMENT.md
+
+config/**/*.log

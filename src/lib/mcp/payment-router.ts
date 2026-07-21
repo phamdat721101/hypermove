@@ -110,6 +110,25 @@ export function validateSelection(sel: Partial<PaymentSelection>): ServiceResult
   return ok({ chain: net.chain, rail, asset });
 }
 
+/**
+ * The confidential price tier settles exclusively via XRPL — Flare's own PMW
+ * is XRPL-only at launch, so payment for confidentially-executed Flare
+ * operations stays coherent with that (see Sub-PRD C's design rationale).
+ * Used only by the confidential settlement path; supportedNetworks() itself
+ * stays unrestricted for every other tier.
+ */
+const CONFIDENTIAL_TIER_CHAINS = new Set(['xrpl-mainnet', 'xrpl-testnet']);
+
+export function validateConfidentialSelection(sel: Partial<PaymentSelection>): ServiceResult<PaymentSelection> {
+  if (!sel.chain || !CONFIDENTIAL_TIER_CHAINS.has(sel.chain)) {
+    return fail('payment', `confidential tier settles exclusively via XRPL`, {
+      code: 'bad_network',
+      hint: `valid networks for the confidential tier: ${Array.from(CONFIDENTIAL_TIER_CHAINS).join(', ')}`,
+    });
+  }
+  return validateSelection(sel); // delegate to the existing general validator for asset/rail checks
+}
+
 /** Deterministic mock rail — verifies any proof and returns a stable receipt. */
 export class MockPaymentRail implements PaymentRail {
   readonly isMock = true;
