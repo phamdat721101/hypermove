@@ -200,3 +200,18 @@ export function isMcpInstructEnabled(): boolean {
 export function isMcpTokenProfileEnabled(): boolean {
   return v3Flag('FEATURE_MCP_TOKEN_PROFILE_V1');
 }
+
+// ─── Terminal device-code auth (2026-07-25) ────────────────────────────────
+//
+// RFC-8628-shaped device flow (/api/mcp/device/start|approve|poll) — lets a
+// headless agent get a bearer token via a y/n approval typed directly in the
+// SAME terminal session, no browser, no wallet, no WorkOS. Deliberately
+// anonymous (see auth.ts's device-session kind) and NOT loopback-restricted —
+// an accepted tradeoff, mitigated by short-lived one-shot codes + per-IP rate
+// limiting on /start (see rate-limit.ts) and a hard free-tier cap enforced at
+// issuance (auth.ts) and re-checked at every paywall/tier-upgrade boundary
+// (payment-router.ts, paywall.ts). Master-gated; default ON, opt-out via
+// FEATURE_MCP_DEVICE_AUTH=false (<60s rollback, matches every other sub-flag).
+export function isMcpDeviceAuthEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_DEVICE_AUTH');
+}

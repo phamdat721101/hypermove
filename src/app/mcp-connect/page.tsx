@@ -235,6 +235,9 @@ function WalletAuthPanel({ origin }: { origin: string }) {
       <p className="mt-4 text-xs text-neutral-500">
         Prefer WorkOS? <a href={`${origin}/api/mcp/authorize`} className="underline hover:text-neutral-300">Sign in with email →</a>
       </p>
+      <p className="mt-1 text-xs text-neutral-500">
+        No wallet, no browser at all? <a href="/docs/agent-auth" className="underline hover:text-neutral-300">Terminal-only sign-in →</a>
+      </p>
     </div>
   );
 }

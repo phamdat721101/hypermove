@@ -23,7 +23,7 @@ import { withClient } from '../db';
 import { fetchWithTimeout } from './http';
 import { isMcpAuthEnabled } from '../platform-flag';
 
-export type SessionKind = 'admin' | 'dev' | 'user';
+export type SessionKind = 'admin' | 'dev' | 'user' | 'device';
 export interface McpSession {
   userId: string;
   email?: string;
@@ -100,8 +100,23 @@ async function validateToken(token: string): Promise<McpSession | null> {
     return rows[0] ?? null;
   });
   if (!row) return null;
-  const tier = (row.tier as McpSession['tier']) ?? 'free';
-  return { userId: row.user_id, email: row.email ?? undefined, tier, kind: 'user' };
+
+  // userId prefix convention: "wallet:0x…" (verifyWalletSignature) and
+  // "device:<id>" (device-code flow, see /api/mcp/device/poll) both identify
+  // their session kind this way; a bare WorkOS user id has no prefix → 'user'.
+  const kind: SessionKind = row.user_id.startsWith('device:') ? 'device' : 'user';
+
+  // Hard cap (defense-in-depth): no code path upgrades mcp_users.tier today,
+  // but a device-kind identity — anonymous, no wallet/email, issued from an
+  // unauthenticated any-host endpoint (see device/start's rate-limit comment)
+  // — must NEVER be treated as anything above 'free', even if a tier-upgrade
+  // mechanism is added later without updating this check. Real per-call
+  // payment settlement (paywall.ts) is unaffected by this — that's a
+  // time-boxed paid session, not a permanent tier change, and stays available
+  // to every session kind including 'device'.
+  const tier: McpSession['tier'] = kind === 'device' ? 'free' : ((row.tier as McpSession['tier']) ?? 'free');
+
+  return { userId: row.user_id, email: row.email ?? undefined, tier, kind };
 }
 
 // ─── The gate ────────────────────────────────────────────────────────────────

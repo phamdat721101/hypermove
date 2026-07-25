@@ -207,6 +207,28 @@ CREATE TABLE IF NOT EXISTS mcp_pro_entitlements (
   cap_reset_at      TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_pro_ent_user ON mcp_pro_entitlements(user_id, expires_at DESC);
+
+-- ─── Terminal device-code auth (FEATURE_MCP_DEVICE_AUTH, 2026-07-25) ──────
+-- RFC-8628-shaped device flow for headless agents: POST /device/start mints
+-- a device_code + short human-typable user_code; a human approves/denies via
+-- POST /device/approve (y/n, right in the terminal — no browser, no wallet,
+-- no WorkOS); the agent polls POST /device/poll until resolved. Deliberately
+-- ANONYMOUS (no wallet/email tied to the row) — see auth.ts's device-session
+-- kind, which is hard-capped at tier='free' and can never reach a paid tier.
+-- One-shot by construction: approve/deny only succeeds from 'pending'; a
+-- second call on an already-resolved user_code is rejected by the app layer
+-- (see device/approve/route.ts), not by a DB constraint, so the error message
+-- stays descriptive ("already resolved" vs a generic constraint violation).
+CREATE TABLE IF NOT EXISTS mcp_device_codes (
+  device_code  TEXT PRIMARY KEY,
+  user_code    TEXT NOT NULL,
+  status       TEXT NOT NULL DEFAULT 'pending', -- pending | approved | denied | expired
+  token_hash   TEXT,
+  created_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at   TIMESTAMPTZ NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_device_codes_user_code ON mcp_device_codes(user_code);
+CREATE INDEX IF NOT EXISTS idx_mcp_device_codes_expires ON mcp_device_codes(expires_at);
 `;
 
 let pool: Pool | null = null;

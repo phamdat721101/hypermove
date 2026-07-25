@@ -1,0 +1,20 @@
+# pnpm-workspace.yaml
+#
+# This repo is not a multi-package pnpm workspace, but pnpm (9.x/10.x)
+# requires a non-empty `packages` field in this file or every pnpm command
+# fails with "ERROR packages field missing or empty" (pnpm/pnpm#8968,
+# pnpm/pnpm#9361) — so `packages: ['.']` (root only, no sub-packages) is
+# required boilerplate, not an accidental workspace conversion.
+#
+# The field we actually need is `onlyBuiltDependencies`: pnpm refuses to run
+# lifecycle/build scripts for git-hosted dependencies unless explicitly
+# allowlisted here, which broke Vercel deploys with:
+#   ERR_PNPM_GIT_DEP_PREPARE_NOT_ALLOWED — nim-skill (github:phamdat721101/nim-skill)
+#
+# This is pnpm's own documented remediation (see the build log's own
+# "Add the package to onlyBuiltDependencies" hint). Keep this list scoped to
+# exactly the deps that need it — do not add packages here speculatively.
+packages:
+  - '.'
+onlyBuiltDependencies:
+  - nim-skill

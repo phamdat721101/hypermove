@@ -1,0 +1,142 @@
+export const metadata = { title: 'Get an MCP key — no wallet needed', description: 'Terminal-only device-code sign-in for headless agents. No browser, no wallet extension, no email.' };
+
+# Get a key — no wallet needed
+
+> Goal: your agent gets a working MCP key in under a minute, using only a terminal.
+> No browser tab, no wallet extension, no email sign-up.
+
+If your agent runs somewhere with no browser and no wallet — a server, a CI job,
+a sandboxed coding agent — this is the fastest way to connect it to
+[`/api/mcp`](/docs/mcp-gateway). Prefer a wallet or email instead? Use
+[hypermove.xyz/mcp-connect](/mcp-connect).
+
+## How it works, in one sentence
+
+Your agent asks for a code, you type **y** or **n** right there in the same
+terminal, and your agent gets its key. That's the whole flow — nothing happens
+in a browser.
+
+## Step 1 — Ask for a code (a few seconds)
+
+Run this from wherever your agent lives:
+
+```bash
+curl -s -X POST https://hypermove.xyz/api/mcp/device/start
+```
+
+You'll get back something like:
+
+```json
+{ "device_code": "3EJ_4NaT...", "user_code": "QXLH-ZZC6", "expires_in": 300, "interval": 5 }
+```
+
+- **`user_code`** — a short code, safe to read aloud. You'll type this next.
+- **`device_code`** — a long code your agent keeps to itself; it's how the agent
+  checks whether you've approved yet.
+- The code expires in 5 minutes (`expires_in`) — if you take too long, just start over.
+
+## Step 2 — Approve it, right here in your terminal
+
+```bash
+curl -s -X POST https://hypermove.xyz/api/mcp/device/approve \
+  -H 'content-type: application/json' \
+  -d '{"user_code":"QXLH-ZZC6","decision":"y"}'
+```
+
+Use the `user_code` you got in step 1. `"decision":"y"` approves it;
+`"decision":"n"` denies it. Either way, this code can only be used **once** —
+running this a second time on the same code always fails on purpose, so nobody
+can quietly re-approve something you already decided on.
+
+## Step 3 — Get your key
+
+Your agent checks in every few seconds (the `interval` field from step 1 tells
+it how long to wait between checks) until it sees you've approved:
+
+```bash
+curl -s -X POST https://hypermove.xyz/api/mcp/device/poll \
+  -H 'content-type: application/json' \
+  -d '{"device_code":"3EJ_4NaT..."}'
+```
+
+Before you approve, this returns `{"status":"pending"}` — keep checking. Once
+you approve, it returns your key:
+
+```json
+{ "status": "approved", "token": "eQS2RS91m4SQ...", "token_type": "Bearer" }
+```
+
+**Save this token now** — checking again later returns the exact same one, but
+if you lose it, the only fix is starting over from step 1.
+
+## All three steps, scripted
+
+Copy this into a file, make it executable, and run it — it does steps 1-3 for you:
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+ORIGIN="https://hypermove.xyz"
+
+start=$(curl -s -X POST "$ORIGIN/api/mcp/device/start")
+device_code=$(echo "$start" | node -pe 'JSON.parse(require("fs").readFileSync(0)).device_code')
+user_code=$(echo "$start" | node -pe 'JSON.parse(require("fs").readFileSync(0)).user_code')
+interval=$(echo "$start" | node -pe 'JSON.parse(require("fs").readFileSync(0)).interval')
+
+echo "Your code: $user_code"
+read -p "Approve this agent? [y/n] " decision
+
+curl -s -X POST "$ORIGIN/api/mcp/device/approve" \
+  -H 'content-type: application/json' \
+  -d "{\"user_code\":\"$user_code\",\"decision\":\"$decision\"}" > /dev/null
+
+while true; do
+  sleep "$interval"
+  poll=$(curl -s -X POST "$ORIGIN/api/mcp/device/poll" \
+    -H 'content-type: application/json' \
+    -d "{\"device_code\":\"$device_code\"}")
+  status=$(echo "$poll" | node -pe 'JSON.parse(require("fs").readFileSync(0)).status')
+  case "$status" in
+    approved) echo "$poll" | node -pe 'JSON.parse(require("fs").readFileSync(0)).token'; break ;;
+    denied|expired) echo "Sign-in $status." >&2; exit 1 ;;
+    pending) continue ;;
+  esac
+done
+```
+
+## Step 4 — Give the key to your agent
+
+Add your key to your agent's MCP config as a Bearer token:
+
+```json
+{ "mcpServers": { "hypermove": { "url": "https://hypermove.xyz/api/mcp", "headers": { "Authorization": "Bearer <your-token>" } } } }
+```
+
+Or use it directly with curl:
+
+```bash
+curl https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <your-token>' \
+  -H 'content-type: application/json' \
+  -H 'accept: application/json, text/event-stream' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+```
+
+## Good to know
+
+- **This key is free-tier forever.** Keys from this terminal flow always stay on
+  the free tier (a few queries per day) — they can't be upgraded to a paid tier.
+  If you need more, pay per-query the normal way (see [MCP Gateway](/docs/mcp-gateway)),
+  or sign in with a wallet/email at [/mcp-connect](/mcp-connect) instead.
+- **Anyone who can run step 2 can approve a code** — there's no password check on
+  purpose, since the whole point is skipping wallets and logins. Only approve a
+  code you started yourself, and only from a code you can see in your own terminal.
+- **Codes expire in 5 minutes and only work once.** If something goes wrong,
+  just start over from step 1 — it's free and instant.
+
+## You're done
+
+- ✅ A working MCP bearer key, no browser, no wallet extension, no email
+- ✅ Free-tier queries against [`/api/mcp`](/docs/mcp-gateway) right away
+- ✅ Want more? See the full [MCP Gateway](/docs/mcp-gateway) guide for paid tiers,
+  or [/mcp-connect](/mcp-connect) for wallet/email sign-in

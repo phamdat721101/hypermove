@@ -36,7 +36,10 @@ export const DOCS_NAV: readonly DocsSection[] = [
   },
   {
     title: 'Get started',
-    links: [{ href: '/docs/quickstart', label: 'Quickstart — 5 min' }],
+    links: [
+      { href: '/docs/quickstart', label: 'Quickstart — 5 min' },
+      { href: '/docs/agent-auth', label: 'Get a key — no wallet needed' },
+    ],
   },
   {
     title: 'Platform',
