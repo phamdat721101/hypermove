@@ -1,0 +1,22 @@
+# .vercelignore
+#
+# services/** holds independent standalone sub-projects (hypermove-fce-extension,
+# tee-extension/scripts, llm) — each has its own package.json, tsconfig, and
+# build step, and is never installed or built as part of this Next.js app.
+# Excluding it here (in addition to tsconfig.json's "exclude" and
+# next.config.mjs's outputFileTracingExcludes) keeps Vercel's build from ever
+# considering a sibling service's separate dependency graph — e.g.
+# hypermove-fce-extension's @hono/node-server, which is never installed at
+# the repo root and isn't meant to be.
+services
+
+node_modules
+.next
+out
+dist
+.env
+.env.local
+.env*.local
+.git
+.github
+coverage

@@ -19,5 +19,5 @@
     }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts", "mdx-components.tsx"],
-  "exclude": ["node_modules", ".next", "out", "dist"]
+  "exclude": ["node_modules", ".next", "out", "dist", "services"]
 }
