@@ -9,15 +9,35 @@ by, `hypermove-app`'s Next.js/TypeScript code. The only integration point with t
 is `flare.instruct.dispatch` (Sub-PRD B), an MCP tool that talks to `ext-proxy`'s public
 HTTP API over the network, the same way it talks to any other external provider.
 
+## E2E orchestrator script — one command, itemized status report
+
+`scripts/e2e-coston2-flare-xrpl.ts` (TypeScript, `services/tee-extension/scripts/`) is the
+single runnable script that wires this Go triad, `flare.instruct.dispatch`'s encoding
+conventions, and a real RLUSD/XRPL-testnet settlement leg together, for the first time, into
+one command:
+
+```bash
+cd scripts && npm install --legacy-peer-deps && npm run e2e:tee-flare-xrpl
+```
+
+It runs three segments — Coston2 registration (real), a local `SIMULATED_TEE=true` full-loop
+proof (real, simulated-TEE), and a real RLUSD settlement on XRPL testnet via the `n-payment`
+SDK — and prints one itemized, honest report (real / simulated / blocked, never fabricated).
+Requires `services/tee-extension/scripts/.env.coston2` (gitignored) for
+`DEPLOYMENT_PRIVATE_KEY` and `XRPL_SEED` — **never supply these via chat**, only via that
+local file. Full spec + design record:
+`biz-team/bd-team/research/hypermove/2026-07-23-tee-proxy-e2e-script-coston2/`.
+
 ## Directory layout (matches Flare's own documented sibling-repo layout exactly)
 
 ```
 services/tee-extension/            (= "tee/" in Flare's own docs)
 ├── tee-node/                      cloned from github.com/flare-foundation/tee-node
 ├── tee-proxy/                     cloned from github.com/flare-foundation/tee-proxy
-└── extension-examples/
-    └── extension-scaffold/        cloned from github.com/flare-foundation/fce-extension-scaffold,
-                                    customized for HyperMove (see "What was customized" below)
+├── extension-examples/
+│   └── extension-scaffold/        cloned from github.com/flare-foundation/fce-extension-scaffold,
+│                                   customized for HyperMove (see "What was customized" below)
+└── scripts/                       e2e-coston2-flare-xrpl.ts orchestrator (see above)
 ```
 
 This three-way sibling layout is **required**, not a style choice — the scaffold's `go.mod`
