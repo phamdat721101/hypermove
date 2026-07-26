@@ -1,0 +1,320 @@
+/**
+ * src/lib/mcp/dream/pipeline.ts
+ * -------------------------------
+ * Orchestrates the Dream Cycle run lifecycle: start_dream creates a
+ * dream_cycle_runs row and (once Tasks 5-9 land) runs preprocess -> cluster
+ * -> extract -> consolidate -> prune -> index end-to-end. get_dream_config /
+ * start_dream's config persistence lives here too (dream_configs).
+ *
+ * Presets are hardcoded from docs/dream-cycle.json's
+ * cost_optimization_strategy.presets — immutable per server release, per
+ * FR-CONFIG-1's notes.
+ *
+ * Phase 1 scope: trigger_criteria is accepted and persisted but NOT
+ * enforced (no scheduler exists in this repo) — documented gap, see
+ * docs/prd/dream-cycle-v1.md "Backlog — Phase 2-4".
+ */
+
+import { randomUUID } from 'node:crypto';
+import { withClient } from '../../db';
+import { claimOrCheckOwnership } from './ownership';
+import { preprocessEpisodes } from './preprocess';
+import { clusterEpisodes } from './cluster';
+import { extractInsights } from './extract';
+import { CostTracker } from './cost';
+import { flattenInsights, dedupeInsights, consolidateInsights, type ExistingMemory } from './consolidate';
+import { pruneMemories, type PrunableMemory } from './prune';
+import { _resetDreamIndexCache } from './index';
+import type { EpisodeLog } from './ingest';
+
+export interface DreamPreset {
+  max_clusters: number;
+  max_extraction_output_tokens_per_cluster: number;
+  skip_conflict_resolution: boolean;
+}
+
+export const DREAM_PRESETS: Record<string, DreamPreset> = {
+  frugal: { max_clusters: 30, max_extraction_output_tokens_per_cluster: 50, skip_conflict_resolution: true },
+  balanced: { max_clusters: 60, max_extraction_output_tokens_per_cluster: 100, skip_conflict_resolution: false },
+  thorough: { max_clusters: 120, max_extraction_output_tokens_per_cluster: 150, skip_conflict_resolution: false },
+};
+
+export interface TriggerCriteria {
+  time_window_utc?: string;
+  min_episodes?: number;
+  min_raw_tokens?: number;
+}
+
+export interface DreamConfig {
+  budget_usd: number;
+  preset: keyof typeof DREAM_PRESETS | string;
+  trigger_criteria?: TriggerCriteria;
+}
+
+export interface StartDreamResult {
+  run_id?: string;
+  status: 'started' | 'error';
+  message?: string;
+}
+
+export interface GetDreamConfigResult {
+  agent_id: string;
+  config: DreamConfig | null;
+  last_run_timestamp?: string;
+  status?: string;
+}
+
+function globalMaxBudgetUsd(): number {
+  const raw = Number(process.env.DREAM_MAX_BUDGET_USD_PER_CYCLE);
+  return Number.isFinite(raw) && raw > 0 ? raw : 0.1;
+}
+
+/**
+ * Validate + persist config, create a dream_cycle_runs row, and run the full
+ * pipeline synchronously: preprocess -> cluster -> extract -> consolidate ->
+ * prune -> (rebuild-on-read index invalidation). Returns once the run has
+ * reached a terminal status ('completed' | 'partial' | 'error').
+ */
+export async function startDream(
+  agentId: string,
+  userId: string,
+  config: DreamConfig,
+): Promise<StartDreamResult> {
+  const maxBudget = globalMaxBudgetUsd();
+  if (!Number.isFinite(config.budget_usd) || config.budget_usd <= 0) {
+    return { status: 'error', message: 'budget_usd must be a positive number' };
+  }
+  if (config.budget_usd > maxBudget) {
+    return { status: 'error', message: `budget_usd (${config.budget_usd}) exceeds the global max (${maxBudget})` };
+  }
+
+  const ownership = await claimOrCheckOwnership(agentId, userId);
+  if (!ownership.ok) {
+    return { status: 'error', message: ownership.reason ?? 'ownership check failed' };
+  }
+
+  const presetName = DREAM_PRESETS[config.preset] ? config.preset : 'balanced';
+  const preset = DREAM_PRESETS[presetName];
+  const runId = randomUUID();
+  const startedAt = Date.now();
+
+  await withClient(async (client) => {
+    await client.query(
+      `INSERT INTO dream_configs (agent_id, budget_usd, preset, trigger_criteria, last_run_id, updated_at)
+       VALUES ($1,$2,$3,$4,$5,NOW())
+       ON CONFLICT (agent_id) DO UPDATE SET
+         budget_usd = $2, preset = $3, trigger_criteria = $4, last_run_id = $5, updated_at = NOW()`,
+      [agentId, config.budget_usd, presetName, config.trigger_criteria ? JSON.stringify(config.trigger_criteria) : null, runId],
+    );
+    await client.query(
+      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot)
+       VALUES ($1,$2,'started',$3)`,
+      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {} })],
+    );
+    return true;
+  });
+
+  await runPipeline(runId, agentId, config.budget_usd, preset);
+
+  return { run_id: runId, status: 'started' };
+}
+
+/**
+ * Runs preprocess -> cluster -> extract -> consolidate -> prune end-to-end
+ * for one agent's unconsumed episodes, then marks the run row terminal.
+ * Any stage error is caught and recorded rather than propagated — a failed
+ * cycle always leaves a well-formed, queryable run row.
+ */
+async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset): Promise<void> {
+  const startedAt = Date.now();
+  const cost = new CostTracker(budgetUsd);
+  const stagesCompleted: string[] = [];
+  let memoriesAdded = 0;
+  let memoriesRemoved = 0;
+  let finalStatus: 'completed' | 'partial' | 'failed' = 'completed';
+
+  try {
+    const unconsumed = await withClient(async (client) => {
+      const { rows } = await client.query<{
+        episode_id: string; agent_id: string; occurred_at: string; task_type: string | null;
+        steps: EpisodeLog['steps']; outcome: EpisodeLog['outcome']; tags: string[] | null;
+      }>(
+        `SELECT episode_id, agent_id, occurred_at::text, task_type, steps, outcome, tags
+         FROM dream_episode_logs WHERE agent_id = $1 AND consumed_by_run IS NULL`,
+        [agentId],
+      );
+      return rows;
+    });
+
+    const episodes: EpisodeLog[] = (unconsumed ?? []).map((r) => ({
+      episode_id: r.episode_id, agent_id: r.agent_id, timestamp: r.occurred_at,
+      task_type: r.task_type ?? undefined, steps: r.steps, outcome: r.outcome, tags: r.tags ?? undefined,
+    }));
+
+    const preprocessed = preprocessEpisodes(episodes);
+    stagesCompleted.push('preprocessing');
+
+    const clusters = await clusterEpisodes(preprocessed, { maxClusters: preset.max_clusters });
+    stagesCompleted.push('clustering');
+
+    const extraction = await extractInsights(clusters, cost, preset.max_extraction_output_tokens_per_cluster);
+    stagesCompleted.push('extraction');
+    if (extraction.status === 'partial') finalStatus = 'partial';
+
+    const flat = dedupeInsights(flattenInsights(extraction.extracted));
+    const existing = await loadExistingMemories(agentId);
+    const consolidation = await consolidateInsights(agentId, flat, existing);
+    stagesCompleted.push('consolidation');
+    memoriesAdded = consolidation.memories_added;
+
+    const afterConsolidation = await loadExistingMemories(agentId);
+    const pruneResult = pruneMemories(
+      afterConsolidation.map((m): PrunableMemory => ({ memory_id: m.memory_id, confidence: m.confidence, importance: 0.5, source_count: m.source_count, embedding: m.embedding })),
+    );
+    memoriesRemoved = pruneResult.memories_removed;
+    if (pruneResult.removed_memory_ids.length > 0) {
+      await withClient(async (client) => {
+        await client.query(`DELETE FROM dream_consolidated_memories WHERE memory_id = ANY($1::uuid[])`, [pruneResult.removed_memory_ids]);
+        return true;
+      });
+    }
+    stagesCompleted.push('pruning');
+
+    // Mark all previously-unconsumed episodes as consumed by this run.
+    await withClient(async (client) => {
+      await client.query(`UPDATE dream_episode_logs SET consumed_by_run = $1 WHERE agent_id = $2 AND consumed_by_run IS NULL`, [runId, agentId]);
+      return true;
+    });
+
+    // Invalidate this agent's cached index so the next read rebuilds fresh
+    // from the just-updated Postgres rows (still within THIS process; a
+    // different process rebuilds on its own first read regardless).
+    _resetDreamIndexCache();
+  } catch (err) {
+    finalStatus = 'failed';
+    await withClient(async (client) => {
+      await client.query(
+        `UPDATE dream_cycle_runs SET errors = errors || $1::jsonb WHERE run_id = $2`,
+        [JSON.stringify([{ stage: stagesCompleted[stagesCompleted.length - 1] ?? 'unknown', message: err instanceof Error ? err.message : String(err), code: 'pipeline_error' }]), runId],
+      );
+      return true;
+    });
+  }
+
+  await withClient(async (client) => {
+    await client.query(
+      `UPDATE dream_cycle_runs SET
+         status = $1, ended_at = NOW(), duration_ms = $2, budget_used_usd = $3,
+         stages_completed = $4, memories_added = $5, memories_removed = $6, per_stage_tokens = $7
+       WHERE run_id = $8`,
+      [finalStatus, Date.now() - startedAt, cost.budgetUsedUsd, stagesCompleted, memoriesAdded, memoriesRemoved, JSON.stringify(cost.perStageTokenCounts), runId],
+    );
+    return true;
+  });
+}
+
+async function loadExistingMemories(agentId: string): Promise<ExistingMemory[]> {
+  const rows = await withClient(async (client) => {
+    const { rows } = await client.query<{ memory_id: string; type: ExistingMemory['type']; content: string; confidence: number; source_count: number; embedding: number[] | null }>(
+      `SELECT memory_id, type, content, confidence, source_count, embedding FROM dream_consolidated_memories WHERE agent_id = $1`,
+      [agentId],
+    );
+    return rows;
+  });
+  return (rows ?? []).filter((r) => Array.isArray(r.embedding)).map((r) => ({ ...r, embedding: r.embedding as number[] }));
+}
+
+export async function getDreamConfig(agentId: string): Promise<GetDreamConfigResult> {
+  const row = await withClient(async (client) => {
+    const { rows } = await client.query<{
+      budget_usd: string; preset: string; trigger_criteria: TriggerCriteria | null; updated_at: string;
+    }>(
+      `SELECT budget_usd, preset, trigger_criteria, updated_at::text FROM dream_configs WHERE agent_id = $1 LIMIT 1`,
+      [agentId],
+    );
+    return rows[0] ?? null;
+  });
+
+  if (!row) return { agent_id: agentId, config: null };
+  return {
+    agent_id: agentId,
+    config: { budget_usd: Number(row.budget_usd), preset: row.preset, trigger_criteria: row.trigger_criteria ?? undefined },
+    last_run_timestamp: row.updated_at,
+    status: 'stored',
+  };
+}
+
+// ─── query_dream / get_dream_stats (Task 10) ───────────────────────────────
+
+export interface QueryDreamMemory {
+  memory_id: string;
+  type: string;
+  content: string;
+  confidence: number;
+  importance: number;
+}
+
+export interface QueryDreamResult {
+  memories: QueryDreamMemory[];
+}
+
+/**
+ * Retrieve relevant memories for an agent using the rebuild-on-read index
+ * (dream/index.ts) — never assumes MemoryVectorStore persists across
+ * processes; it rebuilds from Postgres on first read per process.
+ */
+export async function queryDream(
+  agentId: string,
+  query: string,
+  topK = 5,
+  minConfidence = 0.3,
+): Promise<QueryDreamResult> {
+  const { getAgentIndex } = await import('./index');
+  const { getEmbedder } = await import('../embeddings');
+  const store = await getAgentIndex(agentId);
+  const qv = await getEmbedder().embed(query);
+  const matches = store.query(qv, Math.max(topK * 3, topK)); // over-fetch, then filter by confidence
+  const memories = matches
+    .filter((m) => m.meta.confidence >= minConfidence)
+    .slice(0, topK)
+    .map((m) => ({ memory_id: m.meta.memory_id, type: m.meta.type, content: m.meta.content, confidence: m.meta.confidence, importance: m.meta.importance }));
+  return { memories };
+}
+
+export interface DreamStatsResult {
+  last_run_at?: string;
+  status?: string;
+  budget_used_usd?: number;
+  stages_completed?: string[];
+  memories_count?: number;
+  per_stage_tokens?: Record<string, number>;
+}
+
+export async function getDreamStats(agentId: string): Promise<DreamStatsResult> {
+  const row = await withClient(async (client) => {
+    const { rows } = await client.query<{
+      started_at: string; status: string; budget_used_usd: string; stages_completed: string[]; per_stage_tokens: Record<string, number> | null;
+    }>(
+      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens
+       FROM dream_cycle_runs WHERE agent_id = $1 ORDER BY started_at DESC LIMIT 1`,
+      [agentId],
+    );
+    return rows[0] ?? null;
+  });
+
+  const memoriesCountRow = await withClient(async (client) => {
+    const { rows } = await client.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM dream_consolidated_memories WHERE agent_id = $1`, [agentId]);
+    return rows[0] ?? null;
+  });
+
+  if (!row) return { memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0 };
+
+  return {
+    last_run_at: row.started_at,
+    status: row.status,
+    budget_used_usd: Number(row.budget_used_usd),
+    stages_completed: row.stages_completed,
+    memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0,
+    per_stage_tokens: row.per_stage_tokens ?? {},
+  };
+}

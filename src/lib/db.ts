@@ -229,6 +229,87 @@ CREATE TABLE IF NOT EXISTS mcp_device_codes (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_mcp_device_codes_user_code ON mcp_device_codes(user_code);
 CREATE INDEX IF NOT EXISTS idx_mcp_device_codes_expires ON mcp_device_codes(expires_at);
+
+-- ─── Dream Cycle (FEATURE_MCP_DREAM_CYCLE, 2026-07-26) ────────────────────
+-- Offline memory-consolidation pipeline. All 5 tables are per-agent-scoped;
+-- every query in dream/*.ts filters by agent_id. See docs/prd/dream-cycle-v1.md
+-- and platform-flag.ts's isMcpDreamCycleEnabled() for the feature gate.
+
+-- First-write-claims-it ownership binding: closes the cross-agent write
+-- injection gap (this MCP server authenticates a session, not the agent_id
+-- in a tool's payload). See dream/ownership.ts.
+CREATE TABLE IF NOT EXISTS mcp_agent_ownership (
+  agent_id    TEXT PRIMARY KEY,
+  owner_user_id TEXT NOT NULL,
+  claimed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_agent_ownership_owner ON mcp_agent_ownership(owner_user_id);
+
+-- Zero-token cold storage for raw episode logs (submit_episode_log). No
+-- LLM/embedding call happens at insert time — see dream/ingest.ts.
+CREATE TABLE IF NOT EXISTS dream_episode_logs (
+  episode_id      TEXT NOT NULL,
+  agent_id        TEXT NOT NULL,
+  occurred_at     TIMESTAMPTZ NOT NULL,
+  task_type       TEXT,
+  steps           JSONB NOT NULL,
+  outcome         TEXT NOT NULL, -- success | failure | timeout
+  tags            TEXT[],
+  raw_tokens_estimate INT,
+  consumed_by_run TEXT, -- dream_cycle_runs.run_id once processed; NULL = unconsumed
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_id, episode_id)
+);
+CREATE INDEX IF NOT EXISTS idx_dream_episode_logs_agent_time ON dream_episode_logs(agent_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_dream_episode_logs_unconsumed ON dream_episode_logs(agent_id) WHERE consumed_by_run IS NULL;
+
+-- Per-agent consolidated memory store (the pipeline's durable output).
+CREATE TABLE IF NOT EXISTS dream_consolidated_memories (
+  memory_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id        TEXT NOT NULL,
+  type            TEXT NOT NULL, -- rule | error_pattern | preference | fact
+  content         TEXT NOT NULL, -- <=200 chars, enforced at write time
+  confidence      REAL NOT NULL DEFAULT 0.5,
+  importance      REAL NOT NULL DEFAULT 0.5,
+  source_count    INT NOT NULL DEFAULT 1,
+  embedding       JSONB, -- vector as JSON array; rebuilt into MemoryVectorStore on read
+  created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  last_accessed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  access_count    INT NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_dream_memories_agent ON dream_consolidated_memories(agent_id);
+CREATE INDEX IF NOT EXISTS idx_dream_memories_agent_confidence ON dream_consolidated_memories(agent_id, confidence DESC);
+
+-- One row per start_dream invocation (run lifecycle + cost/observability).
+CREATE TABLE IF NOT EXISTS dream_cycle_runs (
+  run_id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id          TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'started', -- started | completed | partial | failed | error
+  config_snapshot   JSONB NOT NULL,
+  started_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  ended_at          TIMESTAMPTZ,
+  duration_ms       INT,
+  budget_used_usd   NUMERIC(10,6) NOT NULL DEFAULT 0,
+  stages_completed  TEXT[] NOT NULL DEFAULT '{}',
+  memories_added    INT NOT NULL DEFAULT 0,
+  memories_removed  INT NOT NULL DEFAULT 0,
+  per_stage_tokens  JSONB, -- {preprocessing, clustering, extraction, consolidation}
+  errors            JSONB NOT NULL DEFAULT '[]'
+);
+CREATE INDEX IF NOT EXISTS idx_dream_cycle_runs_agent ON dream_cycle_runs(agent_id, started_at DESC);
+
+-- Last-stored config per agent (start_dream / get_dream_config). Phase 1:
+-- trigger_criteria is persisted but NOT enforced server-side (no scheduler
+-- exists in this repo yet) — see dream/pipeline.ts and docs/prd/dream-cycle-v1.md
+-- "Backlog — Phase 2-4" for the documented gap.
+CREATE TABLE IF NOT EXISTS dream_configs (
+  agent_id          TEXT PRIMARY KEY,
+  budget_usd        NUMERIC(10,6) NOT NULL,
+  preset            TEXT NOT NULL DEFAULT 'balanced',
+  trigger_criteria  JSONB,
+  last_run_id       TEXT,
+  updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 `;
 
 let pool: Pool | null = null;

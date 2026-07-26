@@ -15,7 +15,7 @@ import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
 import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
-import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpAttestationEnabled, isMcpFccEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled } from '../platform-flag';
+import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpAttestationEnabled, isMcpFccEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled, isMcpDreamCycleEnabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 
@@ -651,6 +651,108 @@ const flareInstructDispatchTool: ToolDef = {
   },
 };
 
+// ─── Dream Cycle (2026-07-26) ───────────────────────────────────────────────
+//
+// Offline memory-consolidation pipeline. All 5 tools are unmetered (spend is
+// bounded by the per-cycle budget_usd guardrail in dream/pipeline.ts, not the
+// gateway's paywall/free-tier metering) and gated by isMcpDreamCycleEnabled().
+// See docs/prd/dream-cycle-v1.md.
+
+const submitEpisodeLogTool: ToolDef = {
+  name: 'submit_episode_log',
+  description: 'Batch-upload episode logs for an agent into cold storage (Dream Cycle). No LLM calls occur. Idempotent per episode_id. Returns ingested count and rejection reasons.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string', description: 'Unique identifier of the agent.' },
+      episodes: { type: 'object', description: 'Array of episode_log objects: {episode_id, agent_id, timestamp, task_type?, steps[], outcome, tags?}' },
+    },
+    required: ['agent_id', 'episodes'],
+  },
+  handler: async (args, ctx) => {
+    const { ingestEpisodes } = await import('./dream/ingest');
+    const agentId = String(args.agent_id ?? '');
+    const episodes = Array.isArray(args.episodes) ? (args.episodes as unknown[]) : [];
+    return ingestEpisodes(agentId, ctx?.session.userId ?? 'anonymous', episodes);
+  },
+};
+
+const startDreamTool: ToolDef = {
+  name: 'start_dream',
+  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately (Phase 1: manual trigger only; trigger_criteria is persisted but not yet enforced server-side).',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string' },
+      config: { type: 'object', description: '{budget_usd (required), preset?: frugal|balanced|thorough, trigger_criteria?}' },
+    },
+    required: ['agent_id', 'config'],
+  },
+  handler: async (args, ctx) => {
+    const { startDream } = await import('./dream/pipeline');
+    const cfg = (args.config ?? {}) as Record<string, unknown>;
+    return startDream(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous', {
+      budget_usd: Number(cfg.budget_usd),
+      preset: (cfg.preset as string) ?? 'balanced',
+      trigger_criteria: cfg.trigger_criteria as Record<string, unknown> | undefined,
+    });
+  },
+};
+
+const getDreamConfigTool: ToolDef = {
+  name: 'get_dream_config',
+  description: 'Retrieve the last stored Dream Cycle configuration for an agent.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args) => {
+    const { getDreamConfig } = await import('./dream/pipeline');
+    return getDreamConfig(String(args.agent_id ?? ''));
+  },
+};
+
+const queryDreamTool: ToolDef = {
+  name: 'query_dream',
+  description: 'Query consolidated memories for an agent using a natural language query. Returns top_k memories filtered by min_confidence, rebuilt from the durable store on first read per process.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string' },
+      query: { type: 'string' },
+      top_k: { type: 'number' },
+      min_confidence: { type: 'number' },
+    },
+    required: ['agent_id', 'query'],
+  },
+  handler: async (args) => {
+    const { queryDream } = await import('./dream/pipeline');
+    return queryDream(
+      String(args.agent_id ?? ''),
+      String(args.query ?? ''),
+      args.top_k !== undefined ? Number(args.top_k) : undefined,
+      args.min_confidence !== undefined ? Number(args.min_confidence) : undefined,
+    );
+  },
+};
+
+const getDreamStatsTool: ToolDef = {
+  name: 'get_dream_stats',
+  description: 'Return stats and last run metadata for an agent\'s Dream Cycle (last_run_at, budget_used_usd, memories_count, stages_completed, per_stage_tokens).',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args) => {
+    const { getDreamStats } = await import('./dream/pipeline');
+    return getDreamStats(String(args.agent_id ?? ''));
+  },
+};
+
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
@@ -667,6 +769,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFccEnabled()) tools.push(flareConfidentialSwapTool, flareConfidentialStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool);
   return tools;
 }
 

@@ -40,6 +40,11 @@
     { "name": "xrpl.toolkit.list", "description": "Canonical directory of SDKs, CLIs, facilitators, agent skills for XRPL agentic payments (sourced from xrpl-ai.org/resources). Always available." },
     { "name": "xrpl.hub.trending", "description": "Live XRPL AI Hub index snapshot (agentic payments, merchants, provider concentration) + current amendment-vote status. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
     { "name": "flare.fassets.bridgeStatus", "description": "FXRP bridge lifecycle, adoption stats, use cases \u2014 the XRP-to-Flare cross-chain path. On by default (opt-out via FEATURE_MCP_FLARE_V1=false)." },
+    { "name": "submit_episode_log", "description": "Dream Cycle: batch-upload episode logs for an agent into cold storage. No LLM calls, idempotent, free. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "name": "start_dream", "description": "Dream Cycle: run the offline memory-consolidation pipeline for an agent (preprocess/cluster/extract/consolidate/prune). Free \u2014 spend capped by your own budget_usd. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "name": "get_dream_config", "description": "Dream Cycle: retrieve the last stored config for an agent. Free. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "name": "query_dream", "description": "Dream Cycle: query an agent's consolidated memories by natural-language query. Free. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "name": "get_dream_stats", "description": "Dream Cycle: last run's status, budget used, memories count. Free. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
     {
       "name": "payments.settle",
       "description": "Settle a payment via n-payment (x402/MPP) to unlock a paid session. 5 free calls / 24h, then per-call across four rails.",
@@ -49,11 +54,18 @@
   "resources": [
     { "uri": "ftso://feeds/{feedId}", "name": "FTSO Price Feed", "description": "Live block-latency price feed from Flare FTSO. On by default (opt-out via FEATURE_MCP_RESOURCES=false)." },
     { "uri": "xrpl://amendments", "name": "XRPL Amendments", "description": "Enabled + in-voting amendments. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_XRPL_V3=false)." },
-    { "uri": "flare://fxrp/capacity", "name": "FXRP Bridge Capacity", "description": "FAssets XRP bridge capacity. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_FLARE_V1=false)." }
+    { "uri": "flare://fxrp/capacity", "name": "FXRP Bridge Capacity", "description": "FAssets XRP bridge capacity. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_FLARE_V1=false)." },
+    { "uri": "hypermove:///agents/{agent_id}/dream/summary", "name": "Dream Cycle Summary", "description": "Short summary of the agent's last Dream Cycle learnings. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "uri": "hypermove:///agents/{agent_id}/dream/rules", "name": "Dream Cycle Rules", "description": "High-confidence rules learned for the agent. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "uri": "hypermove:///agents/{agent_id}/dream/errors", "name": "Dream Cycle Error Patterns", "description": "Error patterns learned for the agent. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "uri": "hypermove:///agents/{agent_id}/dream/stats", "name": "Dream Cycle Stats", "description": "Metadata about the agent's last Dream Cycle run. On by default (opt-out via FEATURE_MCP_RESOURCES=false or FEATURE_MCP_DREAM_CYCLE=false)." }
   ],
   "prompts": [
     { "name": "builder.brief", "description": "Synthesize a decision-ready builder brief for a chain. On by default (opt-out via FEATURE_MCP_BUILDER_BRIEF=false)." },
-    { "name": "settlement.quote", "description": "Compare RLUSD vs XRP settlement cost/finality. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." }
+    { "name": "settlement.quote", "description": "Compare RLUSD vs XRP settlement cost/finality. On by default (opt-out via FEATURE_MCP_XRPL_V3=false)." },
+    { "name": "dream/summarize_today", "description": "Brief summary of what the last Dream Cycle learned for an agent. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "name": "dream/suggest_policy_updates", "description": "Given a task_type, suggests policy changes from learned rules + error patterns. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." },
+    { "name": "dream/compare_before_after", "description": "Compares a before/after evaluation-scores JSON blob. On by default (opt-out via FEATURE_MCP_DREAM_CYCLE=false)." }
   ],
   "signature": null
 }

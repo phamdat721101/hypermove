@@ -1,0 +1,194 @@
+export const metadata = { title: 'Dream Cycle — offline memory for MCP agents', description: 'Agents log what happened, sleep on it, and wake up smarter — at near-zero token cost. 5 tools, zero setup, one flag.' };
+
+# Dream Cycle
+
+> **Your agent forgets everything between sessions. Dream Cycle fixes that.**
+> Log what happened during the day (`submit_episode_log`), trigger a consolidation pass
+> (`start_dream`), and the next session reads back small, durable lessons
+> (`query_dream`) instead of re-learning the same mistake. Zero setup — it's on by
+> default on the same `https://hypermove.xyz/api/mcp` endpoint you already use.
+
+## Why this exists
+
+Every MCP session an agent runs starts from zero. If it discovers "the gripper needs
+a 200ms cooldown before retry" today, that lesson is gone tomorrow — unless you paste
+the whole transcript back into context, which is slow and expensive at scale.
+
+Dream Cycle is an offline consolidation pass, modeled on how research like
+["sleep-time compute"](https://arxiv.org/abs/2504.13171) and offline memory-consolidation
+work: cheap, rule-based passes do most of the work; a small LLM call only touches
+*compressed summaries*, never raw logs. The output is a handful of short, confidence-scored
+memories your agent can pull in a single call — cents per day, not dollars.
+
+## The 30-second mental model
+
+```
+during the day:     submit_episode_log(agent_id, episodes)   →  cheap, no LLM call
+end of day:          start_dream(agent_id, {budget_usd: 0.10}) →  runs the whole pipeline
+next session:        query_dream(agent_id, "gripper timeout")  →  "retry after 200ms cooldown"
+```
+
+That's the whole surface. Everything else (resources, prompts, presets, stats) is optional
+sugar on top of those three calls.
+
+## For humans — what you get and what it costs
+
+- **No new infra.** Same endpoint, same auth, same bearer token. Dream Cycle just adds
+  5 tools to what your agent already sees when it calls `tools/list`.
+  In this session's changes: `submit_episode_log`, `start_dream`, `get_dream_config`,
+  `query_dream`, `get_dream_stats`. Also 4 resources and 3 prompts — see below.
+- **All 5 tools are free.** They never hit the paywall or the 5-free-queries/24h limit.
+  Spend is capped by your own `budget_usd` per cycle (default $0.10), not by HyperMove's tiers.
+- **Nothing changes if you never call `start_dream`.** Logging with `submit_episode_log`
+  costs nothing and does nothing until you trigger a cycle — no background jobs, no
+  surprise charges.
+- **Your data stays yours.** Memories are scoped per `agent_id`, bound to whichever
+  session first used that ID — a different account can never read or write into it.
+
+## For agents — the fastest path to using this
+
+1. Connect to `https://hypermove.xyz/api/mcp` the same way you already do (see
+   [MCP Gateway](/docs/mcp-gateway) if you haven't yet — bearer token from
+   [/mcp-connect](/mcp-connect) or the [no-wallet flow](/docs/agent-auth)).
+2. Call `tools/list` — if Dream Cycle is enabled (default: yes) you'll see the 5 tools below.
+3. Log episodes as you go. Trigger a cycle whenever you want. Query before you plan.
+
+No separate signup, no separate API key, no SDK to install — it's 3 JSON-RPC calls
+against a tool surface you already discover automatically.
+
+## Pick your agent_id once, then it's yours
+
+The **first** call to `submit_episode_log` or `start_dream` for a new `agent_id` claims
+it for your session. After that, only your session can write to it — pick a stable,
+unique string (e.g. your robot's serial number, your bot's slug) and reuse it every day.
+
+## 1 — Log what happened
+
+```bash
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
+    "name":"submit_episode_log",
+    "arguments":{
+      "agent_id":"robot-42",
+      "episodes":[{
+        "episode_id":"run-2026-07-26-001",
+        "agent_id":"robot-42",
+        "timestamp":"2026-07-26T09:00:00Z",
+        "task_type":"pick_and_place",
+        "outcome":"failure",
+        "steps":[
+          {"action":"grip"},
+          {"action":"retry"},
+          {"action":"grip_again","error":"gripper timeout"}
+        ],
+        "tags":["pick_and_place","gripper"]
+      }]
+    }
+  }}'
+```
+
+Returns `{ "ingested_count": 1, "rejected": [] }`. Call this as many times a day as you
+want — resubmitting the same `episode_id` is a safe no-op, never a duplicate. No LLM call
+happens here; this step is free and near-instant.
+
+## 2 — Trigger a Dream Cycle
+
+```bash
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+    "name":"start_dream",
+    "arguments":{"agent_id":"robot-42","config":{"budget_usd":0.10,"preset":"balanced"}}
+  }}'
+```
+
+Returns `{ "run_id":"…", "status":"started" }` and, once the pipeline finishes inside
+that same call, the run reaches `completed` or `partial` (if the budget ran out — still
+useful, never wasted). Presets: `frugal` (cheapest, fewer clusters), `balanced` (default),
+`thorough` (most coverage, higher cost). Call this once a day, or whenever you have a
+batch of new episodes worth consolidating — there's no scheduler, you decide when.
+
+## 3 — Query before you plan
+
+```bash
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
+    "name":"query_dream",
+    "arguments":{"agent_id":"robot-42","query":"gripper timeout","top_k":5,"min_confidence":0.5}
+  }}'
+```
+
+Returns memories sorted by relevance:
+
+```jsonc
+{ "memories": [
+  { "memory_id":"…", "type":"error_pattern", "content":"gripper timeout after retry",
+    "confidence":0.9, "importance":0.8 }
+] }
+```
+
+Read this **before** your agent starts planning a task — it's the whole point.
+
+## Skip the query — read memories as MCP resources instead
+
+If your MCP client supports resources, you can pull the same data with no arguments to
+fill in — just the right URI for your `agent_id`:
+
+| Resource | Contents |
+|---|---|
+| `hypermove:///agents/{agent_id}/dream/summary` | Last run's status + how many memories exist |
+| `hypermove:///agents/{agent_id}/dream/rules` | High-confidence rules |
+| `hypermove:///agents/{agent_id}/dream/errors` | Known error patterns |
+| `hypermove:///agents/{agent_id}/dream/stats` | Budget spent, stages completed, memory count |
+
+## Skip the prompt engineering — use the built-in prompts
+
+| Prompt | What it does |
+|---|---|
+| `dream/summarize_today(agent_id)` | Plain-language summary of the last cycle |
+| `dream/suggest_policy_updates(agent_id, task_type)` | Concrete policy changes for one task type |
+| `dream/compare_before_after(eval_scores_json)` | Compares your own before/after eval numbers |
+
+These are templates, not tools — an MCP client that supports `prompts/get` renders them
+pre-filled; there's nothing extra to call.
+
+## Check in on a cycle
+
+```bash
+-d '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"get_dream_stats","arguments":{"agent_id":"robot-42"}}}'
+-d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"get_dream_config","arguments":{"agent_id":"robot-42"}}}'
+```
+
+`get_dream_stats` → `last_run_at`, `status`, `budget_used_usd`, `stages_completed`,
+`memories_count`. `get_dream_config` → whatever `budget_usd`/`preset` you last set.
+
+## What's on by default, and how to turn it off
+
+Dream Cycle ships **on**, same as the rest of the MCP Gateway's v3.0+ tools — no flag to
+flip to start using it. If you need to disable it (e.g. to roll back a bad deploy):
+
+```bash
+FEATURE_MCP_DREAM_CYCLE=false
+```
+
+One env var removes all 5 tools, all 4 resources, and all 3 prompts in one flip — nothing
+else on the gateway changes.
+
+## Known limits (Phase 1 — honest, not hidden)
+
+- **You decide when to run a cycle.** There's no scheduler yet — `start_dream` always
+  runs immediately when called. If you set `trigger_criteria` in `config`, it's saved
+  but not enforced server-side.
+- **No quality benchmark is published yet.** The pipeline is fully functional and
+  budget-safe; the "how much better did my agent get" number isn't measured in this
+  release.
+- **Best for motion/episode-style agents.** Dream Cycle assumes step-by-step episode
+  logs with an outcome (success/failure/timeout) — it's not a general-purpose memory
+  store for arbitrary unstructured text.
+
+Full technical detail, data model, and pipeline internals: [`docs/prd/dream-cycle-v1.md`](https://github.com/phamdat721101/hypermove-app/blob/main/docs/prd/dream-cycle-v1.md) in the repo.

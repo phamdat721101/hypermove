@@ -43,7 +43,10 @@ export const DOCS_NAV: readonly DocsSection[] = [
   },
   {
     title: 'Platform',
-    links: [{ href: '/docs/mcp-gateway', label: 'MCP Gateway' }],
+    links: [
+      { href: '/docs/mcp-gateway', label: 'MCP Gateway' },
+      { href: '/docs/dream-cycle', label: 'Dream Cycle — offline memory' },
+    ],
   },
   {
     title: 'Payments',

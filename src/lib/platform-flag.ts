@@ -215,3 +215,20 @@ export function isMcpTokenProfileEnabled(): boolean {
 export function isMcpDeviceAuthEnabled(): boolean {
   return v3Flag('FEATURE_MCP_DEVICE_AUTH');
 }
+
+// ─── Dream Cycle (2026-07-26) ───────────────────────────────────────────────
+//
+// Offline memory-consolidation pipeline: agents submit episode logs
+// (submit_episode_log, zero-LLM cold storage), then trigger a batch pipeline
+// (start_dream: preprocess → cluster → extract → consolidate → prune → index)
+// that turns them into small, durable per-agent "memories" retrievable via
+// query_dream / get_dream_stats / dream/* resources + prompts at near-zero
+// token cost on the read side. See docs/prd/dream-cycle-v1.md.
+//
+// All 5 new tools are `unmetered: true` (bypass the paywall/rate-limit tiers
+// entirely — see gateway.ts) because spend is bounded by this feature's own
+// per-cycle `budget_usd` guardrail, not the gateway's free-tier metering.
+// Default ON (v3Flag opt-out), matching every other v3.0/v4.0 sub-flag.
+export function isMcpDreamCycleEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_DREAM_CYCLE');
+}
