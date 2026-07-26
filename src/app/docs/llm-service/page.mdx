@@ -1,0 +1,163 @@
+export const metadata = { title: 'LLM Service — the model backend behind /scan and Dream Cycle', description: 'A standalone LLM backend service (Bedrock/Anthropic/OpenAI) that keeps API keys server-side. Powers webmcp-generator scanning and Dream Cycle extraction.' };
+
+# LLM Service
+
+> **A separate, standalone process (`services/llm/server.ts`) that keeps model
+> API keys off the main app entirely.** It powers two things: turning a URL
+> into an agent-callable MCP server (`POST /scan`, used by [/tools/generate](/tools/generate))
+> and Dream Cycle's memory extraction (`POST /dream/extract`, called automatically
+> by `start_dream` — you never call this route yourself). Most people reading this
+> page will never need to run their own copy of it.
+
+## Do I need this page?
+
+Almost certainly not as a Dream Cycle or MCP Gateway **user** — extraction is
+already hosted and configured for you (see [Dream Cycle](/docs/dream-cycle)).
+This page is for:
+
+- **Operators** deploying HyperMove's own infrastructure who need to configure
+  or redeploy this service.
+- **Self-hosters** who want to point Dream Cycle's extraction stage at their
+  own model, provider, or key instead of HyperMove's default.
+- **Anyone curious** what's actually running behind `/tools/generate` and
+  Dream Cycle's `start_dream`.
+
+## What it is
+
+A plain Node HTTP server (no framework), run with `tsx`, deployed as its own
+process independent of the main Next.js app. One config surface
+(`LLM_PROVIDER` + a matching API key) serves every route below — there's no
+per-route credential duplication.
+
+```bash
+cd services/llm
+npm install
+PORT=3001 BEDROCK_API_KEY=... npx tsx server.ts
+# or: npm start   (reads services/llm/.env.local automatically)
+```
+
+## Configuration — one provider, one key
+
+```bash
+LLM_PROVIDER=bedrock        # bedrock (default) | anthropic | openai
+# bedrock:
+BEDROCK_API_KEY=...
+BEDROCK_REGION=us-east-1                                   # optional, this is the default
+BEDROCK_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0  # optional, this is the default
+# anthropic:
+ANTHROPIC_API_KEY=...
+ANTHROPIC_MODEL=claude-sonnet-4-20250514   # optional
+# openai:
+OPENAI_API_KEY=...
+OPENAI_MODEL=gpt-4o                        # optional
+
+# Optional — quota/payment tracking (Supabase Postgres). Omitted → every
+# quota check no-ops permissively (unlimited, dev-friendly default).
+DATABASE_URL=postgres://...
+```
+
+Switching provider is one env var — every route (`/scan`, `/dream/extract`)
+uses whichever provider is configured, with no code change.
+
+## Routes
+
+| Route | Purpose |
+|---|---|
+| `GET /health` | `{ ok: true, provider: "bedrock" }` — confirms the process is up and which provider it's configured for. |
+| `POST /scan` | Crawl a URL, ask the model to synthesize an MCP manifest (tools + schemas) from the page, return it plus a ready-to-paste `mcpConfig`. Powers [/tools/generate](/tools/generate). |
+| `POST /dream/extract` | Extract `{rules, preferences, error_patterns, facts}` from a short episode-cluster summary. Called automatically by Dream Cycle's `start_dream` — see [Dream Cycle](/docs/dream-cycle). Not meant to be called directly by end users. |
+| `GET /quota?wallet=0x…` | Read a wallet's free-scan quota + tier. |
+| `POST /quota/consume` | Decrement one free scan for a wallet (`402` when exhausted). |
+| `POST /upgrade` | Verify an on-chain payment (native BTC or ERC-20) and upgrade a wallet to the pro tier for 30 days. |
+| `POST /register` | Persist a generated MCP manifest so it's servable later at `/<wallet>/<slug>`. |
+| `GET` / `POST /<wallet>/<slug>` | Serve a previously registered MCP manifest (GET) or handle JSON-RPC calls against its tools (POST) — the hosted-MCP surface `/scan` + `/register` produce. |
+
+## 1 — Turn a URL into an MCP server
+
+```bash
+curl -s -X POST http://localhost:3001/scan \
+  -H 'content-type: application/json' \
+  -d '{"url":"https://example.com","wallet":"0xYourWalletAddress"}'
+```
+
+Returns:
+
+```jsonc
+{
+  "manifest": { "name": "example-com-mcp", "tools": [ /* … */ ] },
+  "mcpConfig": { "mcpServers": { "example-com-mcp": { "url": "https://your-deploy/0x…/example-com-mcp", "transport": "http" } } },
+  "crawlData": { "url": "...", "title": "...", "toolCount": 2 }
+}
+```
+
+Paste `mcpConfig` straight into any MCP client's config file — the generated
+server is already registered (via `/register`, called internally) and
+servable at that URL.
+
+## 2 — Dream Cycle extraction (you don't call this directly)
+
+```bash
+curl -s -X POST http://localhost:3001/dream/extract \
+  -H 'content-type: application/json' \
+  -d '{"summary":"agent failed: gripper timeout during pick_and_place, retried without cooldown","max_output_tokens":150}'
+```
+
+Returns:
+
+```jsonc
+{ "rules": ["Add cooldown period after gripper timeout before retrying pick_and_place"],
+  "preferences": [],
+  "error_patterns": ["Gripper times out during pick_and_place when retried immediately without cooldown"],
+  "facts": [] }
+```
+
+This exists so `src/lib/mcp/dream/extract.ts` has a real model to call —
+`start_dream` invokes it once per cluster automatically. On any error or
+malformed model output it degrades to `{rules:[],preferences:[],error_patterns:[],facts:[]}`
+rather than crashing the pipeline, so a Dream Cycle run always reaches a
+terminal status even if this service is briefly unreachable.
+
+## Point Dream Cycle at your own instance (advanced, optional)
+
+By default, the main app's `DREAM_EXTRACT_URL` (falls back to `LLM_SERVICE_URL`,
+then `http://localhost:3001/dream/extract`) points at HyperMove's own deployed
+instance — nothing to configure. If you're self-hosting and want a different
+model or provider for extraction specifically:
+
+```bash
+# In the main app's env (not this service's):
+DREAM_EXTRACT_URL=https://your-llm-service.example.com/dream/extract
+```
+
+Your instance just needs to implement the same two-field-in, four-array-out
+contract shown in step 2 above.
+
+## Deploy
+
+This service is deployed independently of the main app (its own process,
+its own restart lifecycle) — typically via `pm2`:
+
+```bash
+cd services/llm
+npm install
+pm2 start "npx tsx server.ts" --name llm-service --cwd $(pwd)
+pm2 save
+```
+
+Health-check after any redeploy:
+
+```bash
+curl http://localhost:3001/health
+# { "ok": true, "provider": "bedrock" }
+```
+
+## A routing gotcha if you add a new route here
+
+`server.ts` uses a hand-rolled router (plain `if` chains on `req.method` +
+`url`, no framework) with one greedy catch-all near the bottom: any
+**exactly-two-segment** path (`/<wallet>/<slug>`) is claimed by the hosted-MCP
+handler before anything defined after it in the file gets a chance to run.
+If you add a new route whose path also happens to have exactly two segments
+(like `/dream/extract` did), place it **above** that catch-all in the file —
+same as `/quota/consume` and `/dream/extract` are today — or it will silently
+return `204` for every request instead of running your handler.

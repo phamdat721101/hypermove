@@ -22,6 +22,7 @@ const DOCS: ReadonlyArray<{ slug: string; title: string; file: string }> = [
   { slug: '/docs/quickstart', title: 'Quickstart — 5 min', file: 'src/app/docs/quickstart/page.mdx' },
   { slug: '/docs/mcp-gateway', title: 'MCP Gateway', file: 'src/app/docs/mcp-gateway/page.mdx' },
   { slug: '/docs/dream-cycle', title: 'Dream Cycle — offline memory', file: 'src/app/docs/dream-cycle/page.mdx' },
+  { slug: '/docs/llm-service', title: 'LLM Service — model backend', file: 'src/app/docs/llm-service/page.mdx' },
   { slug: '/docs/n-payment', title: 'n-payment SDK', file: 'src/app/docs/n-payment/page.mdx' },
 ];
 
