@@ -286,14 +286,35 @@ async function callLlmWithPrompt(systemPrompt: string, content: string, maxToken
     const apiKey = process.env.BEDROCK_API_KEY;
     if (!apiKey) throw new Error('BEDROCK_API_KEY not set');
     const region = process.env.BEDROCK_REGION || 'us-east-1';
-    const model = process.env.BEDROCK_MODEL || 'us.anthropic.claude-sonnet-4-5-20250929-v1:0';
-    const res = await fetch(`https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/invoke`, {
+    // Default model: DeepSeek V3.2 — the cheapest DeepSeek variant Bedrock
+    // hosts ($0.62/$1.85 per 1M input/output tokens, vs DeepSeek-R1's
+    // $1.35/$5.40 and Claude Sonnet's higher rate). Uses the Converse API
+    // (not the legacy per-model raw Invoke API) because Converse's request/
+    // response shape is UNIFORM across every Bedrock model — Anthropic,
+    // DeepSeek, or anything added later — so swapping BEDROCK_MODEL never
+    // requires touching this function's parsing logic again. Same
+    // BEDROCK_API_KEY / bearer-token auth mode as the previous Invoke-API
+    // call; only the path (.../converse vs .../invoke) and body shape differ.
+    const model = process.env.BEDROCK_MODEL || 'deepseek.v3.2';
+    const res = await fetch(`https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/converse`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
+      body: JSON.stringify({
+        system: [{ text: systemPrompt }],
+        messages: [{ role: 'user', content: [{ text: content.slice(0, 15000) }] }],
+        inferenceConfig: { maxTokens },
+      }),
     });
-    const data = await res.json() as { content?: Array<{ text?: string }> };
-    return data.content?.[0]?.text || '';
+    if (!res.ok) throw new Error(`Bedrock Converse ${res.status}: ${await res.text().catch(() => '')}`);
+    // Verified against a real live call (2026-07-26): bedrock-runtime's HTTP
+    // Converse response nests the standard Converse shape under an `output`
+    // wrapper — { output: { message: { content: [...] } } } — not bare
+    // { message: { content: [...] } } as AWS's Converse API reference page
+    // implies (that page documents the SDK-level response shape, not this
+    // raw HTTP endpoint's exact wire shape). Read both defensively.
+    const data = await res.json() as { message?: { content?: Array<{ text?: string }> }; output?: { message?: { content?: Array<{ text?: string }> } } };
+    const replyContent = data.output?.message?.content ?? data.message?.content;
+    return replyContent?.find((c) => typeof c.text === 'string')?.text || '';
   }
 
   if (provider === 'anthropic') {

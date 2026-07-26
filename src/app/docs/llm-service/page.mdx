@@ -40,10 +40,14 @@ PORT=3001 BEDROCK_API_KEY=... npx tsx server.ts
 
 ```bash
 LLM_PROVIDER=bedrock        # bedrock (default) | anthropic | openai
-# bedrock:
+# bedrock — uses the Converse API (uniform request/response shape across
+# every Bedrock model, so swapping BEDROCK_MODEL never needs a code change):
 BEDROCK_API_KEY=...
-BEDROCK_REGION=us-east-1                                   # optional, this is the default
-BEDROCK_MODEL=us.anthropic.claude-sonnet-4-5-20250929-v1:0  # optional, this is the default
+BEDROCK_REGION=us-east-1              # optional, this is the default
+BEDROCK_MODEL=deepseek.v3.2           # optional, this is the default — the
+                                       # cheapest DeepSeek variant Bedrock hosts
+                                       # ($0.62/$1.85 per 1M input/output tokens,
+                                       # vs DeepSeek-R1's $1.35/$5.40)
 # anthropic:
 ANTHROPIC_API_KEY=...
 ANTHROPIC_MODEL=claude-sonnet-4-20250514   # optional
@@ -56,8 +60,12 @@ OPENAI_MODEL=gpt-4o                        # optional
 DATABASE_URL=postgres://...
 ```
 
-Switching provider is one env var — every route (`/scan`, `/dream/extract`)
-uses whichever provider is configured, with no code change.
+Switching provider — or switching model within Bedrock — is one env var;
+every route (`/scan`, `/dream/extract`) picks it up automatically, no code
+change. **Dream Cycle users never need any of the above.** This key lives
+entirely on this service; the 5 Dream Cycle MCP tools (`submit_episode_log`,
+`start_dream`, `get_dream_config`, `query_dream`, `get_dream_stats`) never
+accept or require an API key parameter — see [Dream Cycle](/docs/dream-cycle).
 
 ## Routes
 
