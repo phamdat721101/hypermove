@@ -9,12 +9,37 @@ export const metadata = { title: 'LLM Service — the model backend behind /scan
 > by `start_dream` — you never call this route yourself). Most people reading this
 > page will never need to run their own copy of it.
 
+## Live endpoint (agents: start here)
+
+HyperMove's own deployment of this service is already running, reachable
+directly at:
+
+```
+http://13.212.193.69:3001
+```
+
+No setup, no key, no signup — every example below works against this address
+right now. Confirm it's up before anything else:
+
+```bash
+curl http://13.212.193.69:3001/health
+# { "ok": true, "provider": "bedrock" }
+```
+
+If you're building an agent that uses **Dream Cycle** (`submit_episode_log` /
+`start_dream` / `query_dream` over MCP), you don't need this address at
+all — `start_dream` already calls this service internally, server-side. This
+address only matters if you're calling `/scan` directly, or self-hosting your
+own copy — see [Dream Cycle](/docs/dream-cycle) if that's not you.
+
 ## Do I need this page?
 
 Almost certainly not as a Dream Cycle or MCP Gateway **user** — extraction is
 already hosted and configured for you (see [Dream Cycle](/docs/dream-cycle)).
 This page is for:
 
+- **Agents/integrators** calling `POST /scan` directly to turn a URL into an
+  MCP server (the endpoint above is all you need).
 - **Operators** deploying HyperMove's own infrastructure who need to configure
   or redeploy this service.
 - **Self-hosters** who want to point Dream Cycle's extraction stage at their
@@ -83,7 +108,7 @@ accept or require an API key parameter — see [Dream Cycle](/docs/dream-cycle).
 ## 1 — Turn a URL into an MCP server
 
 ```bash
-curl -s -X POST http://localhost:3001/scan \
+curl -s -X POST http://13.212.193.69:3001/scan \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.com","wallet":"0xYourWalletAddress"}'
 ```
@@ -105,7 +130,7 @@ servable at that URL.
 ## 2 — Dream Cycle extraction (you don't call this directly)
 
 ```bash
-curl -s -X POST http://localhost:3001/dream/extract \
+curl -s -X POST http://13.212.193.69:3001/dream/extract \
   -H 'content-type: application/json' \
   -d '{"summary":"agent failed: gripper timeout during pick_and_place, retried without cooldown","max_output_tokens":150}'
 ```
