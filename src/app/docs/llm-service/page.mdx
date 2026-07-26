@@ -12,19 +12,26 @@ export const metadata = { title: 'LLM Service — the model backend behind /scan
 ## Live endpoint (agents: start here)
 
 HyperMove's own deployment of this service is already running, reachable
-directly at:
+over HTTPS (Caddy-fronted, Let's Encrypt cert) at:
 
 ```
-http://13.212.193.69:3001
+https://hypermove.duckdns.org/llm
 ```
 
 No setup, no key, no signup — every example below works against this address
 right now. Confirm it's up before anything else:
 
 ```bash
-curl http://13.212.193.69:3001/health
+curl https://hypermove.duckdns.org/llm/health
 # { "ok": true, "provider": "bedrock" }
 ```
+
+The service itself still listens on plain HTTP internally (`localhost:3001`
+on the host); Caddy terminates TLS and reverse-proxies `/llm/*` → `:3001`
+(stripping the `/llm` prefix), so every route documented below is reachable
+as `https://hypermove.duckdns.org/llm/<route>`. The bare `http://<ip>:3001`
+address is no longer the documented public entry point — prefer the HTTPS
+domain above for anything crossing the public internet.
 
 If you're building an agent that uses **Dream Cycle** (`submit_episode_log` /
 `start_dream` / `query_dream` over MCP), you don't need this address at
@@ -108,7 +115,7 @@ accept or require an API key parameter — see [Dream Cycle](/docs/dream-cycle).
 ## 1 — Turn a URL into an MCP server
 
 ```bash
-curl -s -X POST http://13.212.193.69:3001/scan \
+curl -s -X POST https://hypermove.duckdns.org/llm/scan \
   -H 'content-type: application/json' \
   -d '{"url":"https://example.com","wallet":"0xYourWalletAddress"}'
 ```
@@ -130,7 +137,7 @@ servable at that URL.
 ## 2 — Dream Cycle extraction (you don't call this directly)
 
 ```bash
-curl -s -X POST http://13.212.193.69:3001/dream/extract \
+curl -s -X POST https://hypermove.duckdns.org/llm/dream/extract \
   -H 'content-type: application/json' \
   -d '{"summary":"agent failed: gripper timeout during pick_and_place, retried without cooldown","max_output_tokens":150}'
 ```
@@ -154,8 +161,10 @@ terminal status even if this service is briefly unreachable.
 
 By default, the main app's `DREAM_EXTRACT_URL` (falls back to `LLM_SERVICE_URL`,
 then `http://localhost:3001/dream/extract`) points at HyperMove's own deployed
-instance — nothing to configure. If you're self-hosting and want a different
-model or provider for extraction specifically:
+instance over the internal loopback (same host, server-to-server — no public
+network hop, so plain HTTP is correct there) — nothing to configure. If you're
+self-hosting and want a different model or provider for extraction
+specifically:
 
 ```bash
 # In the main app's env (not this service's):
@@ -183,6 +192,21 @@ Health-check after any redeploy:
 curl http://localhost:3001/health
 # { "ok": true, "provider": "bedrock" }
 ```
+
+Front it with a reverse proxy for public HTTPS access (HyperMove's own
+deployment uses Caddy — see the live endpoint at the top of this page):
+
+```
+hypermove.duckdns.org {
+    handle_path /llm/* {
+        reverse_proxy localhost:3001
+    }
+    reverse_proxy localhost:3003   # the main Next.js app
+}
+```
+
+`caddy reload --config <path> --adapter caddyfile` applies changes with zero
+downtime (no restart needed) once Caddy is already running against that file.
 
 ## A routing gotcha if you add a new route here
 
