@@ -27,15 +27,27 @@ import { getTools, type ToolDef } from './tools';
 import { callTool } from './gateway';
 import { authenticate, type McpSession } from './auth';
 
-/** Minimal JSON-Schema → Zod shape for our simple object schemas (string/number/boolean/object). */
-function toZodShape(inputSchema: Record<string, unknown>): ZodRawShape {
-  const props = (inputSchema?.properties as Record<string, { type?: string; description?: string }>) ?? {};
+/**
+ * Minimal JSON-Schema → Zod shape for our simple object schemas
+ * (string/number/boolean/object/array). Exported for direct unit testing —
+ * see tests/mcp-dream-cycle.test.ts's "submit_episode_log tool — episodes
+ * shape validation" suite, added after a production bug where `episodes`
+ * was declared `{ type: 'object' }` (coerces to z.record — rejects a real
+ * array) instead of `{ type: 'array' }`. Before that fix, this function had
+ * NO array case at all: `type: 'array'` would have silently fallen through
+ * to the `z.string()` default, which is a DIFFERENT and equally-wrong
+ * failure mode than the object/record bug — so declaring the correct
+ * inputSchema type alone is not sufficient without this case existing.
+ */
+export function toZodShape(inputSchema: Record<string, unknown>): ZodRawShape {
+  const props = (inputSchema?.properties as Record<string, { type?: string; description?: string; items?: { type?: string } }>) ?? {};
   const required = new Set((inputSchema?.required as string[]) ?? []);
   const shape: Record<string, ZodTypeAny> = {};
   for (const [key, def] of Object.entries(props)) {
     let field: ZodTypeAny =
       def.type === 'number' ? z.number()
       : def.type === 'boolean' ? z.boolean()
+      : def.type === 'array' ? z.array(def.items?.type === 'object' ? z.record(z.string(), z.any()) : z.any())
       : def.type === 'object' ? z.record(z.string(), z.any())
       : z.string();
     if (def.description) field = field.describe(def.description);

@@ -667,15 +667,28 @@ const submitEpisodeLogTool: ToolDef = {
     type: 'object',
     properties: {
       agent_id: { type: 'string', description: 'Unique identifier of the agent.' },
-      episodes: { type: 'object', description: 'Array of episode_log objects: {episode_id, agent_id, timestamp, task_type?, steps[], outcome, tags?}' },
+      episodes: {
+        type: 'array',
+        description: 'Array of episode_log objects: {episode_id, agent_id, timestamp, task_type?, steps[], outcome, tags?}',
+        items: { type: 'object' },
+      },
     },
     required: ['agent_id', 'episodes'],
   },
   handler: async (args, ctx) => {
     const { ingestEpisodes } = await import('./dream/ingest');
     const agentId = String(args.agent_id ?? '');
-    const episodes = Array.isArray(args.episodes) ? (args.episodes as unknown[]) : [];
-    return ingestEpisodes(agentId, ctx?.session.userId ?? 'anonymous', episodes);
+    if (!Array.isArray(args.episodes)) {
+      // Bug fix (2026-07-26, docs/FEEDBACK-dream-cycle-submit-episode-log-bug.md):
+      // a wrongly-shaped `episodes` used to silently become [] here, producing
+      // an indistinguishable {ingested_count:0, rejected:[]} for both garbage
+      // input and a genuine empty batch. Surface it as a real rejection instead.
+      return {
+        ingested_count: 0,
+        rejected: [{ episode_id: 'unknown', reason: 'episodes must be a JSON array of episode_log objects' }],
+      };
+    }
+    return ingestEpisodes(agentId, ctx?.session.userId ?? 'anonymous', args.episodes as unknown[]);
   },
 };
 

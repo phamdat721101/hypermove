@@ -215,6 +215,103 @@ describe('Task 3 · ingestEpisodes — zero-token cold storage', () => {
   });
 });
 
+// ─── Bug fix (2026-07-26) · submit_episode_log — episodes shape validation ─
+//
+// docs/FEEDBACK-dream-cycle-submit-episode-log-bug.md: production always
+// returned {ingested_count:0, rejected:[]} regardless of payload, because
+// inputSchema declared `episodes: {type:'object'}` (coerces to a Zod record
+// upstream — rejects a real array before the handler ever runs) while the
+// handler's `Array.isArray(...) ? ... : []` fallback silently swallowed any
+// non-array value with zero diagnostic signal. Two fixes verified below:
+// (1) inputSchema now declares `episodes` as a real array, matching the
+// handler + ingestEpisodes() + the public docs' own example payload.
+// (2) toZodShape() (server.ts) gains a genuine `array` case — the bug
+// report's own proposed fix for (1) alone would have silently traded the
+// object/record coercion bug for an equally-wrong string-coercion bug,
+// since toZodShape() previously had no array branch at all.
+
+describe('Bug fix · submit_episode_log inputSchema declares episodes as an array (regression: was object/record)', () => {
+  it('inputSchema.properties.episodes.type is "array", not "object"', async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const episodesSchema = (tool.inputSchema.properties as Record<string, { type?: string }>).episodes;
+    expect(episodesSchema.type).toBe('array');
+  });
+});
+
+describe('Bug fix · submit_episode_log handler rejects non-array episodes loudly instead of silently returning {0, []}', () => {
+  const ctx = { session: { userId: 'test-user', tier: 'free' as const, kind: 'user' as const } };
+
+  it('rejects an object/record-shaped episodes value with a clear reason', async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const result = (await tool.handler({ agent_id: 'test-agent', episodes: { not: 'an array' } }, ctx)) as { ingested_count: number; rejected: { reason: string }[] };
+    expect(result.ingested_count).toBe(0);
+    expect(result.rejected.length).toBeGreaterThan(0);
+    expect(result.rejected[0].reason).toMatch(/must be a JSON array/i);
+  });
+
+  it('rejects a missing episodes value (undefined) the same way, not as a silent no-op', async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const result = (await tool.handler({ agent_id: 'test-agent' }, ctx)) as { ingested_count: number; rejected: { reason: string }[] };
+    expect(result.rejected.length).toBeGreaterThan(0);
+  });
+
+  it('still accepts a genuine array of episodes and dispatches to ingestEpisodes normally', async () => {
+    vi.doMock('../src/lib/db', () => ({
+      withClient: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn({ query: vi.fn(async () => ({ rows: [], rowCount: 1 })) })),
+    }));
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const episodes = [{
+      episode_id: 'ep-1', agent_id: 'test-agent', timestamp: '2026-07-26T00:00:00Z',
+      outcome: 'success', steps: [{ action: 'a' }, { action: 'b' }, { action: 'c' }],
+    }];
+    const result = (await tool.handler({ agent_id: 'test-agent', episodes }, ctx)) as { ingested_count: number; rejected: unknown[] };
+    expect(result.ingested_count).toBe(1);
+    expect(result.rejected).toEqual([]);
+  });
+});
+
+describe('Bug fix · toZodShape (server.ts) has a genuine array case', () => {
+  it('an array-typed schema property produces a Zod array, not a string or record', async () => {
+    const { toZodShape } = await import('../src/lib/mcp/server');
+    const shape = toZodShape({
+      type: 'object',
+      properties: { episodes: { type: 'array', items: { type: 'object' } } },
+      required: ['episodes'],
+    }) as unknown as { episodes: { safeParse: (v: unknown) => { success: boolean } } };
+    // A real array parses; a string or a plain object must NOT parse as this field.
+    expect(shape.episodes.safeParse([{ a: 1 }]).success).toBe(true);
+    expect(shape.episodes.safeParse('not-an-array').success).toBe(false);
+    expect(shape.episodes.safeParse({ not: 'an-array' }).success).toBe(false);
+  });
+
+  it('object-typed schema properties still coerce to a Zod record (no regression to the pre-existing object case)', async () => {
+    const { toZodShape } = await import('../src/lib/mcp/server');
+    const shape = toZodShape({
+      type: 'object',
+      properties: { config: { type: 'object' } },
+      required: ['config'],
+    }) as unknown as { config: { safeParse: (v: unknown) => { success: boolean } } };
+    expect(shape.config.safeParse({ any: 'shape' }).success).toBe(true);
+    expect(shape.config.safeParse([1, 2, 3]).success).toBe(false);
+  });
+});
+
 // ─── Task 4 · start_dream / get_dream_config — config + run lifecycle ─────
 
 describe('Task 4 · startDream / getDreamConfig', () => {
