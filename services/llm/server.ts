@@ -267,6 +267,19 @@ function formatCrawlForLlm(crawl: CrawlData): string {
 // ─── LLM call ────────────────────────────────────────────────────────────────
 
 async function callLlm(content: string): Promise<string> {
+  return callLlmWithPrompt(SYSTEM_PROMPT, content, 4000);
+}
+
+/**
+ * Same provider dispatch as callLlm(), but with a caller-supplied system
+ * prompt and max_tokens instead of the crawl-scan SYSTEM_PROMPT/4000 default.
+ * Used by /dream/extract (Dream Cycle) so this file's single LLM-provider
+ * config (LLM_PROVIDER, BEDROCK_API_KEY etc., ANTHROPIC_API_KEY etc.,
+ * OPENAI_API_KEY etc.) serves both the webmcp-generator scan flow and Dream
+ * Cycle's insight extraction without duplicating the fetch/provider-branching
+ * logic per call site.
+ */
+async function callLlmWithPrompt(systemPrompt: string, content: string, maxTokens: number): Promise<string> {
   const provider = process.env.LLM_PROVIDER || 'bedrock';
 
   if (provider === 'bedrock') {
@@ -277,7 +290,7 @@ async function callLlm(content: string): Promise<string> {
     const res = await fetch(`https://bedrock-runtime.${region}.amazonaws.com/model/${encodeURIComponent(model)}/invoke`, {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: 4000, messages: [{ role: 'user', content: `${SYSTEM_PROMPT}\n\n---\n${content.slice(0, 15000)}` }] }),
+      body: JSON.stringify({ anthropic_version: 'bedrock-2023-05-31', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
     });
     const data = await res.json() as { content?: Array<{ text?: string }> };
     return data.content?.[0]?.text || '';
@@ -289,7 +302,7 @@ async function callLlm(content: string): Promise<string> {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
-      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514', max_tokens: 4000, messages: [{ role: 'user', content: `${SYSTEM_PROMPT}\n\n---\n${content.slice(0, 15000)}` }] }),
+      body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
     });
     const data = await res.json() as { content?: Array<{ text?: string }> };
     return data.content?.[0]?.text || '';
@@ -301,13 +314,64 @@ async function callLlm(content: string): Promise<string> {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o', max_tokens: 4000, messages: [{ role: 'user', content: `${SYSTEM_PROMPT}\n\n---\n${content.slice(0, 15000)}` }] }),
+      body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
     });
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content || '';
   }
 
   throw new Error(`Unknown LLM_PROVIDER: ${provider}`);
+}
+
+/**
+ * System prompt for POST /dream/extract (Dream Cycle). Given a short cluster
+ * summary of related episode logs, extract concise, reusable insights in 4
+ * fixed categories. Mirrors the extraction contract documented in
+ * src/lib/mcp/dream/extract.ts.
+ */
+const DREAM_EXTRACT_SYSTEM_PROMPT = `You are extracting reusable lessons from a cluster of an AI agent's past task episodes.
+
+You will be given a short summary of several related episodes (what the agent tried, what happened, whether it succeeded/failed/timed out). Extract concise, general insights the agent can read back BEFORE its next similar task, so it doesn't repeat the same mistake or re-learn the same thing.
+
+Return ONLY a JSON object with exactly these 4 keys, each an array of short strings (max ~20 words each):
+- "rules": concrete behavioral rules to follow going forward (e.g. "wait 200ms after grip before retrying")
+- "preferences": softer stylistic/strategic preferences learned (e.g. "prefer smaller batch sizes for this task type")
+- "error_patterns": recurring failure modes worth flagging (e.g. "gripper times out on second retry without cooldown")
+- "facts": neutral facts about the environment/task learned from these episodes (e.g. "task_type X takes ~3 steps on average")
+
+Any category with nothing worth extracting should be an empty array — do not pad with generic filler. Do not fabricate details not supported by the summary. Return raw JSON only, no markdown fences, no commentary.`;
+
+interface DreamExtractResponse {
+  rules: string[];
+  preferences: string[];
+  error_patterns: string[];
+  facts: string[];
+  usage?: { input_tokens: number; output_tokens: number };
+}
+
+/**
+ * Core logic for POST /dream/extract, factored out so it's independently
+ * testable without spinning up the HTTP server. Parses the LLM's raw text
+ * response defensively — a malformed/non-JSON response degrades to all-empty
+ * arrays rather than throwing, matching extract.ts's own fail-safe contract
+ * on the caller side (never fabricate, never crash the pipeline).
+ */
+async function extractDreamInsights(summary: string, maxOutputTokens: number): Promise<DreamExtractResponse> {
+  const raw = await callLlmWithPrompt(DREAM_EXTRACT_SYSTEM_PROMPT, summary, maxOutputTokens);
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  const empty: DreamExtractResponse = { rules: [], preferences: [], error_patterns: [], facts: [] };
+  if (!jsonMatch) return empty;
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as Partial<DreamExtractResponse>;
+    return {
+      rules: Array.isArray(parsed.rules) ? parsed.rules.map(String) : [],
+      preferences: Array.isArray(parsed.preferences) ? parsed.preferences.map(String) : [],
+      error_patterns: Array.isArray(parsed.error_patterns) ? parsed.error_patterns.map(String) : [],
+      facts: Array.isArray(parsed.facts) ? parsed.facts.map(String) : [],
+    };
+  } catch {
+    return empty;
+  }
 }
 
 const server = createServer(async (req, res) => {
@@ -418,6 +482,36 @@ const server = createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ ok: true, tier: 'pro', expiresIn: '30 days' }));
     } catch (err) { res.writeHead(500); res.end(JSON.stringify({ error: 'Verify failed', detail: (err as Error).message })); }
+    return;
+  }
+
+  // POST /dream/extract — Dream Cycle insight extraction (see
+  // src/lib/mcp/dream/extract.ts for the caller-side contract this fulfills:
+  // request { summary, max_output_tokens } -> response { rules, preferences,
+  // error_patterns, facts, usage? }). No crawl, no manifest — a single LLM
+  // call scoped to one cluster summary.
+  if (req.method === 'POST' && url === '/dream/extract') {
+    const chunks: Buffer[] = [];
+    for await (const c of req) chunks.push(c as Buffer);
+    let body: { summary?: string; max_output_tokens?: number };
+    try { body = JSON.parse(Buffer.concat(chunks).toString()); } catch { res.writeHead(400); res.end(JSON.stringify({ error: 'Invalid JSON' })); return; }
+
+    if (!body.summary || typeof body.summary !== 'string') { res.writeHead(400); res.end(JSON.stringify({ error: 'Missing summary' })); return; }
+    const maxOutputTokens = Number.isFinite(body.max_output_tokens) && (body.max_output_tokens as number) > 0
+      ? (body.max_output_tokens as number)
+      : 150;
+
+    try {
+      const result = await extractDreamInsights(body.summary, maxOutputTokens);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify(result));
+    } catch (err) {
+      // Mirrors every other route's failure shape here — the caller
+      // (extract.ts's extractOneCluster) already treats any non-2xx as a
+      // fail-safe empty result, so a 500 here is honest, not catastrophic.
+      res.writeHead(500, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Dream extract failed', detail: (err as Error).message }));
+    }
     return;
   }
 
@@ -588,6 +682,7 @@ const server = createServer(async (req, res) => {
     res.end(JSON.stringify({ ok: true, url: `/${body.wallet}/${body.slug}` }));
     return;
   }
+
 
   res.writeHead(404); res.end('Not found');
 });
