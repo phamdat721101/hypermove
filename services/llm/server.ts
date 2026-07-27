@@ -473,7 +473,19 @@ const server = createServer(async (req, res) => {
   // Health
   if (req.method === 'GET' && url === '/health') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, provider: process.env.LLM_PROVIDER || 'bedrock' }));
+    // PRD-A (2026-07-27 dream-cycle-practical-readiness-feedback): commit +
+    // deployed_at let an external integrator confirm which build is actually
+    // running, instead of trusting "should be fixed, check commit X" with no
+    // way to verify. Both are build-time constants (baked into the process
+    // environment by the deploy step — see scripts/deploy-vps.sh's GIT_SHA
+    // injection) — never a runtime `git` call, so this has zero per-request
+    // cost and can't drift from what was actually deployed.
+    res.end(JSON.stringify({
+      ok: true,
+      provider: process.env.LLM_PROVIDER || 'bedrock',
+      commit: process.env.GIT_SHA || null,
+      deployed_at: process.env.DEPLOYED_AT || null,
+    }));
     return;
   }
 

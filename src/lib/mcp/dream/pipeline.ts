@@ -10,9 +10,12 @@
  * cost_optimization_strategy.presets — immutable per server release, per
  * FR-CONFIG-1's notes.
  *
- * Phase 1 scope: trigger_criteria is accepted and persisted but NOT
- * enforced (no scheduler exists in this repo) — documented gap, see
- * docs/prd/dream-cycle-v1.md "Backlog — Phase 2-4".
+ * Phase 1 scope note (superseded 2026-07-27, PRD-D): trigger_criteria is
+ * always accepted and persisted here. Server-side enforcement now exists
+ * (see dream/scheduler.ts's runSchedulerTick()) but is opt-in behind
+ * isMcpDreamSchedulerEnabled() (default OFF) — a caller who never enables
+ * that flag gets byte-identical Phase-1 behavior: trigger_criteria saved,
+ * never auto-fired, exactly as before this date.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -90,6 +93,7 @@ export async function startDream(
   agentId: string,
   userId: string,
   config: DreamConfig,
+  triggeredBy: 'manual' | 'scheduler' = 'manual',
 ): Promise<StartDreamResult> {
   const maxBudget = globalMaxBudgetUsd();
   if (!Number.isFinite(config.budget_usd) || config.budget_usd <= 0) {
@@ -118,9 +122,9 @@ export async function startDream(
       [agentId, config.budget_usd, presetName, config.trigger_criteria ? JSON.stringify(config.trigger_criteria) : null, runId],
     );
     await client.query(
-      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot)
-       VALUES ($1,$2,'started',$3)`,
-      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {} })],
+      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot, triggered_by)
+       VALUES ($1,$2,'started',$3,$4)`,
+      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {} }), triggeredBy],
     );
     return true;
   });
@@ -379,6 +383,13 @@ export interface DreamStatsResult {
    * yet. See StageSummaries above for the exact shape.
    */
   stage_summaries?: StageSummaries;
+  /**
+   * Additive (2026-07-27, PRD-D — server-side scheduler). 'manual' for every
+   * run predating this fix (column default) or triggered via a direct
+   * start_dream call; 'scheduler' for a run the in-process scheduler fired
+   * autonomously on trigger_criteria's behalf.
+   */
+  triggered_by?: 'manual' | 'scheduler';
 }
 
 export async function getDreamStats(agentId: string): Promise<DreamStatsResult> {
@@ -386,8 +397,9 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     const { rows } = await client.query<{
       started_at: string; status: string; budget_used_usd: string; stages_completed: string[];
       per_stage_tokens: Record<string, number> | null; stage_summaries: StageSummaries | null;
+      triggered_by: 'manual' | 'scheduler';
     }>(
-      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries
+      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries, triggered_by
        FROM dream_cycle_runs WHERE agent_id = $1 ORDER BY started_at DESC LIMIT 1`,
       [agentId],
     );
@@ -409,5 +421,6 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0,
     per_stage_tokens: row.per_stage_tokens ?? {},
     ...(row.stage_summaries ? { stage_summaries: row.stage_summaries } : {}),
+    triggered_by: row.triggered_by ?? 'manual',
   };
 }

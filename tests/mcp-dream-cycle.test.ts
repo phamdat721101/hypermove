@@ -337,6 +337,68 @@ describe('PRD 02 · submit_episode_log declares the outcome enum in its schema',
   });
 });
 
+// ─── PRD-B (2026-07-27 dream-cycle-practical-readiness-feedback) ───────────
+// start_dream's config param declares its real nested shape.
+
+describe("PRD-B · start_dream declares config's nested shape in its schema", () => {
+  function configSchema() {
+    return async () => {
+      process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+      process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+      const { getTool } = await import('../src/lib/mcp/tools');
+      const tool = getTool('start_dream')!;
+      return (tool.inputSchema.properties as Record<string, { properties?: Record<string, unknown>; required?: string[] }>).config;
+    };
+  }
+
+  it('config.properties.preset.enum is exactly [frugal, balanced, thorough]', async () => {
+    vi.resetModules();
+    const config = await configSchema()();
+    const preset = config?.properties?.preset as { enum?: string[] } | undefined;
+    expect(preset?.enum).toEqual(['frugal', 'balanced', 'thorough']);
+  });
+
+  it('config.properties.budget_usd is a number with minimum 0', async () => {
+    vi.resetModules();
+    const config = await configSchema()();
+    const budgetUsd = config?.properties?.budget_usd as { type?: string; minimum?: number } | undefined;
+    expect(budgetUsd?.type).toBe('number');
+    expect(budgetUsd?.minimum).toBe(0);
+  });
+
+  it('config.properties.trigger_criteria declares time_window_utc/min_episodes/min_raw_tokens', async () => {
+    vi.resetModules();
+    const config = await configSchema()();
+    const triggerCriteria = config?.properties?.trigger_criteria as { properties?: Record<string, { type?: string }> } | undefined;
+    expect(Object.keys(triggerCriteria?.properties ?? {})).toEqual(
+      expect.arrayContaining(['time_window_utc', 'min_episodes', 'min_raw_tokens']),
+    );
+  });
+
+  it('config.required includes budget_usd (preset and trigger_criteria remain optional)', async () => {
+    vi.resetModules();
+    const config = await configSchema()();
+    expect(config?.required).toEqual(['budget_usd']);
+  });
+
+  it('existing valid start_dream calls (budget_usd + preset, no trigger_criteria) are unaffected by the schema change', async () => {
+    vi.doMock('../src/lib/db', () => ({
+      withClient: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn({ query: vi.fn(async () => ({ rows: [], rowCount: 1 })) })),
+    }));
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('start_dream')!;
+    const ctx = { session: { userId: 'test-user', tier: 'free' as const, kind: 'user' as const } };
+    const result = (await tool.handler(
+      { agent_id: 'test-agent', config: { budget_usd: 0.05, preset: 'balanced' } },
+      ctx,
+    )) as { status: string };
+    expect(result.status).toBe('started');
+  });
+});
+
 describe('Bug fix · toZodShape (server.ts) has a genuine array case', () => {
   it('an array-typed schema property produces a Zod array, not a string or record', async () => {
     const { toZodShape } = await import('../src/lib/mcp/server');
@@ -360,6 +422,56 @@ describe('Bug fix · toZodShape (server.ts) has a genuine array case', () => {
     }) as unknown as { config: { safeParse: (v: unknown) => { success: boolean } } };
     expect(shape.config.safeParse({ any: 'shape' }).success).toBe(true);
     expect(shape.config.safeParse([1, 2, 3]).success).toBe(false);
+  });
+
+  // PRD-B follow-up fix (2026-07-27 dream-cycle-practical-readiness-feedback):
+  // a nested object WITH declared `properties` (e.g. start_dream's `config`)
+  // used to ALWAYS coerce to an untyped z.record(...), discarding every
+  // nested field's type/enum/minimum — meaning tools/list (which re-derives
+  // its advertised schema from THIS Zod shape, not from ToolDef.inputSchema
+  // directly) never exposed a client-validatable nested shape even after
+  // tools.ts declared one. Confirmed live: /api/mcp/spec (reads inputSchema
+  // directly) showed the nested shape correctly; the real MCP tools/list
+  // response (Zod-derived) did not, until this fix.
+  it('a nested object WITH declared properties produces a real Zod object schema, not an untyped record', async () => {
+    const { toZodShape } = await import('../src/lib/mcp/server');
+    const shape = toZodShape({
+      type: 'object',
+      properties: {
+        config: {
+          type: 'object',
+          properties: {
+            budget_usd: { type: 'number', minimum: 0 },
+            preset: { type: 'string', enum: ['frugal', 'balanced', 'thorough'] },
+          },
+          required: ['budget_usd'],
+        },
+      },
+      required: ['config'],
+    }) as unknown as { config: { safeParse: (v: unknown) => { success: boolean } } };
+    // Valid shape parses.
+    expect(shape.config.safeParse({ budget_usd: 0.05, preset: 'balanced' }).success).toBe(true);
+    // A negative budget_usd (violates minimum: 0) must be rejected client-side,
+    // not silently accepted the way an untyped z.record(...) would.
+    expect(shape.config.safeParse({ budget_usd: -1 }).success).toBe(false);
+    // A wrong-typed budget_usd (string instead of number) must be rejected.
+    expect(shape.config.safeParse({ budget_usd: '0.05' }).success).toBe(false);
+    // A preset value outside the declared enum must be rejected.
+    expect(shape.config.safeParse({ budget_usd: 0.05, preset: 'thorogh' }).success).toBe(false);
+    // Missing the required budget_usd must be rejected.
+    expect(shape.config.safeParse({ preset: 'balanced' }).success).toBe(false);
+  });
+
+  it("start_dream's real registered tool schema round-trips through toZodShape with full nested validation", async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const { toZodShape } = await import('../src/lib/mcp/server');
+    const tool = getTool('start_dream')!;
+    const shape = toZodShape(tool.inputSchema) as unknown as { config: { safeParse: (v: unknown) => { success: boolean } } };
+    expect(shape.config.safeParse({ budget_usd: 0.05, preset: 'balanced' }).success).toBe(true);
+    expect(shape.config.safeParse({ budget_usd: 0.05, preset: 'thorogh' }).success).toBe(false);
   });
 });
 

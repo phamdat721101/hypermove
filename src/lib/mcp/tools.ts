@@ -711,14 +711,50 @@ const submitEpisodeLogTool: ToolDef = {
 
 const startDreamTool: ToolDef = {
   name: 'start_dream',
-  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately (Phase 1: manual trigger only; trigger_criteria is persisted but not yet enforced server-side).',
+  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default).',
   tier: 't1_read',
   unmetered: true,
   inputSchema: {
     type: 'object',
     properties: {
       agent_id: { type: 'string' },
-      config: { type: 'object', description: '{budget_usd (required), preset?: frugal|balanced|thorough, trigger_criteria?}' },
+      // PRD-B fix (2026-07-27 dream-cycle-practical-readiness-feedback): the
+      // real nested shape used to exist only as a free-text `description`
+      // string, so a typo'd preset or a wrong-typed budget_usd was caught
+      // only deep inside startDream()'s own runtime validation, not by any
+      // MCP client that validates/renders against the declared schema.
+      // Mirrors the pattern already used for submit_episode_log's `outcome`
+      // enum. Note: pipeline.ts still silently falls back to 'balanced' for
+      // an unrecognized preset string (DREAM_PRESETS[config.preset] ?
+      // config.preset : 'balanced') — that is a separate, deliberately
+      // unchanged runtime behavior; this schema declaration does not alter
+      // it, only makes the valid values discoverable up front.
+      config: {
+        type: 'object',
+        description: '{budget_usd (required), preset?: frugal|balanced|thorough, trigger_criteria?}',
+        properties: {
+          budget_usd: {
+            type: 'number',
+            minimum: 0,
+            description: 'Must not exceed the global per-cycle max (default $0.10, see DREAM_MAX_BUDGET_USD_PER_CYCLE).',
+          },
+          preset: {
+            type: 'string',
+            enum: ['frugal', 'balanced', 'thorough'],
+            default: 'balanced',
+          },
+          trigger_criteria: {
+            type: 'object',
+            description: 'Persisted but not yet enforced server-side (see docs/dream-cycle) unless the scheduler feature flag is enabled.',
+            properties: {
+              time_window_utc: { type: 'string' },
+              min_episodes: { type: 'number' },
+              min_raw_tokens: { type: 'number' },
+            },
+          },
+        },
+        required: ['budget_usd'],
+      },
     },
     required: ['agent_id', 'config'],
   },

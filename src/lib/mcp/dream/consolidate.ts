@@ -70,6 +70,17 @@ export function dedupeInsights(insights: FlatInsight[]): FlatInsight[] {
  * Consolidate deduplicated insights for ONE agent against its existing
  * memories. Merges into an existing row when cosine similarity > 0.85
  * (same type only — a rule never merges into a fact), else inserts new.
+ *
+ * PRD-C note (2026-07-27 dream-cycle-practical-readiness-feedback): on a
+ * fresh agent's very first start_dream call, `existingMemories` is empty, so
+ * this loop's first iteration has zero merge candidates — every insight in
+ * that first batch inserts as new until items start accumulating in the
+ * local `memories` array mid-loop. This is intentional and already correct
+ * (the local copy lets later insights in the SAME batch merge into ones
+ * inserted earlier in that same call — no self-merge, no missed merges) —
+ * flagged here only so a future reader doesn't mistake "first batch always
+ * inserts every insight as new" for a bug. There is no minimum batch size
+ * or warm-up period required before merging starts working.
  */
 export async function consolidateInsights(
   agentId: string,

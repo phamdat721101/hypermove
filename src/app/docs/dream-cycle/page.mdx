@@ -180,6 +180,39 @@ nonzero `candidates_extracted` with `candidates_promoted: 0` means extraction ge
 found something that didn't survive pruning (not a silent failure to process your data).
 `get_dream_config` → whatever `budget_usd`/`preset` you last set.
 
+Before filing a "this looks broken" report, check `GET /api/mcp/health` (the gateway
+process) and `GET https://hypermove.duckdns.org/llm/health` (the extraction service) —
+both return a `commit` field (added 2026-07-27) so you can confirm the fix you're
+expecting is actually deployed, rather than guessing from a maintainer's say-so.
+
+## What a fresh agent needs for its first promoted memory
+
+**One episode with at least one non-empty `steps` entry is enough.** There is no
+meaningful confidence/importance threshold standing between a fresh agent and its first
+promoted memory — pruning's defaults (`min_confidence: 0`, `min_importance: 0`) accept
+anything, and every new memory is inserted at `confidence: 0.5, importance: 0.5`, already
+well above that floor. A cluster of size 1 (a single unmatched episode) is a valid
+cluster; there's no minimum cluster size either.
+
+What actually determines whether you get a memory:
+
+- **`steps: []` (zero steps) is discarded before extraction ever sees it** — this is the
+  one real filter, and it shows up in `stage_summaries.preprocessing.discard_reasons`
+  as `empty_steps`. Give every episode at least one `steps` entry with a real `action`.
+- **Extraction has to find something "rule/preference/error_pattern/fact"-shaped.** A
+  single bland episode (e.g. `{"action": "did the thing"}` with no error, no context)
+  may legitimately produce zero insights for its cluster — that's a correct outcome for
+  low-signal input, not a bug. `stage_summaries.extraction.candidates_extracted` tells
+  you whether this happened; `clusters_failed`/`clusters_skipped` tell you whether it
+  was a transient extraction failure or a budget cutoff instead.
+- **`stage_summaries` is the tool for "why didn't anything promote," not guesswork.**
+  Read `pruning_summary.candidates_extracted` vs. `candidates_promoted` first, every
+  time, before assuming something is broken.
+
+If a query on a fresh agent still returns nothing after a run with genuinely descriptive
+episode content (real `action`s, real `error`s on failures), check `stage_summaries`
+before filing a report — it will show you exactly which stage the signal was lost at.
+
 ## What's on by default, and how to turn it off
 
 Dream Cycle ships **on**, same as the rest of the MCP Gateway's v3.0+ tools — no flag to
@@ -194,14 +227,45 @@ else on the gateway changes.
 
 ## Known limits (Phase 1 — honest, not hidden)
 
-- **You decide when to run a cycle.** There's no scheduler yet — `start_dream` always
-  runs immediately when called. If you set `trigger_criteria` in `config`, it's saved
-  but not enforced server-side.
+- **`start_dream` still always runs immediately when called** — the manual path is
+  unchanged and always available, on-demand, regardless of the scheduler below.
+- **Server-side `trigger_criteria` enforcement is opt-in, not default (2026-07-27).** By
+  default, nothing runs your cycles for you — set `trigger_criteria` in `config` and it's
+  saved either way, but only *enforced* automatically if the operator has enabled
+  `FEATURE_MCP_DREAM_SCHEDULER=true` (off by default; see "Server-side scheduling" below
+  for why). Without it, exactly as before: you decide when to call `start_dream`.
 - **No quality benchmark is published yet.** The pipeline is fully functional and
   budget-safe; the "how much better did my agent get" number isn't measured in this
   release.
 - **Best for motion/episode-style agents.** Dream Cycle assumes step-by-step episode
   logs with an outcome (success/failure/timeout) — it's not a general-purpose memory
   store for arbitrary unstructured text.
+
+## Server-side scheduling (opt-in, added 2026-07-27)
+
+If you set `trigger_criteria` in `start_dream`'s `config` (`time_window_utc`,
+`min_episodes`, `min_raw_tokens`), it's always persisted — but by default nothing reads
+it back automatically. An operator running this MCP gateway can opt into server-side
+enforcement:
+
+```bash
+FEATURE_MCP_DREAM_SCHEDULER=true
+```
+
+Once enabled, an in-process hourly tick checks every agent's `trigger_criteria` and
+fires `start_dream` on your behalf when your conditions are met — no external cron, no
+script you have to remember to run. This is deliberately **opt-in, not the default**
+(unlike every other Dream Cycle flag) because it's the first feature in this gateway
+that autonomously spends budget across every registered agent with no per-call human
+trigger. Two independent ceilings bound worst-case cost per tick regardless of how many
+agents are configured: `DREAM_SCHEDULER_MAX_BUDGET_USD_PER_TICK` (default $1.00 total
+across all agents per tick) and `DREAM_SCHEDULER_MAX_AGENTS_PER_TICK` (default 20) — an
+agent beyond either ceiling is deferred to the next tick, not silently dropped.
+
+`get_dream_stats`'s `triggered_by` field (`'manual'` or `'scheduler'`) tells you which
+path produced the last run. If you were already running your own external scheduler
+(e.g. a cron job calling `start_dream` directly), nothing about that changes — the two
+paths are independent and can coexist; enabling the server-side scheduler on top of an
+existing external one will just mean both fire (consider disabling one if you do).
 
 Full technical detail, data model, and pipeline internals: [`docs/prd/dream-cycle-v1.md`](https://github.com/phamdat721101/hypermove-app/blob/main/docs/prd/dream-cycle-v1.md) in the repo.

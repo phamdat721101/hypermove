@@ -307,6 +307,28 @@ CREATE INDEX IF NOT EXISTS idx_dream_cycle_runs_agent ON dream_cycle_runs(agent_
 -- migration convention (see header comment).
 ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS stage_summaries JSONB;
 
+-- Additive (2026-07-27, PRD-D — server-side scheduler). Lets get_dream_stats
+-- (and any future audit query) distinguish a run the operator explicitly
+-- asked for from one the scheduler fired autonomously on trigger_criteria's
+-- behalf. Manual start_dream calls default to 'manual' — byte-identical
+-- behavior for any caller who never touches the scheduler feature.
+ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'manual';
+
+-- Additive (2026-07-27, PRD-D). One row per scheduler tick — records which
+-- agents were considered, which fired, and which were skipped and why (due
+-- check false, global ceiling hit) so "why didn't my agent learn today" is
+-- answerable without re-deriving the due-check logic from server logs.
+CREATE TABLE IF NOT EXISTS dream_scheduler_ticks (
+  tick_id           UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  ticked_at         TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  agents_considered INT NOT NULL DEFAULT 0,
+  agents_fired      INT NOT NULL DEFAULT 0,
+  agents_deferred   INT NOT NULL DEFAULT 0,
+  total_budget_usd  NUMERIC(10,6) NOT NULL DEFAULT 0,
+  details           JSONB NOT NULL DEFAULT '[]' -- [{agent_id, decision: fired|skipped_not_due|skipped_ceiling, reason?}]
+);
+CREATE INDEX IF NOT EXISTS idx_dream_scheduler_ticks_time ON dream_scheduler_ticks(ticked_at DESC);
+
 -- Last-stored config per agent (start_dream / get_dream_config). Phase 1:
 -- trigger_criteria is persisted but NOT enforced server-side (no scheduler
 -- exists in this repo yet) — see dream/pipeline.ts and docs/prd/dream-cycle-v1.md

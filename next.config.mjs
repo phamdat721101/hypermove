@@ -9,6 +9,13 @@ const nextConfig = {
   // runtime in the Node route handler only when real settlement is configured.
   experimental: {
     serverComponentsExternalPackages: ['n-payment'],
+    // PRD-D (2026-07-27, Dream Cycle server-side scheduler): instrumentation.ts's
+    // register() is how the in-process hourly scheduler starts once at process
+    // boot. On Next.js 14 (this project — next@14.2.18) instrumentationHook is
+    // NOT on by default; it only became default-on in Next.js 15+. Without this
+    // flag, instrumentation.ts would silently never run, and the scheduler
+    // would never start even with FEATURE_MCP_DREAM_SCHEDULER=true set.
+    instrumentationHook: true,
   },
   // services/** holds independent standalone sub-projects (hypermove-fce-extension,
   // tee-extension/scripts, llm) — each with its own package.json/tsconfig/build

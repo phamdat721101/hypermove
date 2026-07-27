@@ -38,19 +38,63 @@ import { authenticate, type McpSession } from './auth';
  * to the `z.string()` default, which is a DIFFERENT and equally-wrong
  * failure mode than the object/record bug — so declaring the correct
  * inputSchema type alone is not sufficient without this case existing.
+ *
+ * PRD-B fix (2026-07-27 dream-cycle-practical-readiness-feedback): a nested
+ * `object` with declared `properties` (e.g. start_dream's `config`) used to
+ * ALWAYS coerce to `z.record(z.string(), z.any())`, discarding every nested
+ * field's type/enum/minimum — meaning tools/list (which re-derives its
+ * advertised schema from this Zod shape, not from the raw ToolDef.inputSchema
+ * directly) never actually exposed a client-validatable nested shape, even
+ * after tools.ts declared one. `toObjectSchema()` below recurses into
+ * `properties` (one level is enough for every schema in this codebase today
+ * — none nest deeper) and falls back to the pre-existing untyped-record
+ * behavior only when no `properties` are declared, so every other tool's
+ * plain `{type:'object'}` param keeps its exact prior behavior.
  */
+function toFieldSchema(def: { type?: string; description?: string; enum?: string[]; minimum?: number; default?: unknown; items?: { type?: string }; properties?: Record<string, JsonSchemaFieldDef>; required?: string[] }): ZodTypeAny {
+  let field: ZodTypeAny =
+    def.type === 'number' ? (def.minimum !== undefined ? z.number().min(def.minimum) : z.number())
+    : def.type === 'boolean' ? z.boolean()
+    : def.type === 'array' ? z.array(def.items?.type === 'object' ? z.record(z.string(), z.any()) : z.any())
+    : def.type === 'object' ? toObjectSchema(def)
+    : def.enum ? z.enum(def.enum as [string, ...string[]])
+    : z.string();
+  if (def.description) field = field.describe(def.description);
+  return field;
+}
+
+interface JsonSchemaFieldDef {
+  type?: string;
+  description?: string;
+  enum?: string[];
+  minimum?: number;
+  default?: unknown;
+  items?: { type?: string };
+  properties?: Record<string, JsonSchemaFieldDef>;
+  required?: string[];
+}
+
+/** Builds a Zod object schema from a nested `properties`/`required` pair —
+ *  falls back to the pre-existing untyped record when no properties are
+ *  declared, so a plain `{type:'object'}` param (no nested shape) behaves
+ *  exactly as it did before this fix. */
+function toObjectSchema(def: { properties?: Record<string, JsonSchemaFieldDef>; required?: string[] }): ZodTypeAny {
+  if (!def.properties) return z.record(z.string(), z.any());
+  const required = new Set(def.required ?? []);
+  const shape: Record<string, ZodTypeAny> = {};
+  for (const [key, fieldDef] of Object.entries(def.properties)) {
+    const field = toFieldSchema(fieldDef);
+    shape[key] = required.has(key) ? field : field.optional();
+  }
+  return z.object(shape);
+}
+
 export function toZodShape(inputSchema: Record<string, unknown>): ZodRawShape {
-  const props = (inputSchema?.properties as Record<string, { type?: string; description?: string; items?: { type?: string } }>) ?? {};
+  const props = (inputSchema?.properties as Record<string, JsonSchemaFieldDef>) ?? {};
   const required = new Set((inputSchema?.required as string[]) ?? []);
   const shape: Record<string, ZodTypeAny> = {};
   for (const [key, def] of Object.entries(props)) {
-    let field: ZodTypeAny =
-      def.type === 'number' ? z.number()
-      : def.type === 'boolean' ? z.boolean()
-      : def.type === 'array' ? z.array(def.items?.type === 'object' ? z.record(z.string(), z.any()) : z.any())
-      : def.type === 'object' ? z.record(z.string(), z.any())
-      : z.string();
-    if (def.description) field = field.describe(def.description);
+    const field = toFieldSchema(def);
     shape[key] = required.has(key) ? field : field.optional();
   }
   return shape as ZodRawShape;

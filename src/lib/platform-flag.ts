@@ -232,3 +232,23 @@ export function isMcpDeviceAuthEnabled(): boolean {
 export function isMcpDreamCycleEnabled(): boolean {
   return v3Flag('FEATURE_MCP_DREAM_CYCLE');
 }
+
+// ─── Dream Cycle server-side scheduler (2026-07-27, PRD-D) ─────────────────
+//
+// Enforces `trigger_criteria` server-side: an in-process hourly tick calls
+// startDream() directly for any agent whose config's trigger_criteria are
+// due, instead of relying on an external caller (cron, a script like
+// ~/biz-team/bd-team/scripts/dream-cycle-daily-loop.ts) to remember to do it.
+//
+// Deliberately DEFAULT OFF, breaking from every other v3.0+ sub-flag's
+// default-ON convention above. Rationale: this is the first feature in the
+// gateway that autonomously spends budget and writes data across every
+// registered agent with no per-call human trigger — every other tool/flag
+// in this file only acts when a caller explicitly invokes it. A global
+// cross-agent budget/count ceiling (see dream/scheduler.ts) bounds worst-case
+// cost once enabled, but the operator should opt in after understanding that
+// ceiling, not discover the scheduler already running via an unexpected
+// budget line item. Opt in with FEATURE_MCP_DREAM_SCHEDULER=true.
+export function isMcpDreamSchedulerEnabled(): boolean {
+  return isMcpDreamCycleEnabled() && process.env.FEATURE_MCP_DREAM_SCHEDULER === 'true';
+}

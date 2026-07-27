@@ -23,8 +23,14 @@ right now. Confirm it's up before anything else:
 
 ```bash
 curl https://hypermove.duckdns.org/llm/health
-# { "ok": true, "provider": "bedrock" }
+# { "ok": true, "provider": "bedrock", "commit": "f1202e41...", "deployed_at": "2026-07-27T09:02:00Z" }
 ```
+
+`commit`/`deployed_at` (added 2026-07-27) tell you which build is actually
+running — a build-time constant injected by `scripts/deploy-vps.sh`, not a
+runtime `git` lookup. Check this before filing "is X actually fixed yet" —
+compare `commit` against the commit SHA you expect to be live rather than
+trusting a maintainer's unverifiable "should be deployed now."
 
 The service itself still listens on plain HTTP internally (`localhost:3001`
 on the host); Caddy terminates TLS and reverse-proxies `/llm/*` → `:3001`
