@@ -670,7 +670,24 @@ const submitEpisodeLogTool: ToolDef = {
       episodes: {
         type: 'array',
         description: 'Array of episode_log objects: {episode_id, agent_id, timestamp, task_type?, steps[], outcome, tags?}',
-        items: { type: 'object' },
+        items: {
+          type: 'object',
+          properties: {
+            episode_id: { type: 'string' },
+            agent_id: { type: 'string' },
+            timestamp: { type: 'string', description: 'ISO 8601 timestamp' },
+            task_type: { type: 'string' },
+            steps: { type: 'array' },
+            // PRD 02 fix (2026-07-26 live-session feedback): the valid
+            // outcome values were previously only discoverable by
+            // submitting an invalid one and reading the rejection reason.
+            // Declaring the enum here surfaces it via tools/list's
+            // inputSchema before a caller ever needs to guess.
+            outcome: { type: 'string', enum: ['success', 'failure', 'timeout'], description: 'One of success | failure | timeout. There is no "partial" value — map ambiguous outcomes to the closest of these three.' },
+            tags: { type: 'array', items: { type: 'string' } },
+          },
+          required: ['episode_id', 'agent_id', 'timestamp', 'steps', 'outcome'],
+        },
       },
     },
     required: ['agent_id', 'episodes'],

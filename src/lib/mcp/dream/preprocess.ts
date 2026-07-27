@@ -27,6 +27,23 @@ export interface PreprocessedEpisode {
   raw_input_tokens_estimate: number;
 }
 
+/**
+ * Additive (2026-07-27 root-cause fix). Reports what preprocessEpisodes()
+ * discarded and why — previously this stage discarded episodes silently
+ * with zero client-visible signal, indistinguishable from "there was
+ * nothing to discard." Surfaced end-to-end via get_dream_stats (Task 6).
+ */
+export interface PreprocessSummary {
+  episodes_in: number;
+  episodes_discarded: number;
+  discard_reasons: Record<string, number>;
+}
+
+export interface PreprocessResult {
+  episodes: PreprocessedEpisode[];
+  summary: PreprocessSummary;
+}
+
 const DEFAULT_MAX_CHARS = 200;
 
 function truncate(text: string | undefined, maxChars: number): string | undefined {
@@ -49,18 +66,35 @@ function estimateTokens(steps: EpisodeStep[], taskType?: string): number {
 }
 
 /**
- * Preprocess a batch of episodes for ONE agent. Returns only the episodes
- * that survive the discard rule; discarded episodes are simply absent from
- * the result (no rejection reasons — this is a size-reduction pass, not
- * validation, which already happened at ingest time).
+ * Preprocess a batch of episodes for ONE agent. Returns the episodes that
+ * survive the discard rule, plus a summary of what was discarded and why —
+ * this is a size-reduction pass, not validation (which already happened at
+ * ingest time).
+ *
+ * Root-cause fix (2026-07-27): the discard rule used to drop ANY
+ * success-outcome episode with <=2 steps — this silently ate exactly the
+ * kind of short, high-signal episode ("ran X, it failed/succeeded
+ * instantly") that error_pattern/fact extraction most needs, with zero
+ * visibility into how much was being thrown away. Only genuinely empty
+ * episodes (0 steps — no signal at all) are discarded now; the discard
+ * count + reason breakdown is returned so a caller (get_dream_stats, via
+ * pipeline.ts) can see it instead of it disappearing silently.
  */
-export function preprocessEpisodes(episodes: EpisodeLog[], config: PreprocessConfig = {}): PreprocessedEpisode[] {
+export function preprocessEpisodes(episodes: EpisodeLog[], config: PreprocessConfig = {}): PreprocessResult {
   const maxChars = config.max_chars ?? DEFAULT_MAX_CHARS;
   const result: PreprocessedEpisode[] = [];
+  const discardReasons: Record<string, number> = {};
+  let discardedCount = 0;
 
   for (const ep of episodes) {
-    // Discard low-signal success episodes with <=2 steps.
-    if (ep.outcome === 'success' && ep.steps.length <= 2) continue;
+    // Discard only genuinely empty episodes — zero steps carries no signal
+    // at all for any outcome. (Previously also discarded success episodes
+    // with <=2 steps; loosened per the 2026-07-27 root-cause fix.)
+    if (ep.steps.length === 0) {
+      discardedCount++;
+      discardReasons.empty_steps = (discardReasons.empty_steps ?? 0) + 1;
+      continue;
+    }
 
     let steps: EpisodeStep[];
     if (ep.outcome === 'failure' || ep.outcome === 'timeout') {
@@ -82,5 +116,8 @@ export function preprocessEpisodes(episodes: EpisodeLog[], config: PreprocessCon
     });
   }
 
-  return result;
+  return {
+    episodes: result,
+    summary: { episodes_in: episodes.length, episodes_discarded: discardedCount, discard_reasons: discardReasons },
+  };
 }

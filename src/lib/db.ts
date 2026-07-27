@@ -298,6 +298,15 @@ CREATE TABLE IF NOT EXISTS dream_cycle_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_dream_cycle_runs_agent ON dream_cycle_runs(agent_id, started_at DESC);
 
+-- Additive (2026-07-27 root-cause fix): per-stage observability summaries
+-- (preprocessing discard counts, extraction failure counts, pruning
+-- candidate/promotion counts) so get_dream_stats can surface WHY a run
+-- produced few/no memories instead of only reporting memories_count: 0
+-- with zero explanation. ADD COLUMN IF NOT EXISTS is idempotent on any
+-- DB created before this fix, matching this file's own documented
+-- migration convention (see header comment).
+ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS stage_summaries JSONB;
+
 -- Last-stored config per agent (start_dream / get_dream_config). Phase 1:
 -- trigger_criteria is persisted but NOT enforced server-side (no scheduler
 -- exists in this repo yet) — see dream/pipeline.ts and docs/prd/dream-cycle-v1.md

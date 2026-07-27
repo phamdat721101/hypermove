@@ -286,6 +286,57 @@ describe('Bug fix · submit_episode_log handler rejects non-array episodes loudl
   });
 });
 
+// ─── PRD 02 (2026-07-26 live-session feedback) · outcome enum discoverability ─
+//
+// docs/.../02-prd-outcome-enum-validation-message.md: the 3 valid `outcome`
+// values (success|failure|timeout) were previously discoverable only by
+// submitting an invalid value ("partial") and reading the resulting
+// rejection reason. Declaring the enum in inputSchema.properties.episodes.
+// items.properties.outcome surfaces it via tools/list before any call.
+
+describe('PRD 02 · submit_episode_log declares the outcome enum in its schema', () => {
+  it("episodes.items.properties.outcome.enum is exactly ['success','failure','timeout']", async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const episodesSchema = (tool.inputSchema.properties as Record<string, { items?: { properties?: Record<string, { enum?: string[] }> } }>).episodes;
+    const outcomeSchema = episodesSchema.items?.properties?.outcome;
+    expect(outcomeSchema?.enum).toEqual(['success', 'failure', 'timeout']);
+  });
+
+  it('does not declare "partial" as a valid outcome (existing rejection behavior is unchanged)', async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const episodesSchema = (tool.inputSchema.properties as Record<string, { items?: { properties?: Record<string, { enum?: string[] }> } }>).episodes;
+    const outcomeSchema = episodesSchema.items?.properties?.outcome;
+    expect(outcomeSchema?.enum).not.toContain('partial');
+  });
+
+  it('existing valid submissions (success/failure/timeout) still ingest unchanged after the schema fix', async () => {
+    vi.doMock('../src/lib/db', () => ({
+      withClient: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn({ query: vi.fn(async () => ({ rows: [], rowCount: 1 })) })),
+    }));
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTool } = await import('../src/lib/mcp/tools');
+    const tool = getTool('submit_episode_log')!;
+    const ctx = { session: { userId: 'test-user', tier: 'free' as const, kind: 'user' as const } };
+    const episodes = ['success', 'failure', 'timeout'].map((outcome, i) => ({
+      episode_id: `ep-${i}`, agent_id: 'test-agent', timestamp: '2026-07-26T00:00:00Z', outcome,
+      steps: [{ action: 'a' }],
+    }));
+    const result = (await tool.handler({ agent_id: 'test-agent', episodes }, ctx)) as { ingested_count: number; rejected: unknown[] };
+    expect(result.ingested_count).toBe(3);
+    expect(result.rejected).toEqual([]);
+  });
+});
+
 describe('Bug fix · toZodShape (server.ts) has a genuine array case', () => {
   it('an array-typed schema property produces a Zod array, not a string or record', async () => {
     const { toZodShape } = await import('../src/lib/mcp/server');
@@ -433,13 +484,19 @@ describe('Task 5 · preprocessEpisodes', () => {
     ...overrides,
   });
 
-  it('discards success episodes with <=2 steps', async () => {
+  it('discards genuinely empty episodes (0 steps) but keeps short success episodes', async () => {
     const { preprocessEpisodes } = await import('../src/lib/mcp/dream/preprocess');
     const episodes = [
+      baseEpisode({ episode_id: 'empty', outcome: 'success', steps: [] }),
       baseEpisode({ episode_id: 'short-success', outcome: 'success', steps: [{ action: 'a' }, { action: 'b' }] }),
     ];
     const result = preprocessEpisodes(episodes);
-    expect(result).toEqual([]);
+    // Root-cause fix (2026-07-27): only genuinely empty (0-step) episodes are
+    // discarded now — a 1-2 step success episode ("ran X, it worked
+    // instantly") carries real signal and used to be silently dropped.
+    expect(result.episodes).toHaveLength(1);
+    expect(result.episodes[0].episode_id).toBe('short-success');
+    expect(result.summary).toEqual({ episodes_in: 2, episodes_discarded: 1, discard_reasons: { empty_steps: 1 } });
   });
 
   it('keeps success episodes with >2 steps', async () => {
@@ -448,8 +505,8 @@ describe('Task 5 · preprocessEpisodes', () => {
       baseEpisode({ episode_id: 'long-success', outcome: 'success', steps: [{ action: 'a' }, { action: 'b' }, { action: 'c' }] }),
     ];
     const result = preprocessEpisodes(episodes);
-    expect(result).toHaveLength(1);
-    expect(result[0].episode_id).toBe('long-success');
+    expect(result.episodes).toHaveLength(1);
+    expect(result.episodes[0].episode_id).toBe('long-success');
   });
 
   it('for failures, keeps only the final step + the one preceding it', async () => {
@@ -462,9 +519,9 @@ describe('Task 5 · preprocessEpisodes', () => {
       }),
     ];
     const result = preprocessEpisodes(episodes);
-    expect(result).toHaveLength(1);
-    expect(result[0].steps).toHaveLength(2);
-    expect(result[0].steps[1].error).toBe('gripper timeout');
+    expect(result.episodes).toHaveLength(1);
+    expect(result.episodes[0].steps).toHaveLength(2);
+    expect(result.episodes[0].steps[1].error).toBe('gripper timeout');
   });
 
   it('truncates text fields to the configured max_chars (default 200)', async () => {
@@ -474,7 +531,7 @@ describe('Task 5 · preprocessEpisodes', () => {
       baseEpisode({ episode_id: 'long-text', outcome: 'failure', steps: [{ action: 'a' }, { action: 'b', observation_summary: longText }] }),
     ];
     const result = preprocessEpisodes(episodes, { max_chars: 200 });
-    expect(result[0].steps[1].observation_summary?.length).toBe(200);
+    expect(result.episodes[0].steps[1].observation_summary?.length).toBe(200);
   });
 
   it('emits a raw_input_tokens_estimate reflecting the reduced size, smaller than the original', async () => {
@@ -489,7 +546,7 @@ describe('Task 5 · preprocessEpisodes', () => {
     ];
     const originalTokens = Math.ceil(JSON.stringify(episodes[0].steps).length / 4);
     const result = preprocessEpisodes(episodes, { max_chars: 200 });
-    expect(result[0].raw_input_tokens_estimate).toBeLessThan(originalTokens);
+    expect(result.episodes[0].raw_input_tokens_estimate).toBeLessThan(originalTokens);
   });
 });
 
@@ -640,14 +697,23 @@ describe('Task 7 · extractInsights — services/llm HTTP call + budget gating',
     expect(result.extracted.length + result.clusters_skipped.length).toBe(3);
   });
 
-  it('degrades to an empty-but-well-formed result (never crashes) when the extract endpoint errors', async () => {
+  it('degrades to a well-formed empty result (never crashes) when the extract endpoint errors, and records it as a failed extraction (not a genuine empty result)', async () => {
     const { extractInsights } = await import('../src/lib/mcp/dream/extract');
     const { CostTracker } = await import('../src/lib/mcp/dream/cost');
     vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })));
 
     const cost = new CostTracker(0.10);
     const result = await extractInsights([fixtureCluster('c-1')], cost, 100);
-    expect(result.extracted[0]).toEqual({ cluster_id: 'c-1', rules: [], preferences: [], error_patterns: [], facts: [] });
+    // Root-cause fix (2026-07-27): an errored/unreachable extraction call is
+    // no longer silently pushed into `extracted` (which used to make it
+    // indistinguishable from "the LLM genuinely found nothing," and used to
+    // still charge cost for it — the exact live-session bug). It now lands
+    // in clusters_failed_extraction, extracted stays empty, and zero cost is
+    // recorded for this cluster.
+    expect(result.extracted).toEqual([]);
+    expect(result.clusters_failed_extraction).toEqual(['c-1']);
+    expect(result.status).toBe('partial');
+    expect(cost.budgetUsedUsd).toBe(0);
   });
 });
 
@@ -941,16 +1007,26 @@ describe('Task 10 · end-to-end pipeline (submit_episode_log -> start_dream -> q
             return { rows: [], rowCount: 1 };
           }
           if (sql.startsWith('UPDATE dream_cycle_runs SET') && sql.includes('status = $1, ended_at')) {
-            const [status, , budgetUsedUsd, stagesCompleted, , , , runId] = params as [string, number, number, string[], number, number, string, string];
+            // Additive (2026-07-27 root-cause fix): stage_summaries ($8) was
+            // inserted before runId, shifting runId from $8 to $9 — update
+            // this mock's positional destructure to match, or run_id lookups
+            // silently break (the run is never found -> status/stats never
+            // update -> get_dream_stats keeps reporting the pre-run 'started'
+            // row forever, exactly the kind of silent failure this whole
+            // feedback package is about).
+            const [status, , budgetUsedUsd, stagesCompleted, , , , stageSummariesJson, runId] = params as [string, number, number, string[], number, number, string, string | null, string];
             const run = runs.find((r) => r.run_id === runId);
-            if (run) { run.status = status; run.budget_used_usd = budgetUsedUsd; run.stages_completed = stagesCompleted; }
+            if (run) {
+              run.status = status; run.budget_used_usd = budgetUsedUsd; run.stages_completed = stagesCompleted;
+              (run as { stage_summaries?: unknown }).stage_summaries = stageSummariesJson ? JSON.parse(stageSummariesJson) : null;
+            }
             return { rows: [], rowCount: 1 };
           }
           if (sql.includes('SELECT started_at::text, status, budget_used_usd, stages_completed')) {
             const agentId = params[0] as string;
             const agentRuns = runs.filter((r) => r.agent_id === agentId);
             const latest = agentRuns[agentRuns.length - 1];
-            return { rows: latest ? [{ started_at: '2026-07-26T00:00:00.000Z', status: latest.status, budget_used_usd: String(latest.budget_used_usd), stages_completed: latest.stages_completed, per_stage_tokens: {} }] : [] };
+            return { rows: latest ? [{ started_at: '2026-07-26T00:00:00.000Z', status: latest.status, budget_used_usd: String(latest.budget_used_usd), stages_completed: latest.stages_completed, per_stage_tokens: {}, stage_summaries: (latest as { stage_summaries?: unknown }).stage_summaries ?? null }] : [] };
           }
           if (sql.includes('SELECT memory_id, type, content, confidence, source_count, embedding FROM dream_consolidated_memories')) {
             const agentId = params[0] as string;
@@ -1009,6 +1085,13 @@ describe('Task 10 · end-to-end pipeline (submit_episode_log -> start_dream -> q
     const stats = await getDreamStats('robot-e2e');
     expect(['completed', 'partial']).toContain(stats.status);
     expect(stats.stages_completed).toEqual(['preprocessing', 'clustering', 'extraction', 'consolidation', 'pruning']);
+    // PRD 03 Track 1 acceptance criterion: stage_summaries must reflect
+    // reality (nonzero candidates_extracted here, since this run's fetch
+    // mock returns genuine insights) rather than re-hiding the gap under a
+    // new name.
+    expect(stats.stage_summaries?.extraction.candidates_extracted).toBeGreaterThan(0);
+    expect(stats.stage_summaries?.pruning_summary.candidates_extracted).toBe(stats.stage_summaries?.extraction.candidates_extracted);
+    expect(stats.stage_summaries?.pruning_summary.candidates_promoted).toBeGreaterThan(0);
 
     const result = await queryDream('robot-e2e', 'gripper timeout', 5, 0);
     expect(result.memories.length).toBeGreaterThan(0);

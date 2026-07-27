@@ -18,9 +18,9 @@
 import { randomUUID } from 'node:crypto';
 import { withClient } from '../../db';
 import { claimOrCheckOwnership } from './ownership';
-import { preprocessEpisodes } from './preprocess';
+import { preprocessEpisodes, type PreprocessSummary } from './preprocess';
 import { clusterEpisodes } from './cluster';
-import { extractInsights } from './extract';
+import { extractInsights, type ExtractionOutcome } from './extract';
 import { CostTracker } from './cost';
 import { flattenInsights, dedupeInsights, consolidateInsights, type ExistingMemory } from './consolidate';
 import { pruneMemories, type PrunableMemory } from './prune';
@@ -34,7 +34,18 @@ export interface DreamPreset {
 }
 
 export const DREAM_PRESETS: Record<string, DreamPreset> = {
-  frugal: { max_clusters: 30, max_extraction_output_tokens_per_cluster: 50, skip_conflict_resolution: true },
+  // frugal's output cap was 50 tokens until 2026-07-27 — empirically proven
+  // (live A/B probe against the deployed /dream/extract, see
+  // .nim/session-notes.md) to truncate the LLM response before it could
+  // close a valid 4-key JSON object, silently producing all-empty insights
+  // on every call. Raised to 120: the extraction system prompt caps each
+  // array item at "~20 words each," and even a few items across all 4
+  // categories comfortably fits within 120 tokens without truncating,
+  // while still being meaningfully cheaper than balanced's 100 input-token-
+  // equivalent budget is not comparable 1:1 (this is an OUTPUT cap) — 120
+  // was chosen as the smallest increase that closed the truncation gap in
+  // the live probe, not an arbitrary round number.
+  frugal: { max_clusters: 30, max_extraction_output_tokens_per_cluster: 120, skip_conflict_resolution: true },
   balanced: { max_clusters: 60, max_extraction_output_tokens_per_cluster: 100, skip_conflict_resolution: false },
   thorough: { max_clusters: 120, max_extraction_output_tokens_per_cluster: 150, skip_conflict_resolution: false },
 };
@@ -120,6 +131,73 @@ export async function startDream(
 }
 
 /**
+ * Additive (2026-07-27 root-cause fix — PRD 03 Track 1). Coarse,
+ * non-content-leaking observability surfaced by get_dream_stats so an
+ * integrator can tell "extraction found nothing" apart from "extraction
+ * found candidates that didn't survive pruning/consolidation" without a
+ * silent memories_count: 0 being the only signal. Deliberately omits raw
+ * extracted content and exact confidence scores (see PRD 03 non-goals).
+ */
+export interface StageSummaries {
+  preprocessing: {
+    episodes_in: number;
+    episodes_discarded: number;
+    discard_reasons: Record<string, number>;
+  };
+  extraction: {
+    clusters_total: number;
+    clusters_skipped: number;
+    clusters_failed: number;
+    candidates_extracted: number;
+  };
+  pruning_summary: {
+    candidates_extracted: number;
+    candidates_promoted: number;
+    candidates_removed: number;
+    top_rejection_reason: string | null;
+  };
+}
+
+/**
+ * Assemble the additive stage_summaries payload from each stage's own
+ * result. `candidates_extracted` (pruning_summary) reuses extraction's own
+ * deduped-insight count (post-flatten/dedupe, pre-consolidation) rather than
+ * re-deriving it, so the two `candidates_extracted` fields never disagree.
+ * `top_rejection_reason` is a coarse category, not a per-memory reason list
+ * (Phase 1's prune.ts doesn't track per-removal reasons yet) — reports
+ * 'below_threshold_or_duplicate' whenever memoriesRemoved > 0, matching the
+ * two removal paths prune.ts actually implements (threshold + near-dup
+ * merge + max-count eviction), and null when nothing was removed.
+ */
+function buildStageSummaries(
+  preprocessingSummary: PreprocessSummary,
+  extraction: ExtractionOutcome,
+  candidatesExtracted: number,
+  memoriesAdded: number,
+  memoriesRemoved: number,
+): StageSummaries {
+  return {
+    preprocessing: {
+      episodes_in: preprocessingSummary.episodes_in,
+      episodes_discarded: preprocessingSummary.episodes_discarded,
+      discard_reasons: preprocessingSummary.discard_reasons,
+    },
+    extraction: {
+      clusters_total: extraction.extracted.length + extraction.clusters_skipped.length + extraction.clusters_failed_extraction.length,
+      clusters_skipped: extraction.clusters_skipped.length,
+      clusters_failed: extraction.clusters_failed_extraction.length,
+      candidates_extracted: candidatesExtracted,
+    },
+    pruning_summary: {
+      candidates_extracted: candidatesExtracted,
+      candidates_promoted: memoriesAdded,
+      candidates_removed: memoriesRemoved,
+      top_rejection_reason: memoriesRemoved > 0 ? 'below_threshold_or_duplicate' : null,
+    },
+  };
+}
+
+/**
  * Runs preprocess -> cluster -> extract -> consolidate -> prune end-to-end
  * for one agent's unconsumed episodes, then marks the run row terminal.
  * Any stage error is caught and recorded rather than propagated — a failed
@@ -132,6 +210,10 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
   let memoriesAdded = 0;
   let memoriesRemoved = 0;
   let finalStatus: 'completed' | 'partial' | 'failed' = 'completed';
+  // Additive (2026-07-27 root-cause fix): assembled across the stages below,
+  // persisted to dream_cycle_runs.stage_summaries, and returned verbatim by
+  // getDreamStats() — see StageSummaries below for the exact shape.
+  let stageSummaries: StageSummaries | undefined;
 
   try {
     const unconsumed = await withClient(async (client) => {
@@ -151,7 +233,7 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
       task_type: r.task_type ?? undefined, steps: r.steps, outcome: r.outcome, tags: r.tags ?? undefined,
     }));
 
-    const preprocessed = preprocessEpisodes(episodes);
+    const { episodes: preprocessed, summary: preprocessingSummary } = preprocessEpisodes(episodes);
     stagesCompleted.push('preprocessing');
 
     const clusters = await clusterEpisodes(preprocessed, { maxClusters: preset.max_clusters });
@@ -180,6 +262,8 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     }
     stagesCompleted.push('pruning');
 
+    stageSummaries = buildStageSummaries(preprocessingSummary, extraction, flat.length, memoriesAdded, memoriesRemoved);
+
     // Mark all previously-unconsumed episodes as consumed by this run.
     await withClient(async (client) => {
       await client.query(`UPDATE dream_episode_logs SET consumed_by_run = $1 WHERE agent_id = $2 AND consumed_by_run IS NULL`, [runId, agentId]);
@@ -205,9 +289,10 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     await client.query(
       `UPDATE dream_cycle_runs SET
          status = $1, ended_at = NOW(), duration_ms = $2, budget_used_usd = $3,
-         stages_completed = $4, memories_added = $5, memories_removed = $6, per_stage_tokens = $7
-       WHERE run_id = $8`,
-      [finalStatus, Date.now() - startedAt, cost.budgetUsedUsd, stagesCompleted, memoriesAdded, memoriesRemoved, JSON.stringify(cost.perStageTokenCounts), runId],
+         stages_completed = $4, memories_added = $5, memories_removed = $6, per_stage_tokens = $7,
+         stage_summaries = $8
+       WHERE run_id = $9`,
+      [finalStatus, Date.now() - startedAt, cost.budgetUsedUsd, stagesCompleted, memoriesAdded, memoriesRemoved, JSON.stringify(cost.perStageTokenCounts), stageSummaries ? JSON.stringify(stageSummaries) : null, runId],
     );
     return true;
   });
@@ -288,14 +373,21 @@ export interface DreamStatsResult {
   stages_completed?: string[];
   memories_count?: number;
   per_stage_tokens?: Record<string, number>;
+  /**
+   * Additive (2026-07-27 root-cause fix — PRD 03 Track 1). Absent for runs
+   * predating this fix (column is nullable) or when no run has completed
+   * yet. See StageSummaries above for the exact shape.
+   */
+  stage_summaries?: StageSummaries;
 }
 
 export async function getDreamStats(agentId: string): Promise<DreamStatsResult> {
   const row = await withClient(async (client) => {
     const { rows } = await client.query<{
-      started_at: string; status: string; budget_used_usd: string; stages_completed: string[]; per_stage_tokens: Record<string, number> | null;
+      started_at: string; status: string; budget_used_usd: string; stages_completed: string[];
+      per_stage_tokens: Record<string, number> | null; stage_summaries: StageSummaries | null;
     }>(
-      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens
+      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries
        FROM dream_cycle_runs WHERE agent_id = $1 ORDER BY started_at DESC LIMIT 1`,
       [agentId],
     );
@@ -316,5 +408,6 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     stages_completed: row.stages_completed,
     memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0,
     per_stage_tokens: row.per_stage_tokens ?? {},
+    ...(row.stage_summaries ? { stage_summaries: row.stage_summaries } : {}),
   };
 }

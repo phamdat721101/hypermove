@@ -91,6 +91,12 @@ curl -s https://hypermove.xyz/api/mcp \
 
 Returns `{ "ingested_count": 1, "rejected": [] }`. Call this as many times a day as you
 want — resubmitting the same `episode_id` is a safe no-op, never a duplicate. No LLM call
+
+`outcome` accepts exactly three values: `success`, `failure`, or `timeout` — there is no
+`"partial"` state. For a task that partly succeeded, pick whichever of the three best
+matches the primary goal (usually `success` if the main objective was met despite a
+caveat). This is also declared as an `enum` on the tool's `inputSchema`, so MCP clients
+that render tool schemas surface the valid values without a round-trip.
 happens here; this step is free and near-instant.
 
 ## 2 — Trigger a Dream Cycle
@@ -165,7 +171,14 @@ pre-filled; there's nothing extra to call.
 ```
 
 `get_dream_stats` → `last_run_at`, `status`, `budget_used_usd`, `stages_completed`,
-`memories_count`. `get_dream_config` → whatever `budget_usd`/`preset` you last set.
+`memories_count`, and (additive) `stage_summaries` — a coarse, non-content-leaking
+breakdown of what each stage did: how many episodes preprocessing discarded and why,
+how many clusters extraction attempted/skipped/failed, and how many of extraction's
+candidate insights pruning actually promoted vs. discarded. If `memories_count` stays
+`0` after a run with real episode data, check `stage_summaries.pruning_summary` — a
+nonzero `candidates_extracted` with `candidates_promoted: 0` means extraction genuinely
+found something that didn't survive pruning (not a silent failure to process your data).
+`get_dream_config` → whatever `budget_usd`/`preset` you last set.
 
 ## What's on by default, and how to turn it off
 

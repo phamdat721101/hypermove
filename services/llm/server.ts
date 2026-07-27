@@ -368,6 +368,43 @@ interface DreamExtractResponse {
   error_patterns: string[];
   facts: string[];
   usage?: { input_tokens: number; output_tokens: number };
+  /**
+   * Additive (2026-07-27 root-cause fix). Present ONLY when both the first
+   * attempt and the retry (see extractDreamInsights below) failed to yield a
+   * parseable 4-key JSON object — absent on every genuine success, so this
+   * field being present/absent is exactly what extract.ts's cost-decoupling
+   * fix (dream/extract.ts) checks to decide whether to charge cost for this
+   * cluster. Never removes/renames the existing 4 array fields — always
+   * additive, per this fix's backward-compatibility requirement.
+   */
+  extraction_failure_reason?: 'truncated_no_match' | 'truncated_partial_json' | 'retry_exhausted';
+}
+
+/**
+ * Attempt to parse one raw LLM text response into the 4-key insight shape.
+ * Returns null (not the empty stub) when parsing fails, WITH the reason —
+ * extractDreamInsights uses this to decide whether to retry, and (on final
+ * failure) which extraction_failure_reason to report.
+ */
+function tryParseDreamExtractResponse(
+  raw: string,
+): { ok: true; value: Omit<DreamExtractResponse, 'extraction_failure_reason'> } | { ok: false; reason: 'truncated_no_match' | 'truncated_partial_json' } {
+  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  if (!jsonMatch) return { ok: false, reason: 'truncated_no_match' };
+  try {
+    const parsed = JSON.parse(jsonMatch[0]) as Partial<DreamExtractResponse>;
+    return {
+      ok: true,
+      value: {
+        rules: Array.isArray(parsed.rules) ? parsed.rules.map(String) : [],
+        preferences: Array.isArray(parsed.preferences) ? parsed.preferences.map(String) : [],
+        error_patterns: Array.isArray(parsed.error_patterns) ? parsed.error_patterns.map(String) : [],
+        facts: Array.isArray(parsed.facts) ? parsed.facts.map(String) : [],
+      },
+    };
+  } catch {
+    return { ok: false, reason: 'truncated_partial_json' };
+  }
 }
 
 /**
@@ -376,23 +413,35 @@ interface DreamExtractResponse {
  * response defensively — a malformed/non-JSON response degrades to all-empty
  * arrays rather than throwing, matching extract.ts's own fail-safe contract
  * on the caller side (never fabricate, never crash the pipeline).
+ *
+ * Root-cause fix (2026-07-27): a truncated LLM response (very likely under
+ * a small max_output_tokens budget — empirically reproduced live against
+ * the frugal preset's 50-token cap, see .nim/session-notes.md) used to
+ * silently degrade straight to the all-empty stub on the FIRST attempt,
+ * indistinguishable from "the LLM genuinely found nothing." This now
+ * retries ONCE with a stricter "return ONLY valid JSON" nudge before
+ * falling back to empty — and the final empty result carries an additive
+ * extraction_failure_reason field so callers (extract.ts) can tell a real
+ * failure apart from a genuine empty result, and skip charging cost for it.
  */
 async function extractDreamInsights(summary: string, maxOutputTokens: number): Promise<DreamExtractResponse> {
   const raw = await callLlmWithPrompt(DREAM_EXTRACT_SYSTEM_PROMPT, summary, maxOutputTokens);
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
-  const empty: DreamExtractResponse = { rules: [], preferences: [], error_patterns: [], facts: [] };
-  if (!jsonMatch) return empty;
-  try {
-    const parsed = JSON.parse(jsonMatch[0]) as Partial<DreamExtractResponse>;
-    return {
-      rules: Array.isArray(parsed.rules) ? parsed.rules.map(String) : [],
-      preferences: Array.isArray(parsed.preferences) ? parsed.preferences.map(String) : [],
-      error_patterns: Array.isArray(parsed.error_patterns) ? parsed.error_patterns.map(String) : [],
-      facts: Array.isArray(parsed.facts) ? parsed.facts.map(String) : [],
-    };
-  } catch {
-    return empty;
-  }
+  const first = tryParseDreamExtractResponse(raw);
+  if (first.ok) return first.value;
+
+  // Retry once with a stricter, shorter nudge appended to the same system
+  // prompt — asks for compact JSON only, no prose/fences, to reduce the
+  // chance the retry ALSO truncates before closing its braces.
+  const strictPrompt = `${DREAM_EXTRACT_SYSTEM_PROMPT}\n\nIMPORTANT: Return ONLY the raw JSON object, as compact as possible, no markdown fences, no commentary, no explanation before or after. If you are unsure, return fewer/shorter items so the JSON always closes completely within the token budget.`;
+  const retryRaw = await callLlmWithPrompt(strictPrompt, summary, maxOutputTokens);
+  const retry = tryParseDreamExtractResponse(retryRaw);
+  if (retry.ok) return retry.value;
+
+  // Both attempts failed to yield parseable JSON — report the retry's own
+  // failure reason (more informative than the first attempt's, since it
+  // reflects the stricter-prompt outcome), never crash, never fabricate.
+  const retryReason: 'truncated_no_match' | 'truncated_partial_json' = retry.reason;
+  return { rules: [], preferences: [], error_patterns: [], facts: [], extraction_failure_reason: retryReason === 'truncated_no_match' ? 'truncated_no_match' : 'retry_exhausted' };
 }
 
 const server = createServer(async (req, res) => {
@@ -509,8 +558,9 @@ const server = createServer(async (req, res) => {
   // POST /dream/extract — Dream Cycle insight extraction (see
   // src/lib/mcp/dream/extract.ts for the caller-side contract this fulfills:
   // request { summary, max_output_tokens } -> response { rules, preferences,
-  // error_patterns, facts, usage? }). No crawl, no manifest — a single LLM
-  // call scoped to one cluster summary.
+  // error_patterns, facts, usage?, extraction_failure_reason? }). No crawl,
+  // no manifest — a single LLM call scoped to one cluster summary, with one
+  // internal retry on truncated/malformed output (see extractDreamInsights).
   if (req.method === 'POST' && url === '/dream/extract') {
     const chunks: Buffer[] = [];
     for await (const c of req) chunks.push(c as Buffer);
