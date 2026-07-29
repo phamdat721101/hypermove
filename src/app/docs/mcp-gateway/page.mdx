@@ -26,19 +26,29 @@ serves the legacy 2-tool surface unchanged (60-second rollback).
 
 ## Agent-skills install & run locally — MCP is optional
 
-HyperMove agent-skills are **self-contained**: fetch a skill's SKILL.md from
-`GET /api/skills/<name>?format=md`, save it into your host's skills directory, and it
-autoloads and runs **in your own workspace by following its procedure — no MCP connection
-required**. The gateway above is only for the *external-protocol* layer: connect it when a
-skill needs live cross-chain data (`data.call`) or a payment (`payments.settle`). Browse the
+HyperMove agent-skills are **self-contained**:
+
+1. Fetch a skill's SKILL.md from `GET /api/skills/<name>?format=md`.
+2. Save it into your host's skills directory.
+3. It autoloads and runs **in your own workspace by following its procedure — no MCP
+   connection required**.
+
+The gateway above is only for the *external-protocol* layer: connect it when a skill
+needs live cross-chain data (`data.call`) or a payment (`payments.settle`). Browse the
 catalog at `GET /api/skills`.
 
 ## 1 — Connect your wallet (required by default)
 
-`/api/mcp` requires a key — there is no anonymous free tier. **[hypermove.xyz/mcp-connect](/mcp-connect)**
-connects your wallet, has you sign one free message (no gas), and issues a bearer token from that
-signature. Email-only sign-in via WorkOS is also available from the same page for users without a wallet.
-No wallet and no browser at all? See [Get a key — no wallet needed](/docs/agent-auth) for a terminal-only flow.
+`/api/mcp` requires a key — there is no anonymous free tier.
+
+**[hypermove.xyz/mcp-connect](/mcp-connect)** is the fastest path:
+- Connects your wallet.
+- Has you sign one free message (no gas).
+- Issues a bearer token from that signature.
+
+Email-only sign-in via WorkOS is also available from the same page for users without a
+wallet. No wallet and no browser at all? See
+[Get a key — no wallet needed](/docs/agent-auth) for a terminal-only flow.
 
 ```bash
 # Wallet flow happens in-browser at /mcp-connect. Scripted equivalent (WorkOS):

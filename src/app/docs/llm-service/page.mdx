@@ -26,18 +26,20 @@ curl https://hypermove.duckdns.org/llm/health
 # { "ok": true, "provider": "bedrock", "commit": "f1202e41...", "deployed_at": "2026-07-27T09:02:00Z" }
 ```
 
-`commit`/`deployed_at` (added 2026-07-27) tell you which build is actually
-running — a build-time constant injected by `scripts/deploy-vps.sh`, not a
-runtime `git` lookup. Check this before filing "is X actually fixed yet" —
-compare `commit` against the commit SHA you expect to be live rather than
-trusting a maintainer's unverifiable "should be deployed now."
+`commit`/`deployed_at` (added 2026-07-27) tell you which build is actually running:
 
-The service itself still listens on plain HTTP internally (`localhost:3001`
-on the host); Caddy terminates TLS and reverse-proxies `/llm/*` → `:3001`
-(stripping the `/llm` prefix), so every route documented below is reachable
-as `https://hypermove.duckdns.org/llm/<route>`. The bare `http://<ip>:3001`
-address is no longer the documented public entry point — prefer the HTTPS
-domain above for anything crossing the public internet.
+- It's a build-time constant injected by `scripts/deploy-vps.sh`, not a runtime `git` lookup.
+- Check this before filing "is X actually fixed yet" — compare `commit` against the
+  commit SHA you expect to be live rather than trusting a maintainer's unverifiable
+  "should be deployed now."
+
+The service itself still listens on plain HTTP internally (`localhost:3001` on the
+host):
+
+- Caddy terminates TLS and reverse-proxies `/llm/*` → `:3001` (stripping the `/llm` prefix).
+- Every route documented below is reachable as `https://hypermove.duckdns.org/llm/<route>`.
+- The bare `http://<ip>:3001` address is no longer the documented public entry point —
+  prefer the HTTPS domain above for anything crossing the public internet.
 
 If you're building an agent that uses **Dream Cycle** (`submit_episode_log` /
 `start_dream` / `query_dream` over MCP), you don't need this address at
@@ -98,12 +100,13 @@ OPENAI_MODEL=gpt-4o                        # optional
 DATABASE_URL=postgres://...
 ```
 
-Switching provider — or switching model within Bedrock — is one env var;
-every route (`/scan`, `/dream/extract`) picks it up automatically, no code
-change. **Dream Cycle users never need any of the above.** This key lives
-entirely on this service; the 5 Dream Cycle MCP tools (`submit_episode_log`,
-`start_dream`, `get_dream_config`, `query_dream`, `get_dream_stats`) never
-accept or require an API key parameter — see [Dream Cycle](/docs/dream-cycle).
+Switching provider — or switching model within Bedrock — is one env var; every route
+(`/scan`, `/dream/extract`) picks it up automatically, no code change.
+
+**Dream Cycle users never need any of the above.** This key lives entirely on this
+service; the 5 Dream Cycle MCP tools (`submit_episode_log`, `start_dream`,
+`get_dream_config`, `query_dream`, `get_dream_stats`) never accept or require an API
+key parameter — see [Dream Cycle](/docs/dream-cycle).
 
 ## Routes
 
@@ -158,18 +161,23 @@ Returns:
 ```
 
 This exists so `src/lib/mcp/dream/extract.ts` has a real model to call —
-`start_dream` invokes it once per cluster automatically. On any error or
-malformed model output it degrades to `{rules:[],preferences:[],error_patterns:[],facts:[]}`
-rather than crashing the pipeline, so a Dream Cycle run always reaches a
-terminal status even if this service is briefly unreachable.
+`start_dream` invokes it once per cluster automatically.
+
+On any error or malformed model output it degrades to
+`{rules:[],preferences:[],error_patterns:[],facts:[]}` rather than crashing the
+pipeline, so a Dream Cycle run always reaches a terminal status even if this service
+is briefly unreachable.
 
 ## Point Dream Cycle at your own instance (advanced, optional)
 
-By default, the main app's `DREAM_EXTRACT_URL` (falls back to `LLM_SERVICE_URL`,
-then `http://localhost:3001/dream/extract`) points at HyperMove's own deployed
-instance over the internal loopback (same host, server-to-server — no public
-network hop, so plain HTTP is correct there) — nothing to configure. If you're
-self-hosting and want a different model or provider for extraction
+By default, the main app's `DREAM_EXTRACT_URL` points at HyperMove's own deployed
+instance — nothing to configure:
+
+- It falls back to `LLM_SERVICE_URL`, then `http://localhost:3001/dream/extract`.
+- The connection is over the internal loopback (same host, server-to-server — no
+  public network hop, so plain HTTP is correct there).
+
+If you're self-hosting and want a different model or provider for extraction
 specifically:
 
 ```bash
@@ -216,11 +224,15 @@ downtime (no restart needed) once Caddy is already running against that file.
 
 ## A routing gotcha if you add a new route here
 
-`server.ts` uses a hand-rolled router (plain `if` chains on `req.method` +
-`url`, no framework) with one greedy catch-all near the bottom: any
-**exactly-two-segment** path (`/<wallet>/<slug>`) is claimed by the hosted-MCP
-handler before anything defined after it in the file gets a chance to run.
-If you add a new route whose path also happens to have exactly two segments
-(like `/dream/extract` did), place it **above** that catch-all in the file —
-same as `/quota/consume` and `/dream/extract` are today — or it will silently
-return `204` for every request instead of running your handler.
+`server.ts` uses a hand-rolled router (plain `if` chains on `req.method` + `url`, no
+framework) with one greedy catch-all near the bottom: any **exactly-two-segment** path
+(`/<wallet>/<slug>`) is claimed by the hosted-MCP handler before anything defined after
+it in the file gets a chance to run.
+
+If you add a new route whose path also happens to have exactly two segments (like
+`/dream/extract` did):
+
+1. Place it **above** that catch-all in the file — same as `/quota/consume` and
+   `/dream/extract` are today.
+2. Otherwise it will silently return `204` for every request instead of running your
+   handler.

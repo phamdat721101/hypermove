@@ -33,11 +33,15 @@
     "porto": "^0.2.37",
     "react": "18.3.1",
     "react-dom": "18.3.1",
+    "rehype-pretty-code": "0.14.5",
+    "remark-gfm": "4.0.1",
+    "shiki": "4.3.1",
     "viem": "^2.53.1",
     "wagmi": "^3.6.21",
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@mdx-js/mdx": "3.1.1",
     "@testing-library/jest-dom": "6.4.6",
     "@testing-library/react": "16.0.0",
     "@types/mdx": "2.0.13",
@@ -56,6 +60,9 @@
   "_dep_justifications": {
     "pg": "Node.js Postgres driver. Drives Supabase registry storage via Server Action in src/app/portal/actions.ts. Single peer; ~50KB; mature.",
     "@next/mdx": "Required for /docs/* MDX content. Official Next.js plugin.",
+    "remark-gfm": "Enables GitHub-Flavored-Markdown tables/strikethrough/task-lists in @next/mdx's remark pipeline (next.config.mjs) — without it, pipe-table syntax in /docs/*.mdx compiles as literal paragraph text, not a <table>. Used at Next.js build time (next.config.mjs), so it must be a real dependency, not devDependency.",
+    "rehype-pretty-code": "Adds Shiki-based syntax highlighting to fenced code blocks across /docs/*.mdx via @next/mdx's rehype pipeline (next.config.mjs). Build-time dependency, same reasoning as remark-gfm.",
+    "shiki": "Peer of rehype-pretty-code — the actual highlighting engine (TextMate grammars, VS Code themes). Build-time dependency.",
     "@testing-library/react": "Required for component tests under /tests/components. Industry standard."
   },
   "engines": {

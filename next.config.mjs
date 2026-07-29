@@ -1,4 +1,6 @@
 import createMDX from '@next/mdx';
+import remarkGfm from 'remark-gfm';
+import rehypePrettyCode from 'rehype-pretty-code';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
@@ -30,5 +32,17 @@ const nextConfig = {
   },
 };
 
-const withMDX = createMDX({});
+// remarkGfm enables GitHub-Flavored-Markdown tables/strikethrough/task-lists —
+// without it, @next/mdx's default CommonMark parser has no table syntax at
+// all, so `| a | b |` pipe rows compile as literal paragraph text instead of
+// a <table> (see tests/mdx-docs-rendering.test.ts for a reproduction).
+// rehypePrettyCode adds Shiki-based syntax highlighting to fenced code
+// blocks; theme is a light theme to match the docs' light `prose` layout
+// (see src/app/docs/layout.tsx) rather than a stock dark theme.
+const withMDX = createMDX({
+  options: {
+    remarkPlugins: [remarkGfm],
+    rehypePlugins: [[rehypePrettyCode, { theme: 'github-light', keepBackground: false }]],
+  },
+});
 export default withMDX(nextConfig);

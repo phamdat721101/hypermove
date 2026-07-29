@@ -119,3 +119,4 @@ $RECYCLE.BIN/
 node_repl_history
 .tern-port
 .fleet/
+.gstack/
