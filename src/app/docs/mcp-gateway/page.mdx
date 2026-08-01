@@ -1,34 +1,215 @@
-export const metadata = { title: 'MCP Gateway — agent connectivity for cross-chain web3', description: 'One MCP endpoint: search + daily news + tiered multi-chain payment.' };
+export const metadata = { title: 'MCP Gateway — agent connectivity for cross-chain web3', description: 'One MCP endpoint: 40 tools across cross-chain data, payments, Dream Cycle memory, and Gateway Guardians.' };
 
-# MCP Gateway v1.0
+# MCP Gateway v4.0 + v2.1 Guardians
 
 > One endpoint — `https://hypermove.xyz/api/mcp` — makes cross-chain web3 agent-callable.
-> Search a unified catalog, pull daily news + AI insight, and pay per query on the
-> network of your choice. WorkOS sign-in, 5 free queries / 24h, then metered
-> `$0.001–$0.10` via x402/MPP. Modeled on Stellar Raven's proven pattern.
+> **40 tools** today (verified live via `/api/mcp/health`): search + catalog discovery,
+> daily news + AI insight, tiered multi-chain payment, XRPL/Flare/GOAT builder briefs and
+> deep reads, confidential compute, and Dream Cycle — an offline memory-consolidation
+> pipeline agents use to learn from their own episode logs. WorkOS or wallet sign-in, 5
+> free queries / 24h, then metered `$0.001–$0.10` via x402/MPP. As of 2026-08-01, every
+> tool call also passes through **Gateway Guardians** (deterministic cost caps + circuit
+> breaker + prompt-injection defense) — enforcement lives in code, not in a prompt.
 
 The whole gateway lives behind `FEATURE_HYPERMOVE_MCP_GATEWAY_V1`. When off, `/api/mcp`
-serves the legacy 2-tool surface unchanged (60-second rollback).
+serves the legacy 2-tool surface unchanged (60-second rollback). Every capability below
+ships behind its own additional sub-flag, documented inline — flip any one off without
+touching the others.
 
-## Tools (v1.0)
+## Tools (40, grouped by purpose)
+
+### Discovery — always on
 
 | Tool | Tier | Purpose |
 |---|---|---|
 | `search` | T1 `$0.001` | Hybrid lexical + vector search over the cross-chain catalog |
 | `codemode.vector.search` | T3 `$0.10` | Pure semantic search |
-| `codemode.spec` / `catalog` / `describe` | T1 | Discovery: super-spec, full manifest, detail-on-demand |
+| `codemode.spec` | T1 | OpenAPI-3.1-style super spec for every enabled tool |
+| `codemode.catalog` | T1 | Full catalog manifest, flat — grep-friendly for agents |
+| `codemode.describe` | T1 | Detail-on-demand for one catalog entry id |
 | `codemode.payments.networks` | T1 | List supported networks × rails × assets before paying |
+| `xrpl.toolkit.list` | T1 | Canonical SDK/CLI/facilitator directory for XRPL agentic payments |
+
+### Payments (n-payment, x402/MPP)
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `payments.settle` | unmetered | Settle via x402/MPP proof to unlock a 100-query paid session |
+| `payments.status` | unmetered | Check the active paid session's remaining quota |
+
+### Live cross-chain reads
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `data.call` | T2 `$0.01` | Canonical read (EVM + Stellar + XRPL) via the best provider, auto-fallback |
+
+### News + agentic synthesis — `FEATURE_MCP_NEWS_V1` / `FEATURE_MCP_AGENTIC_V1`
+
+| Tool | Tier | Purpose |
+|---|---|---|
 | `news.search` | T1 | Search daily web3 news across tracked projects |
 | `codemode.news.digest` | T2 `$0.01` | Per-project daily rollup |
 | `codemode.news.insight` | T3 `$0.10` | AI-synthesized insight for one project |
+| `insight.roadmap` | T3 | Product-upgrade roadmap synthesized from today's news + catalog |
+| `ideas.generate` | T3 | Grounded product/feature ideas tied to a real gateway capability |
+| `skillify` | T2 | Codify a described task into a reusable skill spec |
 
-> `execute` (sandboxed code) and real-time `stream.subscribe` are deferred to v1.1.
+### Agent-skills discovery — `FEATURE_HYPERMOVE_TOOLS`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `skills.list` | T1 | Browse the self-contained agent-skill catalog |
+| `skills.install` | T1 | Get the install instruction + full SKILL.md for one skill |
+| `skills.install_prompt` | T1 | Copy-paste install prompt only, optionally host-tightened |
+
+Skills **install and run in your own workspace** — the gateway is not their execution
+host. See "Agent-skills" below.
+
+### Builder briefs — `FEATURE_MCP_BUILDER_BRIEF`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `flare.builder.brief` | T3 | FTSO, FAssets, FDC, FCC capabilities + corpus + news |
+| `xrpl.builder.brief` | T3 | MPT, vault, lending, amendments + corpus + news |
+| `goat.builder.brief` | T3 | BTC-native settlement, lending, MPP + corpus + news |
+
+### XRPL deepening — `FEATURE_MCP_XRPL_V3`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `xrpl.settlement.quote` | T2 | RLUSD vs native-XRP cost/finality comparison |
+| `xrpl.x402.status` | T1 | T54 x402 facilitator health + trustline status |
+| `xrpl.vault.info` | T1 | XLS-65 vault state — gated on the amendment being live |
+| `xrpl.lending.status` | T1 | XLS-66 lending state — gated on the amendment being live |
+| `xrpl.yield.compare` | T2 | Compare XRP/RLUSD yield venues, source-labeled |
+| `xrpl.hub.trending` | T3 | XRPL AI Hub agentic-payments index + amendment vote status |
+
+`xrpl.vault.info` / `xrpl.lending.status` never return a raw RPC error while XLS-65/66 is
+still mid-vote — they return a structured `{ok:false, reason:'amendment_not_active'}`
+instead, so an agent can branch on it deterministically.
+
+### Flare — `FEATURE_MCP_FLARE_V1`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `flare.fassets.bridgeStatus` | T1 | FXRP bridge lifecycle + adoption stats |
+
+### Confidential compute — `FEATURE_MCP_CONFIDENTIAL_V1`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `confidential.attest` | T2 | Verify a TEE remote-attestation quote (real check, never mocked) |
+| `flare.confidential.swap` | `confidential` tier | Confidential swap via FCC/PMW — honest `fcc_not_live` refusal until FCC ships |
+| `flare.confidential.status` | T1 | Pre-check whether FCC is live on a given network |
+
+### Flare Compute Extension + Token Profiles — `FEATURE_MCP_INSTRUCT_V1` / `FEATURE_MCP_TOKEN_PROFILE_V1`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `flare.instruct.dispatch` | T2 | Submit an instruction to the Flare Compute Extension |
+| `flare.token.save` | T2 | Compute + persist a structured Token Profile (FLR/WFLR/FXRP/FBTC/FDOGE) |
+| `flare.token.profile` | T1 | Retrieve a saved (or freshly computed) Token Profile |
+
+`flare.token.save` is verified end-to-end (see Gateway Guardians below) — its own
+handler output is checked before it ships.
+
+### Dream Cycle — offline memory consolidation — `FEATURE_MCP_DREAM_CYCLE`
+
+| Tool | Tier | Purpose |
+|---|---|---|
+| `submit_episode_log` | unmetered | Batch-upload episode logs to cold storage (zero LLM calls) |
+| `start_dream` | unmetered | Run the pipeline (preprocess → cluster → extract → consolidate → prune) |
+| `get_dream_config` | unmetered | Retrieve the last stored Dream Cycle config for an agent |
+| `query_dream` | unmetered | Query consolidated memories by natural-language query |
+| `get_dream_stats` | unmetered | Last-run metadata: status, memories added/removed, budget used |
+
+All 5 are unmetered — their spend is bounded by `start_dream`'s own per-cycle `budget_usd`
+guardrail, not the gateway's free-tier metering. See "Dream Cycle" below for the full
+learn-loop walkthrough.
+
+## Gateway Guardians — deterministic enforcement (2026-08-01)
+
+Every tool call above now passes through two code-level checks before and after
+dispatch — not prompt instructions an LLM could ignore, but the same `sentinel.ts` +
+`output-enforcer.ts` modules the platform-layer observability stack already used,
+now wired directly into `/api/mcp`'s dispatch path:
+
+```bash
+FEATURE_MCP_GUARDIANS=true    # default — sentinel pre-call check + record, per-tool verify
+FEATURE_MCP_GUARDIANS=false   # opt-out — byte-identical to the pre-2026-08-01 gateway
+```
+
+**Pre-call**: cost caps (per-agent daily/hourly USD), a circuit breaker (opens after a
+sliding-window error-rate threshold), an optional endpoint allowlist, and a
+prompt-injection heuristic scan the call arguments. A blocked call never reaches the
+tool handler and returns:
+
+```jsonc
+{ "error": { "code": -32000, "message": "blocked by guardian policy",
+             "data": { "policy": "cost_cap", "reason": "daily_cap_exceeded" } } }
+```
+
+**Post-call (opt-in per tool)**: a handler's own output can be checked against a
+declared contract (schema / nonempty / JSON-serializable / math) before the result ships
+to the caller. Most tools declare nothing and are unaffected; `flare.token.save` is the
+one tool wired today as a live example — its response envelope's `ok` field is verified
+present before the caller ever sees it.
+
+This is **independent of `FEATURE_HM_PLATFORM`** (the broader observability/sentinel
+layer used elsewhere in the app, off by default) — `FEATURE_MCP_GUARDIANS` alone controls
+whether `/api/mcp` enforces, so turning MCP guardrails on does not require opting into the
+whole platform-observability stack. Admin sessions bypass the check the same way they
+bypass metering. Full detail: [`docs/observability.md`](https://github.com/phamdat721101/hypermove-app/blob/main/docs/observability.md#mcp-gateway-guardians)
+in the repo.
+
+## Dream Cycle — how an agent learns across sessions
+
+Dream Cycle turns an agent's own past episode logs into small, durable, retrievable
+memories — without an LLM in the read path and at near-zero cost:
+
+```bash
+# 1 — log what happened (zero LLM calls, idempotent per episode_id)
+curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
+  "jsonrpc":"2.0","id":1,"method":"tools/call",
+  "params":{"name":"submit_episode_log","arguments":{
+    "agent_id":"robot-42",
+    "episodes":[{"episode_id":"ep-1","agent_id":"robot-42","timestamp":"2026-08-01T10:00:00Z",
+                 "steps":[{"action":"grip","result":"timeout"}],"outcome":"failure"}]
+  }}}'
+
+# 2 — run the pipeline (preprocess -> cluster -> extract -> consolidate -> prune),
+# bounded by budget_usd — never spends more than this per call, independent of the
+# gateway's own free-tier metering.
+curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
+  "jsonrpc":"2.0","id":2,"method":"tools/call",
+  "params":{"name":"start_dream","arguments":{
+    "agent_id":"robot-42","config":{"budget_usd":0.05,"preset":"balanced"}
+  }}}'
+
+# 3 — ask what it learned, any time later
+curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
+  "jsonrpc":"2.0","id":3,"method":"tools/call",
+  "params":{"name":"query_dream","arguments":{"agent_id":"robot-42","query":"gripper timeout"}}}'
+```
+
+`config` must be nested exactly as shown — `{agent_id, config: {budget_usd, preset}}`, not
+flattened. `preset` is one of `frugal | balanced | thorough`; `outcome` in an episode is
+one of `success | failure | timeout` (no `partial` — map ambiguous outcomes to the closest
+of the three). `get_dream_stats` reports the same cost/token figures the gateway's own
+per-call audit ledger (`mcp_calls.tokens_used` / `cost_usd`, added 2026-08-01) records for
+that `start_dream` call — the two are guaranteed to agree, since they're written from the
+same run.
+
+Resources and prompts compose on top of the tools above (`FEATURE_MCP_RESOURCES`):
+`hypermove:///agents/{agent_id}/dream/{summary,rules,errors,stats}` and the
+`dream/summarize_today`, `dream/suggest_policy_updates`, `dream/compare_before_after`
+prompt templates.
 
 ## Agent-skills install & run locally — MCP is optional
 
 HyperMove agent-skills are **self-contained**:
 
-1. Fetch a skill's SKILL.md from `GET /api/skills/<name>?format=md`.
+1. Fetch a skill's SKILL.md from `GET /api/skills/<name>?format=md` (or the `skills.install` tool above).
 2. Save it into your host's skills directory.
 3. It autoloads and runs **in your own workspace by following its procedure — no MCP
    connection required**.
@@ -119,12 +300,19 @@ One settlement opens a **session bundling 100 queries** at that tier — per-que
 3. No data is dropped — flags never touch tables or sessions.
 
 Sub-flags for partial rollback: `FEATURE_MCP_AUTH_WORKOS`, `FEATURE_MCP_RATE_LIMIT`,
-`FEATURE_MCP_PAYWALL`, `FEATURE_MCP_DATA_ADAPTERS_V1`, `FEATURE_MCP_VECTOR_SEARCH`, `FEATURE_MCP_NEWS_V1`.
+`FEATURE_MCP_PAYWALL`, `FEATURE_MCP_DATA_ADAPTERS_V1`, `FEATURE_MCP_VECTOR_SEARCH`,
+`FEATURE_MCP_NEWS_V1`, `FEATURE_MCP_AGENTIC_V1`, `FEATURE_HYPERMOVE_TOOLS`,
+`FEATURE_MCP_BUILDER_BRIEF`, `FEATURE_MCP_XRPL_V3`, `FEATURE_MCP_FLARE_V1`,
+`FEATURE_MCP_CONFIDENTIAL_V1`, `FEATURE_MCP_INSTRUCT_V1`, `FEATURE_MCP_TOKEN_PROFILE_V1`,
+`FEATURE_MCP_DREAM_CYCLE`, `FEATURE_MCP_RESOURCES`, `FEATURE_MCP_GUARDIANS`.
 
 ## Health & spec (public, no auth)
 
 ```bash
 curl https://hypermove.xyz/.well-known/webmcp.json  # manifest: tools, endpoints, auth mode
-curl https://hypermove.xyz/api/mcp/health   # { ok, gateway_enabled, tools[] }
+curl https://hypermove.xyz/api/mcp/health   # { ok, gateway_enabled, tools[], commit, deployed_at }
 curl https://hypermove.xyz/api/mcp/spec     # OpenAPI-3.1-style super spec
 ```
+
+`/api/mcp/health`'s `commit` / `deployed_at` fields let you confirm which build is
+actually live before trusting any "should be fixed now" claim — check it first.

@@ -151,3 +151,51 @@ export FEATURE_HM_PLATFORM=false
 # Every wrapper becomes an identity function.
 # No DB writes. No dashboard traffic. v1.0 behavior restored byte-identical.
 ```
+
+## MCP Gateway Guardians (2026-08-01)
+
+The MCP gateway (`src/lib/mcp/gateway.ts`) now wires the SAME sentinel + output-enforcer modules
+documented above directly into `callTool()`, independent of `FEATURE_HM_PLATFORM`:
+
+```bash
+FEATURE_MCP_GUARDIANS=true    # default — sentinel.check()/record() + ToolDef.verify enforced
+FEATURE_MCP_GUARDIANS=false   # opt-out — byte-identical to pre-2026-08-01 behavior
+```
+
+This is a **separate, independent gate** from `FEATURE_HM_PLATFORM`: `createSentinel({forceEnabled:
+true})` bypasses the `isPlatformEnabled()` gate that every other sentinel consumer (above) is still
+subject to, so `FEATURE_MCP_GUARDIANS` alone controls MCP tool-call enforcement even with
+`FEATURE_HM_PLATFORM` at its default (off). Admin sessions bypass this check the same way they
+bypass metering. Denials return a JSON-RPC error (`code: -32000`) with `data.policy`/`data.reason`.
+
+Per-tool output verification is opt-in via `ToolDef.verify` (a tool that doesn't set it is
+unaffected) — `flare.token.save` is the one tool currently wired as a proof-of-concept, checking its
+`ServiceResult` envelope's `ok` field is present.
+
+## HMCP-001 / HMCP-008 status (v2.1 planning verification, 2026-08-01)
+
+A separate planning pass evaluated the original 8-PRD "MCP Production Playbook" against this
+codebase's actual architecture. Two pillars were found to already be **substantially satisfied** by
+existing code and received no new implementation this round — verified as follows, so a future
+reader understands why no build task exists for them without re-deriving the analysis:
+
+**Pillar 1 (outcome-oriented schema + progressive discovery).** `src/lib/mcp/tools.ts`'s
+`getTools()` yields ≤35 tools with every flag on (11 always-on + ~24 flag-gated) — not the
+playbook's assumed 45+ — and they are already outcome-shaped (`xrpl.settlement.quote`,
+`flare.builder.brief`, `xrpl.yield.compare`, not atomic CRUD steps requiring multi-hop chaining).
+`search` / `codemode.catalog` / `codemode.describe` / `codemode.spec` already provide progressive,
+layered discovery. **The one real remaining gap**: every enabled tool is unconditionally listed in
+`tools/list` — there is no semantic trimming of the disclosed tool set itself (e.g. filtering to the
+top-K relevant tools per query via embedding similarity, as HMCP-001's FR-001-2 originally
+requested). Flags add or remove whole tools; nothing trims the always-on set at request time. This
+gap is explicitly **deferred**, not silently dropped — revisit if disclosure-token overhead on the
+always-on 11-tool baseline is ever measured to be a real problem.
+
+**Pillar 8 (agent-native observability).** `mcp_calls` (see `src/lib/db.ts`) is a real per-call audit
+ledger — `tool_name`, `tier`, `params_hash`, `response_bytes`, `latency_ms`, `outcome`, and (as of
+this round's Task 5/6) `tokens_used`/`cost_usd` for the one call path with genuine LLM cost. Sentinel
+denials are now logged live to `hm_policy_hits` on the MCP path too (Task 2, above). **The remaining
+gap**: no dashboard UI / "mission control" view exists — `mcp_calls` and `hm_policy_hits` are
+queryable tables, not a rendered timeline/trace viewer. This gap is explicitly **deferred**; the data
+substrate a future dashboard would read from now exists and is richer than before this round, but no
+UI was built.

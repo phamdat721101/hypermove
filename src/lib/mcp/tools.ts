@@ -18,6 +18,7 @@ import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
 import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpAttestationEnabled, isMcpFccEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled, isMcpDreamCycleEnabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
+import type { OutputEnforceConfig } from '../harness/types';
 
 /** Per-call context injected by the gateway (never from client args). */
 export interface ToolContext {
@@ -32,6 +33,14 @@ export interface ToolDef {
   handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<unknown>;
   /** Skip free-tier metering (e.g. payments.* — metering them would deadlock). */
   unmetered?: boolean;
+  /**
+   * Opt-in output-enforcer contract (harness/output-enforcer.ts's
+   * verifyOrHeal()). Undeclared (the default for every tool) means the
+   * gateway runs zero enforcement for this tool — byte-identical to before
+   * this field existed. Only set this when a tool's result shape has a
+   * genuine, checkable success contract.
+   */
+  verify?: OutputEnforceConfig;
 }
 
 // ─── Lazy catalog vector index (deterministic; built once) ─────────────────
@@ -586,6 +595,16 @@ const flareTokenSaveTool: ToolDef = {
   name: 'flare.token.save',
   description: 'Compute and persist a structured Token Profile for a Flare token (native FLR/WFLR, FAssets FXRP/FBTC/FDOGE). Live-reads what is verifiable on-chain (registry-resolved AssetManager address, ERC-20 metadata, FTSO feed ID); honestly nulls or corpus-labels what is not a live read.',
   tier: 't2_realtime',
+  // Proof-of-wiring example for the opt-in output-enforcer (2026-08-01):
+  // saveTokenProfile() always returns a ServiceResult envelope (envelope.ts) —
+  // {ok:true,data:{...}} or {ok:false,error:{...}} — so "ok" is the one field
+  // genuinely present on every call, success or handled failure. This checks
+  // the handler itself never returns something OTHER than a well-formed
+  // envelope (e.g. a thrown value swallowed into `undefined`, or a future
+  // refactor that forgets to wrap a branch in ok()/fail()) — it deliberately
+  // does not gate on business-logic success, since {ok:false,...} is a valid,
+  // intentional result this tool already returns (e.g. feature-disabled).
+  verify: { verify: [{ kind: 'schema', required: ['ok'] }], onFail: 'block' },
   inputSchema: {
     type: 'object',
     properties: {

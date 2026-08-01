@@ -252,3 +252,35 @@ export function isMcpDreamCycleEnabled(): boolean {
 export function isMcpDreamSchedulerEnabled(): boolean {
   return isMcpDreamCycleEnabled() && process.env.FEATURE_MCP_DREAM_SCHEDULER === 'true';
 }
+
+// ─── Gateway Guardians — sentinel + output-enforcer wiring (2026-08-01) ────
+//
+// Wires the ALREADY-EXISTING sentinel.ts (cost caps / circuit breaker /
+// allowlist / prompt-injection heuristics) and harness/output-enforcer.ts
+// (schema/math/nonempty verify + bounded self-heal) into gateway.callTool().
+// Both modules predate this flag and were previously reachable only via the
+// skills harness — never from the MCP tool-dispatch path itself.
+//
+// Default ON (v3Flag opt-out), matching every other v3.0+ sub-flag's
+// convention — deliberately NOT following isMcpDreamSchedulerEnabled()'s
+// opt-in precedent above. That flag defaults off because it lets the server
+// autonomously spend budget and write data on an hourly schedule with no
+// per-call human trigger. This flag is different in kind: it only ever
+// reacts synchronously inside an already-explicit tool call a caller made
+// on purpose — it can block or allow that one call, never act on its own
+// initiative between calls. "Guardrails on by default" is the safer
+// interpretation of default-safe for a check that can only ever narrow what
+// an explicitly-requested call is allowed to do, not one that acts
+// unprompted. Opt out with FEATURE_MCP_GUARDIANS=false (<60s rollback,
+// matches every other sub-flag in this file).
+//
+// Independent of FEATURE_HM_PLATFORM: sentinel.ts's check()/record() are
+// internally gated by isPlatformEnabled() (FEATURE_HM_PLATFORM, default OFF)
+// for their existing platform-layer callers. The MCP gateway's own sentinel
+// instance is constructed with `forceEnabled: true` (see sentinel.ts's
+// SentinelConfig.forceEnabled) specifically so this flag is the SOLE gate for
+// the MCP path — otherwise FEATURE_MCP_GUARDIANS=true with the realistic
+// default FEATURE_HM_PLATFORM=false would look enabled but silently no-op.
+export function isMcpGuardiansEnabled(): boolean {
+  return v3Flag('FEATURE_MCP_GUARDIANS');
+}

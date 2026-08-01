@@ -69,6 +69,16 @@ export interface StartDreamResult {
   run_id?: string;
   status: 'started' | 'error';
   message?: string;
+  /**
+   * Internal-only: the run's aggregated LLM cost (Task 6, 2026-08-01).
+   * gateway.callTool() reads this to populate mcp_calls.tokens_used/cost_usd
+   * for THIS one call, then strips it before returning the result to the MCP
+   * client — start_dream's public response shape (run_id/status/message) is
+   * unchanged. Named with a leading underscore so it reads as internal at
+   * every call site, matching no existing convention in this file but kept
+   * deliberately distinct from every other (intentionally public) field here.
+   */
+  _cost?: { tokensUsed: number; costUsd: number };
 }
 
 export interface GetDreamConfigResult {
@@ -129,9 +139,9 @@ export async function startDream(
     return true;
   });
 
-  await runPipeline(runId, agentId, config.budget_usd, preset);
+  const cost = await runPipeline(runId, agentId, config.budget_usd, preset);
 
-  return { run_id: runId, status: 'started' };
+  return { run_id: runId, status: 'started', _cost: cost };
 }
 
 /**
@@ -205,9 +215,12 @@ function buildStageSummaries(
  * Runs preprocess -> cluster -> extract -> consolidate -> prune end-to-end
  * for one agent's unconsumed episodes, then marks the run row terminal.
  * Any stage error is caught and recorded rather than propagated — a failed
- * cycle always leaves a well-formed, queryable run row.
+ * cycle always leaves a well-formed, queryable run row. Returns the run's
+ * aggregated cost (Task 6, 2026-08-01) so startDream() can thread it through
+ * to the mcp_calls ledger via the SAME recordCall() invocation the gateway
+ * already makes for this tool call — no second ledger write.
  */
-async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset): Promise<void> {
+async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset): Promise<{ tokensUsed: number; costUsd: number }> {
   const startedAt = Date.now();
   const cost = new CostTracker(budgetUsd);
   const stagesCompleted: string[] = [];
@@ -300,6 +313,9 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     );
     return true;
   });
+
+  const tokensUsed = Object.values(cost.perStageTokenCounts).reduce((sum, n) => sum + n, 0);
+  return { tokensUsed, costUsd: cost.budgetUsedUsd };
 }
 
 async function loadExistingMemories(agentId: string): Promise<ExistingMemory[]> {

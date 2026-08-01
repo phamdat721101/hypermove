@@ -10,15 +10,35 @@
 
 import { createHash } from 'node:crypto';
 import { withClient } from '../db';
-import { isMcpPaywallEnabled, isMcpRateLimitEnabled } from '../platform-flag';
+import { isMcpPaywallEnabled, isMcpRateLimitEnabled, isMcpGuardiansEnabled } from '../platform-flag';
 import { getTool, getTools } from './tools';
 import { checkAndConsume, FREE_TIER_LIMIT } from './rate-limit';
 import { buildChallenge, findActiveSession, consumeSession, settlePayment } from './paywall';
+import { createSentinel, type Sentinel } from '../sentinel/sentinel';
+import { verifyOrHeal } from '../harness/output-enforcer';
 import type { McpSession } from './auth';
 
 export interface RpcOutcome {
   result?: unknown;
   error?: { code: number; message: string; data?: unknown };
+}
+
+// ─── Gateway Guardians — module-level sentinel singleton ──────────────────
+//
+// forceEnabled:true makes isMcpGuardiansEnabled() the SOLE gate for this
+// instance's check()/record() — independent of FEATURE_HM_PLATFORM (see
+// platform-flag.ts's isMcpGuardiansEnabled() doc comment). Lazy singleton,
+// mirroring tools.ts's vectorIndex pattern.
+let mcpSentinel: Sentinel | null = null;
+
+function getMcpSentinel(): Sentinel {
+  if (!mcpSentinel) mcpSentinel = createSentinel({ forceEnabled: true });
+  return mcpSentinel;
+}
+
+/** Test hook — matches _resetTools()/_resetCatalog()'s naming convention. */
+export function _resetMcpSentinel(): void {
+  mcpSentinel = null;
 }
 
 export function listTools() {
@@ -37,6 +57,17 @@ export async function callTool(input: {
 
   const started = Date.now();
   let sessionId: string | undefined;
+
+  // ── Gateway Guardians (sentinel pre-call check) ───────────────────────────
+  // Independent of metering — a blocked call never reaches the paywall logic.
+  // Admin sessions bypass this the same way they bypass metering below.
+  const guardiansOn = isMcpGuardiansEnabled() && session.kind !== 'admin';
+  if (guardiansOn) {
+    const decision = await getMcpSentinel().check({ endpoint: name, agent_id: session.userId, payload: args });
+    if (!decision.allow) {
+      return { error: { code: -32000, message: 'blocked by guardian policy', data: { policy: decision.policy, reason: decision.reason } } };
+    }
+  }
 
   // ── Metering (skipped for admin + unmetered tools like payments.settle) ──
   if (!tool.unmetered && session.kind !== 'admin' && session.tier === 'free') {
@@ -68,9 +99,38 @@ export async function callTool(input: {
   // ── Dispatch ───────────────────────────────────────────────────────────────
   try {
     const result = await tool.handler(args, { session });
-    await recordCall({ session, tool: name, tier: tool.tier, args, result, sessionId, started, outcome: 'ok' });
-    return { result };
+
+    // ── Output-enforcer (opt-in via ToolDef.verify) ─────────────────────────
+    // No reExecute wired yet — a tool declaring onFail:'self-heal' without a
+    // reExecute path degrades to output-enforcer's own "not verified" return
+    // (heals stays 0, verified stays false) exactly as block would. Self-heal
+    // re-invocation is a deliberate fast-follow, not built this round.
+    if (tool.verify) {
+      const enforced = await verifyOrHeal(result as Record<string, unknown>, tool.verify);
+      if (!enforced.verified) {
+        if (guardiansOn) await getMcpSentinel().record({ endpoint: name, agent_id: session.userId, success: false });
+        await recordCall({ session, tool: name, tier: tool.tier, args, result: null, sessionId, started, outcome: 'error' });
+        return { error: { code: -32000, message: 'output failed verification', data: { checks: enforced.checks } } };
+      }
+    }
+
+    // ── Dream Cycle cost threading (Task 6, 2026-08-01) ─────────────────────
+    // start_dream's result carries an internal-only `_cost` field (see
+    // dream/pipeline.ts's StartDreamResult) — the ledger read below is the
+    // ONLY consumer of it; it never reaches the MCP client's response.
+    const internalCost = (result as { _cost?: { tokensUsed: number; costUsd: number } } | null)?._cost;
+    const clientResult = internalCost && result && typeof result === 'object'
+      ? Object.fromEntries(Object.entries(result as Record<string, unknown>).filter(([k]) => k !== '_cost'))
+      : result;
+
+    if (guardiansOn) await getMcpSentinel().record({ endpoint: name, agent_id: session.userId, success: true });
+    await recordCall({
+      session, tool: name, tier: tool.tier, args, result: clientResult, sessionId, started, outcome: 'ok',
+      tokensUsed: internalCost?.tokensUsed, costUsd: internalCost?.costUsd,
+    });
+    return { result: clientResult };
   } catch (err) {
+    if (guardiansOn) await getMcpSentinel().record({ endpoint: name, agent_id: session.userId, success: false });
     await recordCall({ session, tool: name, tier: tool.tier, args, result: null, sessionId, started, outcome: 'error' });
     return { error: { code: -32000, message: err instanceof Error ? err.message : String(err) } };
   }
@@ -88,6 +148,15 @@ function safeByteLen(v: unknown): number {
 async function recordCall(c: {
   session: McpSession; tool: string; tier: string; args: unknown; result: unknown;
   sessionId?: string; started: number; outcome: 'ok' | 'error' | 'soft_empty';
+  /**
+   * Real token/cost figures for the one call-path with genuine non-zero
+   * marginal LLM cost today (Dream Cycle's extraction stage — see
+   * dream/pipeline.ts). Every other call site omits these, inserting NULL —
+   * intentional (deterministic reads/corpus lookups have zero LLM cost),
+   * not a gap to backfill.
+   */
+  tokensUsed?: number;
+  costUsd?: number;
 }): Promise<void> {
   const bytes = safeByteLen(c.result);
   // Confidential-tool args (attestation quotes) are never persisted in plaintext
@@ -99,9 +168,9 @@ async function recordCall(c: {
   const paramsHash = createHash('sha256').update(JSON.stringify(argsForLog ?? '')).digest('hex').slice(0, 32);
   await withClient(async (client) => {
     await client.query(
-      `INSERT INTO mcp_calls (user_id, session_id, tool_name, tier, params_hash, response_bytes, latency_ms, outcome)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
-      [c.session.userId, c.sessionId ?? null, c.tool, c.tier, paramsHash, bytes, Date.now() - c.started, c.outcome],
+      `INSERT INTO mcp_calls (user_id, session_id, tool_name, tier, params_hash, response_bytes, latency_ms, outcome, tokens_used, cost_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+      [c.session.userId, c.sessionId ?? null, c.tool, c.tier, paramsHash, bytes, Date.now() - c.started, c.outcome, c.tokensUsed ?? null, c.costUsd ?? null],
     );
     return true;
   });

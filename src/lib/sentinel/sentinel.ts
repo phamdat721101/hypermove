@@ -45,6 +45,17 @@ export interface SentinelConfig {
     /** Sliding window size — number of recent outcomes to consider. */
     windowSize?: number;
   };
+  /**
+   * Bypass the isPlatformEnabled() (FEATURE_HM_PLATFORM) gate entirely for
+   * this instance's check()/record() calls. Default false — every existing
+   * caller that constructs a sentinel without this field behaves
+   * byte-identically to before this field existed. Set true only by callers
+   * that have their OWN independent feature flag gating whether they call
+   * check()/record() at all (e.g. the MCP gateway's isMcpGuardiansEnabled()) —
+   * this lets that caller's flag be the sole enable/disable switch instead of
+   * silently also depending on FEATURE_HM_PLATFORM being on.
+   */
+  forceEnabled?: boolean;
 }
 
 export interface SentinelDecision {
@@ -219,6 +230,7 @@ class SentinelImpl implements Sentinel {
   private dailyCapMicro: number;
   private hourlyCapMicro: number;
   private defaultCostMicro: number;
+  private forceEnabled: boolean;
 
   constructor(cfg: SentinelConfig) {
     const cb = cfg.circuitBreaker ?? {};
@@ -232,10 +244,11 @@ class SentinelImpl implements Sentinel {
     this.dailyCapMicro = usdToMicro(cfg.costCaps?.perAgentDailyUsd ?? Number(process.env.HM_COST_CAP_PER_AGENT_DAILY_USD ?? 100));
     this.hourlyCapMicro = usdToMicro(cfg.costCaps?.perAgentHourlyUsd ?? Number(process.env.HM_COST_CAP_PER_AGENT_HOURLY_USD ?? 20));
     this.defaultCostMicro = cfg.costCaps?.defaultCostMicroUsd ?? 10_000; // $0.01 per call default
+    this.forceEnabled = cfg.forceEnabled ?? false;
   }
 
   async check(input: SentinelInput): Promise<SentinelDecision> {
-    if (!isPlatformEnabled()) return { allow: true };
+    if (!this.forceEnabled && !isPlatformEnabled()) return { allow: true };
 
     // 1. Allowlist
     if (this.allowlist && !this.allowlist.has(input.endpoint)) {
@@ -271,7 +284,7 @@ class SentinelImpl implements Sentinel {
   }
 
   record(outcome: SentinelOutcome): void {
-    if (!isPlatformEnabled()) return;
+    if (!this.forceEnabled && !isPlatformEnabled()) return;
     this.costs.add(outcome.agent_id, outcome.cost_micro_usd ?? this.defaultCostMicro);
     this.breaker.record(outcome.endpoint, outcome.success);
   }

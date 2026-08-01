@@ -19,6 +19,8 @@ import { supportedNetworks, validateSelection, MockPaymentRail, _resetNetworks }
 import { buildChallenge, TIER_PRICE_USD } from '@/lib/mcp/paywall';
 import { newsSearch, newsInsight, _resetNews } from '@/lib/mcp/news';
 import { getTool, getTools, _resetTools } from '@/lib/mcp/tools';
+import { createSentinel } from '@/lib/sentinel/sentinel';
+import { isMcpGuardiansEnabled } from '@/lib/platform-flag';
 
 beforeEach(() => {
   _resetCatalog();
@@ -29,6 +31,35 @@ beforeEach(() => {
   process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
   process.env.FEATURE_MCP_VECTOR_SEARCH = 'true';
   process.env.FEATURE_MCP_NEWS_V1 = 'true';
+  delete process.env.FEATURE_HM_PLATFORM;
+  delete process.env.FEATURE_MCP_GUARDIANS;
+});
+
+// ── Task 1: FEATURE_MCP_GUARDIANS flag + SentinelConfig.forceEnabled ────────
+describe('guardians flag + sentinel forceEnabled', () => {
+  it('isMcpGuardiansEnabled defaults ON with no env vars set', () => {
+    expect(isMcpGuardiansEnabled()).toBe(true);
+  });
+
+  it('isMcpGuardiansEnabled opts out via FEATURE_MCP_GUARDIANS=false', () => {
+    process.env.FEATURE_MCP_GUARDIANS = 'false';
+    expect(isMcpGuardiansEnabled()).toBe(false);
+  });
+
+  it('forceEnabled:true enforces even when FEATURE_HM_PLATFORM is off/unset', async () => {
+    expect(process.env.FEATURE_HM_PLATFORM).toBeUndefined();
+    const sentinel = createSentinel({ forceEnabled: true, costCaps: { perAgentDailyUsd: 0 } });
+    const decision = await sentinel.check({ endpoint: 'search', agent_id: 'agent-1' });
+    expect(decision.allow).toBe(false);
+    expect(decision.policy).toBe('cost_cap');
+  });
+
+  it('regression: default (forceEnabled unset) still no-ops under FEATURE_HM_PLATFORM off', async () => {
+    expect(process.env.FEATURE_HM_PLATFORM).toBeUndefined();
+    const sentinel = createSentinel({ costCaps: { perAgentDailyUsd: 0 } });
+    const decision = await sentinel.check({ endpoint: 'search', agent_id: 'agent-1' });
+    expect(decision.allow).toBe(true); // isPlatformEnabled() gate still applies — byte-identical to before this task
+  });
 });
 
 // ── Task 1: envelope ────────────────────────────────────────────────────────

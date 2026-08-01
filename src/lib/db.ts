@@ -157,9 +157,19 @@ CREATE TABLE IF NOT EXISTS mcp_calls (
   response_bytes INT NOT NULL DEFAULT 0,
   latency_ms    INT NOT NULL DEFAULT 0,
   outcome       TEXT NOT NULL DEFAULT 'ok',
+  tokens_used   INT,
+  cost_usd      NUMERIC,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_calls_user ON mcp_calls(user_id, created_at DESC);
+-- tokens_used / cost_usd (2026-08-01): nullable, no default. Populated ONLY by
+-- call sites with a genuine non-zero marginal LLM cost (Dream Cycle's
+-- extraction stage via CostTracker — see lib/cost/tracker.ts). Every other
+-- tool call is a deterministic read/corpus lookup with zero LLM cost and
+-- continues inserting NULL for both columns — this is intentional, not a gap.
+-- IF NOT EXISTS pair below covers databases provisioned before this date.
+ALTER TABLE mcp_calls ADD COLUMN IF NOT EXISTS tokens_used INT;
+ALTER TABLE mcp_calls ADD COLUMN IF NOT EXISTS cost_usd NUMERIC;
 
 CREATE TABLE IF NOT EXISTS mcp_catalog (
   entry_id     TEXT PRIMARY KEY,
