@@ -182,6 +182,73 @@ aigent.run) show builders actually ask for:
 | `flare.fassets.bridgeStatus` | "How does XRP→FXRP bridging work?" — lifecycle + adoption stats | `FEATURE_MCP_FLARE_V1` |
 | `xrpl.vault.info` / `xrpl.lending.status` | XLS-65/66 vault + lending state, gated by a live amendment-activation check (returns `amendment_not_active` instead of a raw RPC error while the amendment is still mid-vote) | `FEATURE_MCP_XRPL_V3` |
 
+## T54 + XRPL — the settlement rail behind every RLUSD-priced tool call
+
+Any tool call this gateway prices in RLUSD (currently: Dream Cycle's metered
+extraction step, see [`docs/dream-cycle`](https://hypermove.xyz/docs/dream-cycle))
+settles through **T54's XRPL x402 Facilitator** (`xrpl-x402.t54.ai`) — not a
+credit card, not an API key, not a custodial wallet. The merchant-side rail
+lives in `src/lib/mcp/npayment-rails.ts`'s `settleXrplRlusd()`; the buyer
+signs everything client-side.
+
+**Why RLUSD on XRPL, specifically:**
+
+- **3-5 second finality, sub-cent fees.** XRPL closes ledgers every few
+  seconds and fees are fractions of a cent — a payment step never becomes
+  the slow part of an agent's tool call.
+- **No API key, no custody.** The buyer signs a presigned XRPL `Payment`
+  transaction with its own seed. T54 verifies and settles; it never holds
+  buyer funds.
+- **A real, growing rail.** XRPL recorded 1.43M+ autonomous agent x402
+  transactions as of 2026-07-22 — up 127% since x402 was embedded directly
+  into the ledger on 2026-06-09. Ripple joined the x402 Foundation as a
+  Premier Member alongside 40 institutions. RLUSD itself carries a ~$1.26B
+  market cap with NYDFS-regulated reserves — not a throwaway testnet token.
+
+**The handshake, step by step (`settleXrplRlusd()`):**
+
+1. The paywalled endpoint returns a 402 challenge: `payTo`, `network`
+   (`xrpl:1` = testnet, `xrpl:0` = mainnet), `asset: RLUSD`, `amount`,
+   `facilitator` URL, `invoiceId`.
+2. The buyer signs an XRPL `Payment` itself — `SourceTag: 804681468`, an
+   invoice-bound `Memo` (hex of `invoiceId`), RLUSD as its canonical 40-hex
+   currency code. T54 never touches the buyer's keys.
+3. HyperMove's merchant rail re-checks the buyer's echoed terms against the
+   actual treasury/asset/price **before** ever calling the facilitator —
+   underpayment or a swapped destination is rejected server-side, not
+   trusted from the client.
+4. T54's `/settle` endpoint verifies the signed blob against the ledger and
+   broadcasts it. No API key exchanged anywhere in this chain.
+5. **The ledger is the real proof of payment, not the facilitator's
+   response.** In live testnet testing against this exact codebase, T54's
+   hosted facilitator returned `verify_failed: unsupported_payment_features`
+   on a genuinely successful payment — confirmed independently via a raw
+   `tx` RPC query against `wss://s.altnet.rippletest.net:51233`
+   (`TransactionResult: tesSUCCESS`, `validated: true`) and a matching
+   before/after RLUSD trustline balance delta. Treat the facilitator as a
+   convenience layer for the x402 handshake; the ledger's own validation is
+   what actually proves the money moved.
+
+Two independently-verified real testnet transactions from this exact
+integration, checkable on [testnet.xrpl.org](https://testnet.xrpl.org):
+
+- [`D7DFA2D617B306D305CBE490041FAA7961182F3DC150E231D9C23E1AB2DEE780`](https://testnet.xrpl.org/transactions/D7DFA2D617B306D305CBE490041FAA7961182F3DC150E231D9C23E1AB2DEE780) — 0.05 RLUSD
+- [`FF216AE38CF44D1F12B48C5A5345D4CDCF1E4D40528CC44EB8256BBC4CA24418`](https://testnet.xrpl.org/transactions/FF216AE38CF44D1F12B48C5A5345D4CDCF1E4D40528CC44EB8256BBC4CA24418) — 0.05 RLUSD
+
+Full writeup with the Dream Cycle context: [`docs/posts/dream-cycle-rlusd-t54-xrpl-agent-payments.md`](./docs/posts/dream-cycle-rlusd-t54-xrpl-agent-payments.md).
+
+Try the settlement path yourself (real XRPL testnet transaction, zero mock):
+
+```bash
+RLUSD_DEMO_MODE=live RLUSD_DEMO_SEED=sEd... npx tsx scripts/demo-t54-rlusd-dream-cycle.ts
+# or: copy scripts/.env.rlusd-demo.example -> scripts/.env.rlusd-demo (git-ignored)
+# and fill in RLUSD_DEMO_SEED once — then just `npx tsx scripts/demo-t54-rlusd-dream-cycle.ts`
+```
+
+Required env vars, config knobs, and troubleshooting: `scripts/demo-t54-rlusd-dream-cycle.ts`'s header comment.
+
+
+
 ## Architecture
 
 - **Framework:** Next.js 14 App Router · TypeScript strict · Tailwind · MDX

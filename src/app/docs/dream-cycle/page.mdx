@@ -39,6 +39,13 @@ sugar on top of those three calls.
   `get_dream_stats`. Also 4 resources and 3 prompts — see below.
 - **All 5 tools are free.** They never hit the paywall or the 5-free-queries/24h limit.
   Spend is capped by your own `budget_usd` per cycle (default $0.10), not by HyperMove's tiers.
+- **The one metered piece — extraction's LLM call — settles in RLUSD on XRPL, via T54.**
+  When the extraction step is priced, the 402 challenge names an amount in RLUSD; you
+  sign a presigned XRPL `Payment` yourself (no API key, no custodial wallet) and it
+  settles through [T54's XRPL x402 Facilitator](https://xrpl-x402.t54.ai) in 3-5
+  seconds for sub-cent fees. Full mechanics, real verified testnet transactions, and a
+  runnable demo: see the [README's T54 + XRPL section](https://github.com/phamdat721101/hypermove-app#t54--xrpl--the-settlement-rail-behind-every-rlusd-priced-tool-call)
+  and [`docs/posts/dream-cycle-rlusd-t54-xrpl-agent-payments.md`](https://github.com/phamdat721101/hypermove-app/blob/main/docs/posts/dream-cycle-rlusd-t54-xrpl-agent-payments.md).
 - **Nothing changes if you never call `start_dream`.** Logging with `submit_episode_log`
   costs nothing and does nothing until you trigger a cycle — no background jobs, no
   surprise charges.
