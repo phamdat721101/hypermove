@@ -23,7 +23,7 @@ import { useWalletModal } from '@/lib/wallet-modal-context';
  *    message → POST to /api/mcp/wallet-auth → same storeToken() the WorkOS
  *    path already uses, just keyed by wallet address instead of a WorkOS id.
  */
-type GatewayState = { gatewayEnabled: boolean; authRequired: boolean } | null;
+type GatewayState = { gatewayEnabled: boolean; authRequired: boolean; confidentialDreamCycleAvailable: boolean } | null;
 
 const MCP_CLIENTS = ['Kiro / Cursor / Claude CLI', 'Claude Desktop / Windsurf', 'curl (raw)'] as const;
 type McpClient = (typeof MCP_CLIENTS)[number];
@@ -109,6 +109,8 @@ export default function McpConnectPage() {
         any MCP-compatible agent. 10 free queries / 24h, then metered x402/MPP.
       </p>
 
+      {state?.confidentialDreamCycleAvailable && <ConfidentialDreamCycleCallout />}
+
       {token ? (
         <TokenPanel token={token} origin={origin} />
       ) : state === null ? (
@@ -119,6 +121,40 @@ export default function McpConnectPage() {
         <NoAuthPanel gatewayEnabled={state.gatewayEnabled} origin={origin} />
       )}
     </main>
+  );
+}
+
+/**
+ * Dream Cycle Confidential Extraction on Flare FCC, Task 10. Shown only when
+ * /api/mcp/health's `prompts` field includes dream/run_confidential — i.e.
+ * only when an operator has actually enabled FEATURE_MCP_DREAM_CONFIDENTIAL
+ * (default OFF) AND FEATURE_MCP_RESOURCES. Purely informational: after
+ * connecting (above/below), an operator's MCP client can select the
+ * "dream/run_confidential" prompt to pre-fill a payment-gated start_dream
+ * call — no client-config field can pre-fill this itself, since agent_id and
+ * confidential are start_dream TOOL ARGUMENTS (passed per-call), not
+ * connection-level config (mcpServers only carries url/headers/command/args
+ * — there is no MCP-spec mechanism for a client config to pre-fill a tool
+ * call's arguments). Setting a sticky default once via start_dream's
+ * confidential_default (Task 9) is the actual "set up once" mechanism.
+ */
+function ConfidentialDreamCycleCallout() {
+  return (
+    <div className="mt-6 rounded-xl border border-sky-500/30 bg-sky-500/5 p-5">
+      <p className="text-sm font-medium text-sky-300">Confidential Dream Cycle is enabled on this gateway</p>
+      <p className="mt-1 text-xs text-neutral-400">
+        Once connected, select the <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">dream/run_confidential</code> prompt
+        in your MCP client to run a Dream Cycle whose extraction stage executes inside Flare&apos;s Confidential Compute (TEE) instead of the
+        plaintext path — settled via XRPL/RLUSD. Requires a settled <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">confidential</code>-tier
+        payment (call <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">payments.settle</code> with{' '}
+        <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">tier: &quot;confidential&quot;</code> first).
+      </p>
+      <p className="mt-2 text-xs text-neutral-500">
+        Prefer it to run automatically? Call <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">start_dream</code> once with{' '}
+        <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">confidential_default: true</code> in your agent&apos;s config — every
+        future call that omits <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">confidential</code> will inherit it.
+      </p>
+    </div>
   );
 }
 
@@ -137,7 +173,7 @@ function useOrigin(): string {
   return origin;
 }
 
-/** Fetches /api/mcp/health once and exposes the two flags the UI branches on. */
+/** Fetches /api/mcp/health once and exposes the flags the UI branches on. */
 function useGatewayState(): GatewayState {
   const [state, setState] = useState<GatewayState>(null);
 
@@ -145,15 +181,26 @@ function useGatewayState(): GatewayState {
     let cancelled = false;
     fetch('/api/mcp/health')
       .then((res) => res.json())
-      .then((body: { gateway_enabled?: boolean; auth_required?: boolean }) => {
+      .then((body: { gateway_enabled?: boolean; auth_required?: boolean; prompts?: string[] }) => {
         if (!cancelled) {
-          setState({ gatewayEnabled: !!body.gateway_enabled, authRequired: !!body.auth_required });
+          setState({
+            gatewayEnabled: !!body.gateway_enabled,
+            authRequired: !!body.auth_required,
+            // Dream Cycle Confidential Extraction on Flare FCC, Task 10.
+            // Derived from /api/mcp/health's additive `prompts` field
+            // (mirrors its existing `tools` field) rather than a new
+            // dedicated endpoint — dream/run_confidential is absent from
+            // that list entirely whenever isMcpDreamConfidentialEnabled()
+            // is off (default), matching the prompt's own "not even
+            // discoverable when disabled" design (prompts.ts).
+            confidentialDreamCycleAvailable: (body.prompts ?? []).includes('dream/run_confidential'),
+          });
         }
       })
       .catch(() => {
         // Health check itself failed — treat as "no auth required" so the
         // page still shows a usable curl example instead of stalling.
-        if (!cancelled) setState({ gatewayEnabled: false, authRequired: false });
+        if (!cancelled) setState({ gatewayEnabled: false, authRequired: false, confidentialDreamCycleAvailable: false });
       });
     return () => {
       cancelled = true;

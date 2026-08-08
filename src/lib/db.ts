@@ -324,6 +324,23 @@ ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS stage_summaries JSONB;
 -- behavior for any caller who never touches the scheduler feature.
 ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'manual';
 
+-- Additive (Dream Cycle Confidential Extraction on Flare FCC, Task 1). Marks
+-- whether a run's extraction stage was requested to run through Flare's
+-- Confidential Compute (FCC) TEE path instead of the plain services/llm HTTP
+-- call. Defaults false — byte-identical behavior for every existing/future
+-- caller that never sets confidential:true on start_dream. attestation_ref
+-- stores the TEE attestation's quoteHash (see confidential.ts's
+-- verifyAttestation()) once FCC returns genuine, attestation-verified output;
+-- NULL until then (including for every run today, since Flare FCC is not yet
+-- live off Songbird canary and PMW's third-party interface is unpublished —
+-- see providers/flare.ts's isFccLiveOnNetwork()). Both columns are set at
+-- INSERT time in pipeline.ts's startDream(), not by the existing UPDATE
+-- dream_cycle_runs SET ... query in runPipeline() — that query's $1..$9
+-- positional param order (see tests/mcp-dream-cycle.test.ts's mock comment
+-- on the 2026-07-27 stage_summaries shift) is intentionally left untouched.
+ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS confidential BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS attestation_ref TEXT;
+
 -- Additive (2026-07-27, PRD-D). One row per scheduler tick — records which
 -- agents were considered, which fired, and which were skipped and why (due
 -- check false, global ceiling hit) so "why didn't my agent learn today" is
@@ -351,6 +368,26 @@ CREATE TABLE IF NOT EXISTS dream_configs (
   last_run_id       TEXT,
   updated_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
+
+-- Additive (Dream Cycle Confidential Extraction on Flare FCC, Task 2). The
+-- last-requested confidential flag for this agent's start_dream config —
+-- distinct from confidential_default (Task 9, added below), which is an
+-- explicit persistent default an operator opts into separately.
+ALTER TABLE dream_configs ADD COLUMN IF NOT EXISTS confidential BOOLEAN NOT NULL DEFAULT false;
+
+-- Additive (Dream Cycle Confidential Extraction on Flare FCC, Task 9). A
+-- STICKY per-agent default, distinct from the plain confidential column
+-- above (which only reflects the last start_dream call's explicit arg).
+-- Once an operator sets confidential_default:true for an agent, every
+-- future start_dream call that OMITS confidential entirely inherits this
+-- default; an explicit per-call confidential value still overrides it (see
+-- pipeline.ts's startDream()). preferred_settlement is stored explicitly
+-- (rather than hardcoding 'xrpl-rlusd' inline wherever needed) so a future
+-- second settlement option for the confidential tier doesn't require a
+-- schema change — 'xrpl-rlusd' is the only value in use today, matching
+-- payment-router.ts's CONFIDENTIAL_TIER_CHAINS being XRPL-only by design.
+ALTER TABLE dream_configs ADD COLUMN IF NOT EXISTS confidential_default BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE dream_configs ADD COLUMN IF NOT EXISTS preferred_settlement TEXT NOT NULL DEFAULT 'xrpl-rlusd';
 `;
 
 let pool: Pool | null = null;

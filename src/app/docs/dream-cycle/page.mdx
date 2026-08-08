@@ -230,6 +230,91 @@ If a query on a fresh agent still returns nothing after a run with genuinely des
 episode content (real `action`s, real `error`s on failures), check `stage_summaries`
 before filing a report — it will show you exactly which stage the signal was lost at.
 
+## Confidential extraction on Flare FCC (opt-in, real Coston2 deployment)
+
+By default, Dream Cycle's extraction step calls `llm-service` directly over plain HTTP.
+If you want that dispatch attested through HyperMove's own Flare Compute Extension (FCE)
+— a real, deployed TEE-proxy/extension pair on Coston2, not a mock — opt in per-run:
+
+```bash
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
+    "name":"start_dream",
+    "arguments":{"agent_id":"robot-42","config":{"budget_usd":0.10,"confidential":true}}
+  }}'
+```
+
+Gated by `FEATURE_MCP_DREAM_CONFIDENTIAL=true` (default OFF). Under the hood this routes
+extraction through the `flare.instruct.dispatch` tool (`GENERIC_AGENT_TASK` opType)
+instead of calling `llm-service` directly — see [`flare.instruct.dispatch`](#flareinstructdispatch-standalone-tool)
+below for the full mechanics and what's currently real vs. still a hard boundary.
+
+### What "confidential" honestly means here — read this before assuming more
+
+**This ships "TEE-attested dispatch," not "the LLM call itself runs inside a TEE."** The
+actual token generation still happens in the same non-TEE `llm-service` process the
+plain (non-confidential) path calls — the extension's Go handler reaches out to it over
+the network exactly like any other external HTTP call. If you need the LLM call itself
+to be confidential, that's explicitly out of scope for what's shipped; nothing here
+claims otherwise.
+
+**Real, independently verifiable, live on Coston2 (as of 2026-08-08):**
+- `HyperMoveInstructionSender` deployed at
+  [`0xB4864BB622F3020a5d424ff2CC20738b3327f7E2`](https://coston2-explorer.flare.network/address/0xB4864BB622F3020a5d424ff2CC20738b3327f7E2)
+  — check its bytecode with any RPC client (`eth_getCode`), it's real.
+- HyperMove's own `tee-proxy` publicly answers at
+  `https://hypermove.duckdns.org/tee-proxy/info` — a real, signed `TeeInfoResponse`
+  from the registered extension, not canned data.
+- `flare.instruct.dispatch` genuinely reaches the deployed contract and gets real
+  on-chain responses (including real revert reasons while the deployment was mid-setup
+  — nothing was ever silently faked).
+
+**The current, honest limit:** completing on-chain TEE-machine registration requires a
+real Google Confidential Space attestation JWT. This deployment runs under
+`SIMULATED_TEE=true` (no GCP Confidential VM hardware requested) — its attestation value
+is the plain string `magic_pass`, a real, documented "testing outside of the google
+cloud" sentinel, never a fabricated-but-plausible fake quote. Until real hardware (or a
+documented simulated-registration path from Flare) exists, `start_dream({confidential:
+true})` will report the honest `fcc_dispatch_failed`/non-genuine outcome for every
+cluster — **zero cost is ever charged for a non-genuine confidential attempt**, matching
+the same discipline the plain extraction path already uses for a failed/unreachable
+`llm-service` call. Check `stage_summaries` (see "Check in on a cycle" above) to see this
+distinction directly rather than guessing from silence.
+
+## `flare.instruct.dispatch` (standalone tool)
+
+Beyond Dream Cycle, `flare.instruct.dispatch` is callable on its own — submit either a
+`FINANCIAL_ACTION` (`SWAP`/`SETTLE`, still an honest not-yet-implemented stub pending
+Flare's Protocol Managed Wallets interface) or `GENERIC_AGENT_TASK` (`COMPUTE`) instruction
+to HyperMove's Coston2 extension and poll for the result:
+
+```bash
+curl -s https://hypermove.xyz/api/mcp \
+  -H 'authorization: Bearer <token>' \
+  -H 'content-type: application/json' \
+  -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{
+    "name":"flare.instruct.dispatch",
+    "arguments":{"opType":"GENERIC_AGENT_TASK","message":{"taskType":"dream.extract","payload":"agent retried gripper pick after timeout"}}
+  }}'
+```
+
+Gated by `FEATURE_MCP_INSTRUCT_V1` (opt-in). Honest by construction at every stage:
+
+| Stage | Honest outcome if not ready |
+|---|---|
+| Feature flag off | `feature_disabled` |
+| Extension not deployed/configured | `not_configured`, names the exact env vars to set |
+| On-chain dispatch itself fails (e.g. extension ID not yet set, no TEE machine registered) | `dispatch_failed`, carries the real on-chain revert reason verbatim |
+| Dispatch succeeds, `taskType` isn't `dream.extract` | The extension's own honest not-yet-implemented refusal (status 0), never a fabricated success |
+
+Full architecture, the exact dependency chain between the indexer/proxy/extension, and
+every real bug found and fixed while deploying this live: see
+[`services/tee-extension/README.md`](https://github.com/phamdat721101/hypermove-app/blob/main/services/tee-extension/README.md)
+in the repo — it documents the complete Coston2 deployment (contract address, real
+transaction hashes, the exact hard boundary at TEE-machine registration) in detail.
+
 ## What's on by default, and how to turn it off
 
 Dream Cycle ships **on**, same as the rest of the MCP Gateway's v3.0+ tools — no flag to

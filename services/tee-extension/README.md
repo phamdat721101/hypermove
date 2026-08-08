@@ -93,6 +93,49 @@ interface, or HyperMove decides on a specific generic-compute task implementatio
 `handleFinancialAction`/`handleGenericAgentTask` and this file, citing the real interface
 source.
 
+### New real caller (Dream Cycle Confidential Extraction on Flare FCC, 2026-08-07)
+
+`hypermove-app/src/lib/mcp/dream/extract.ts`'s `extractOneClusterConfidential()` is a second
+real caller of `flare.instruct.dispatch` (`GENERIC_AGENT_TASK` opType), alongside the
+existing `flare.instruct.dispatch` MCP tool itself. It routes Dream Cycle's extraction stage
+through this same TEE-extension when an agent opts into `start_dream({confidential: true})`
+(gated by `isMcpDreamConfidentialEnabled()`, default OFF).
+
+**Update (2026-08-08): `processGenericAgentTask` is no longer a blanket stub.** For
+`taskType == "dream.extract"` specifically, `handleGenericAgentTask`
+(`internal/extension/extension.go`) now calls out to HyperMove's already-deployed
+`llm-service` `/dream/extract` route and returns REAL extraction output, matching the
+forward-looking contract this section used to only describe. Every OTHER `taskType`
+(including the still-stubbed `FINANCIAL_ACTION` path) is unchanged — still an honest
+not-yet-implemented refusal.
+
+**Read this before assuming "confidential" means "the LLM call is confidential" — it does
+not, by explicit design decision (2026-08-08):** this ships "TEE-attested dispatch + result
+signing," not "the LLM call itself runs inside the TEE." The actual token generation still
+happens in the existing non-TEE `llm-service` process, reached over the network exactly like
+any other external HTTP call this extension makes — re-implementing Bedrock/DeepSeek calls
+natively in Go inside the TEE was explicitly evaluated and rejected in favor of reusing the
+already-built, already-tested prompt/parsing logic in one place, at the cost of the LLM call
+itself not being confidential. If a future ship needs the LLM call to genuinely run inside
+the TEE, that requires re-implementing the extraction call natively in Go — this is
+explicitly NOT what shipped here.
+
+**The data contract this now actually satisfies:** `ActionResult.data` carries `{
+attestationQuote: string, insights: { rules, preferences, error_patterns, facts: string[] }
+}` exactly as the TS caller side (`extract.ts`'s `extractOneClusterConfidential()`,
+`confidential.ts`'s `verifyAttestation()`) already expects — see
+`hypermove-app/tests/mcp-dream-extract-confidential.test.ts`'s "Task 5" suite for the exact
+contract, and this repo's own `internal/extension/extension_test.go` for the Go-side tests
+covering the real success path, a non-genuine (`extraction_failure_reason` present) failure,
+an unreachable-service failure, and a non-2xx-status failure — all verified passing via a
+real `go test` run, not self-declared.
+
+**The attestation quote is honestly NOT a real cryptographic quote under this deployment's
+`SIMULATED_TEE=true`/`MODE=1` posture** — see the "Deploying to Coston2" section below for
+why, and why `confidential.ts`'s real Phala Cloud verification call correctly, honestly
+rejects it. This is the expected, documented current boundary — not a bug to "fix" by
+fabricating a plausible-looking fake quote.
+
 ## Local build & test (no live chain needed)
 
 ```bash
@@ -107,34 +150,166 @@ go build ./...
 go test ./pkg/...
 ```
 
-Verified working in this session with Go 1.26.5 (Homebrew `go` formula) — the system's
-pre-existing `/usr/local/go` install was Go 1.19.4, too old for this module's `go 1.25.1`
-requirement. Both Go installs coexist; nothing about the older system Go was removed.
+Verified working with Go 1.25.1 (both via Homebrew locally and a fresh `go.dev/dl` download
+on the deployment VPS) — coexisting with an older system Go install in both cases; nothing
+about the system Go was removed in either environment.
 
-## Deploying to Coston2 (real external blockers — see the PRD's pre-mortem T1)
+## Deploying to Coston2 — LIVE as of 2026-08-08 (native VPS deployment, no Docker)
 
-This session did **not** deploy to live Coston2. Two real, human-required blockers stand
-between "builds and unit-tests locally" and "registered on Coston2":
+**Update (2026-08-08):** deployed for real to Coston2, self-hosted end-to-end on the existing
+`hypermove-app`/`llm-service` VPS (`13.212.193.69`) — no ngrok/cloudflared, no shared Flare
+indexer-DB credential request. Both of the two blockers this section used to describe were
+resolved by self-hosting instead of waiting on them:
 
-1. **Flare indexer-DB credentials** — `ext-proxy` needs a MySQL-shaped indexer DB. Per the
-   scaffold's own docs, request access via Flare support / `@FlareDevs` on X.
-2. **A public HTTPS tunnel** to port 6674 (`ngrok http 6674` or `cloudflared tunnel --url
-   http://localhost:6674`) — required so Flare's own data providers can reach `ext-proxy`.
+1. **Indexer-DB credentials** — instead of requesting Flare's shared indexer-DB access,
+   `services/tee-extension/flare-system-c-chain-indexer` (already vendored in this repo) runs
+   natively against a **self-hosted MySQL 8.0** instance on the same VPS
+   (`hypermove_fcc_indexer` database, localhost-only). No external credential request was
+   needed — self-hosting a real Flare C-chain indexer against your own MySQL is a fully
+   supported, documented path (see that binary's own README).
+2. **Public HTTPS reachability for `ext-proxy`** — instead of ngrok/cloudflared, the VPS's
+   existing Caddy instance (already TLS-terminating `hypermove.duckdns.org` for
+   `hypermove-app`/`llm-service`) got a third `handle_path /tee-proxy/* { reverse_proxy
+   localhost:6664 }` route, matching the existing `/llm/*` pattern exactly.
 
-Once both are in place, follow `docs/deployment-steps.md` (already in this scaffold) or the
-condensed sequence:
+**No Docker anywhere in this deployment** (per explicit scope decision) — `tee-proxy`,
+`extension-tee` (built from `extension-scaffold`'s `cmd/docker` package, which is Docker-named
+but is a plain Go binary with no Docker dependency), and the indexer all run as native Go
+binaries supervised by PM2, alongside `hypermove-app`/`llm-service`. Redis (`apt install
+redis-server`, localhost-only) replaces the docker-compose `redis` service `tee-proxy`
+requires.
+
+**Real, on-chain, independently-verified results:**
+- `HyperMoveInstructionSender` deployed at `0xB4864BB622F3020a5d424ff2CC20738b3327f7E2` on
+  Coston2 — verified via a fresh `eth_getCode` RPC call returning real bytecode (10,475
+  bytes), not just trusting the deploy script's own stdout.
+- Extension registered on-chain: `EXTENSION_ID = 0x101e4`.
+- Full `tee-proxy` ↔ `extension-tee` round trip verified working: a real TEE_INFO action was
+  enqueued, picked up, processed, and answered with `status 1` — the extension genuinely
+  executes and responds, this is not a mocked/simulated result.
+
+**A real upstream bug found and fixed during this deployment** (not present in any of this
+repo's own prior code): `tee-proxy`'s `buildAttestationConfig()` (`internal/proxy/proxy.go`)
+never returned `nil` when attestation was disabled — it returned a non-nil
+`&attestation.Config{Enabled:false}` instead. `info.go`'s own doc comment says its
+`attestationCfg` parameter "may be nil or disabled," and gates its ENTIRE response-signature-
+verification block (not just the deeper `attestation.Verify()` call) on `attestationCfg !=
+nil` — so a disabled attestation config still forced signature verification to run
+unconditionally, and a real, correct TEE_INFO response panicked with "verifying response
+signature: invalid signature length" even though attestation was configured off. Fixed by
+returning `nil` (matching the documented intent) plus a nil-guard in `logAttestationPosture`.
+See that function's own code comment for the full trace.
+
+**Two additional dev-only, clearly-labeled shortcuts** (both loudly logged, neither is a
+config default — see each one's own code comment for the exact tradeoff and why it's safe
+ONLY for this kind of dev deployment):
+- `flare-system-c-chain-indexer`'s `internal/fsp/startup.go`: `SKIP_FSP_BACKFILL=true` env
+  var forces `backfillEvents=false`, trading full FSP reward-epoch historical correctness for
+  faster startup. **Not used in the final working deployment** — the real backfill (14 log
+  filters × ~27k blocks) was re-run to completion once `tee-proxy`'s actual dependency on
+  real signing-policy log data was discovered (see below); this flag is kept as a documented
+  option for future dev iterations where full backfill isn't needed.
+- `tee-proxy`'s `internal/proxy/proxy.go`: `TEE_PROXY_OUT_OF_SYNC_TOLERANCE_SECONDS` env var
+  overrides the hardcoded 1-minute `outOfSyncTolerance` — this constrained VPS's self-hosted
+  indexer cannot always index Coston2 blocks faster than the chain produces them, so the
+  upstream 1-minute default is too tight for this specific host's throughput.
+
+**Real dependency chain discovered (useful for the next person deploying this):**
+`tee-proxy` startup requires, in this order: (1) DB sync within `outOfSyncTolerance`, (2) a
+successful TEE_INFO round trip with the extension (needs the CORRECT binary —
+`extension-scaffold`'s `./cmd` package is a bare standalone handler with no sign/config
+server; the real Docker-parity binary is `./cmd/docker`, which wraps `tee-node`'s sign+config
+servers together with the scaffold's action handler in one process — building the wrong one
+produces a "connection refused" on `localhost:6663` from the extension side), (3) real
+on-chain signing-policy log data in the indexer DB (from the FSP backfill) to initialize its
+signing-policy service — skipping step 3 via `SKIP_FSP_BACKFILL` un-blocks steps 1-2 but then
+fails at "initializing signing policy: ... no signing policy logs found in db."
+
+Condensed real sequence used (native, not the docker-compose-oriented steps below):
 
 ```bash
-cp .env.example .env
-# fill in DEPLOYMENT_PRIVATE_KEY, INITIAL_OWNER, PROXY_PRIVATE_KEY, CHAIN_URL, EXT_PROXY_URL
-./scripts/pre-build.sh
-./scripts/start-services.sh --chain coston2
-./scripts/post-build.sh
-./scripts/test.sh
+# 1. Contract deploy + extension registration (real, on Coston2)
+cd extension-examples/extension-scaffold
+./scripts/pre-build.sh   # needs .env: DEPLOYMENT_PRIVATE_KEY, INITIAL_OWNER, CHAIN=coston2
+
+# 2. Native binaries (NOT docker compose)
+go build -o bin-indexer ./cmd/indexer          # flare-system-c-chain-indexer
+go build -o bin-tee-proxy ./cmd/proxy           # tee-proxy
+go build -o bin-extension-tee ./cmd/docker      # extension-scaffold — MUST be ./cmd/docker
+
+# 3. pm2 start each with the right env (see this file's "What was customized" table +
+#    the real dependency chain above for exact env vars each needs)
+
+# 4. Register TEE version + governance (needs step 2's tee-proxy /info endpoint reachable)
+EXT_PROXY_URL=http://localhost:6664 LOCAL_MODE=false CHAIN=coston2 ./scripts/post-build.sh
 ```
 
-`SIMULATED_TEE=true` (already the default posture this PRD targets) means no Confidential VM
-hardware is required for this stage — matching Flare's own documented dev path.
+`SIMULATED_TEE=true`/`MODE=1` (this deployment's posture) means the extension's own
+attestation quote is `tee-node/pkg/attestation.MagicPass` — a real, public, documented
+"testing outside of the google cloud" sentinel, NOT a cryptographic quote. This is expected
+and correctly, honestly rejected by `confidential.ts`'s real Phala Cloud verification call —
+see `internal/extension/extension.go`'s `handleGenericAgentTask` doc comment for the full
+scope boundary this implies.
+
+### Historical context (pre-2026-08-08, kept for reference)
+
+Before this session, deployment was blocked on two assumed-external blockers:
+
+1. **Flare indexer-DB credentials** — request access via Flare support / `@FlareDevs` on X.
+2. **A public HTTPS tunnel** to port 6674 (`ngrok http 6674` or `cloudflared tunnel --url
+   http://localhost:6674`).
+
+Both turned out to be avoidable by self-hosting (see above) rather than genuinely required —
+worth remembering the next time a deployment blocker looks like it needs an external party:
+check whether self-hosting the dependency is actually viable first.
+
+### Current real status (verified 2026-08-08) and the actual hard boundary hit
+
+**Genuinely live and independently verified:**
+- `HyperMoveInstructionSender` deployed on Coston2 at
+  `0xB4864BB622F3020a5d424ff2CC20738b3327f7E2` — bytecode independently confirmed via a fresh
+  `eth_getCode` call (10,475 bytes).
+- Extension registered on-chain (`EXTENSION_ID = 0x101e4` / decimal `66020`), then
+  `setExtensionId()` called for real (tx `0xe9445d9fcf6faac61973228b927b70ba1a2ed188a805d115cde943c56a447b58`,
+  block `33765848`, `status: 1`).
+- TEE governance set on-chain for the extension (1 signer, threshold 1) via `set-governance`
+  — real tx, confirmed.
+- `tee-proxy`'s public `/info` endpoint is LIVE at
+  `https://hypermove.duckdns.org/tee-proxy/info` (HTTP 200), serving a real, complete
+  `TeeInfoResponse` — real `dataSignature`/`proxySignature`, real extension/machine identity,
+  honestly-labeled `"attestation":"magic_pass"` (see the SIMULATED_TEE note above).
+- `hypermove-app`'s `flare.instruct.dispatch` MCP tool successfully reaches the deployed
+  contract over a real `tools/call` request — confirmed via a live curl against the running
+  gateway, producing real, informative on-chain revert reasons at each step as blockers were
+  fixed one at a time ("Extension ID is not set" → fixed → real custom-error revert from
+  `TeeExtensionRegistry.sendInstructions()` because no TEE machine was registered yet).
+- **A second real bug found and fixed in `flare-instruct.ts`** during this live testing: the
+  poll URL was `/action-result/{id}` (hyphenated) — the real `tee-proxy` route (per
+  `internal/server/external.go`) is `/action/result/{id}` (path-segmented). Also fixed:
+  `ActionResult.Data` is `hexutil.Bytes` (0x-hex-encoded raw bytes containing a JSON string,
+  per `tee-node/pkg/types/actions.go`), not a plain JSON value — the poll result now
+  hex-decodes before `JSON.parse`. Both fixes verified via 2 new tests in
+  `tests/mcp-flare-instruct-dispatch.test.ts` plus a live call against the real deployment.
+
+**The actual hard boundary — real Google Confidential Space hardware, not fixable from
+here:** completing on-chain TEE-machine registration (`register-tee`) requires parsing a
+Google Confidential Space attestation JWT (`fccutils.CodeHashAndPlatform()` →
+`googlecloud.ParsePKITokenUnverifiedClaims()`) to extract a real code-hash/platform claim.
+Under `SIMULATED_TEE=true` (this deployment's only possible posture — no GCP Confidential VM
+requested or available), the extension's attestation value is the plain string `"magic_pass"`
+— not a JWT, so parsing fails with "token contains an invalid number of segments." Read the
+tool's source directly to confirm: there is no `LOCAL_MODE`/simulated-mode bypass for this
+specific parse step anywhere in `fccutils`. This means:
+- `sendGenericAgentTask`/`sendFinancialAction` will keep reverting with a
+  `TeeExtensionRegistry`-side custom error (unregistered TEE machine — `getRandomTeeIds()`
+  has no machine to return) until a machine is registered, which requires real hardware.
+- Everything UP TO this exact point — deployment, extension registration, governance,
+  `tee-proxy`↔`extension-tee` communication, the public `/info` endpoint, and the full MCP
+  dispatch path reaching the contract — is real, live, and independently verified.
+- This is the genuine, correctly-identified boundary between "SIMULATED_TEE dev deployment"
+  and "real hardware-backed FCC" — not a config gap or a bug to patch around. Real GCP
+  Confidential Space hardware (or Flare shipping a documented simulated-registration path)
+  is required to go further.
 
 ## Cross-reference
 

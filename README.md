@@ -247,7 +247,47 @@ RLUSD_DEMO_MODE=live RLUSD_DEMO_SEED=sEd... npx tsx scripts/demo-t54-rlusd-dream
 
 Required env vars, config knobs, and troubleshooting: `scripts/demo-t54-rlusd-dream-cycle.ts`'s header comment.
 
+## Dream Cycle on Flare FCC — confidential extraction via HyperMove's own TEE extension
 
+Dream Cycle's extraction step can optionally route through **HyperMove's own Flare
+Compute Extension (FCE)** — a real, deployed `InstructionSender` contract + Go
+`tee-proxy`/`extension-tee` pair on Coston2 — instead of calling `services/llm` directly.
+Opt in with `start_dream({..., config: {confidential: true}})`, gated by
+`FEATURE_MCP_DREAM_CONFIDENTIAL=true` (default OFF). Full usage: [`/docs/dream-cycle`](https://hypermove.xyz/docs/dream-cycle#confidential-extraction-on-flare-fcc-opt-in-real-coston2-deployment).
+
+**What "confidential" honestly means:** this ships TEE-attested dispatch + result
+signing, not "the LLM call itself runs inside a TEE" — the token generation still
+happens in the same non-TEE `services/llm` process, reached over the network. Genuinely
+different from a system that ran the LLM inference itself inside a Confidential VM; don't
+read more into "confidential" than that.
+
+**Real, independently verifiable, live on Coston2:**
+
+| What | Where to check |
+|---|---|
+| `HyperMoveInstructionSender` contract | `0xB4864BB622F3020a5d424ff2CC20738b3327f7E2` — `eth_getCode` against `https://coston2-api.flare.network/ext/C/rpc` returns real bytecode |
+| Extension registration | `EXTENSION_ID = 0x101e4` (decimal 66020), `setExtensionId()` confirmed on-chain |
+| Public TEE-proxy endpoint | `https://hypermove.duckdns.org/tee-proxy/info` — a real, signed `TeeInfoResponse` |
+| MCP tool reaching the contract | `flare.instruct.dispatch` — real on-chain calls, real revert reasons surfaced verbatim, never a fabricated success |
+
+**The honest current limit:** completing on-chain TEE-machine registration
+(`register-tee`) requires a real Google Confidential Space attestation JWT. This
+deployment runs under `SIMULATED_TEE=true` (no GCP Confidential VM requested) — its
+attestation value is `magic_pass`, a real, documented Google-Cloud-SDK "testing outside
+the cloud" sentinel, not a cryptographic quote. `confidential.ts`'s real Phala Cloud
+verification call correctly, honestly rejects it — this is the expected, documented
+boundary of a `SIMULATED_TEE` dev deployment, not a bug. `start_dream({confidential:
+true})` reports the honest `fcc_dispatch_failed` outcome (zero cost charged) until real
+TEE hardware is available; `flare.instruct.dispatch` still reaches the real deployed
+contract and surfaces the real on-chain state at every step.
+
+Deployed as native Go binaries under PM2 on the same VPS as `hypermove-app`/`llm-service`
+— no Docker, no ngrok. Self-hosted MySQL + Redis + Flare's own `flare-system-c-chain-indexer`
+back the TEE-proxy's on-chain sync requirement; a third Caddy route
+(`/tee-proxy/* → localhost:6664`) exposes it publicly, mirroring the existing `/llm/*`
+route. Full deployment story — every real bug found and fixed, the exact dependency
+chain, and the precise resume point at the attestation-hardware boundary — is documented
+in [`services/tee-extension/README.md`](./services/tee-extension/README.md).
 
 ## Architecture
 

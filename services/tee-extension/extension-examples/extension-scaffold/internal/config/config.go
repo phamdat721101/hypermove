@@ -48,4 +48,18 @@ func init() {
 			TypesServerPort = v
 		}
 	}
+
+	if v := os.Getenv("DREAM_EXTRACT_URL"); v != "" {
+		DreamExtractURL = v
+	}
 }
+
+// DreamExtractURL points at HyperMove's llm-service /dream/extract route
+// (services/llm/server.ts). Default matches the real deployed VPS route
+// (Task 2, 2026-08-08) — override via DREAM_EXTRACT_URL for local dev.
+var DreamExtractURL = "https://hypermove.duckdns.org/llm/dream/extract"
+
+// DreamExtractTimeout bounds the HTTP call to services/llm — an unreachable
+// or slow extraction service must fail honestly rather than hang the whole
+// TEE action pipeline indefinitely.
+const DreamExtractTimeout = 20 * time.Second

@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"os"
+	"strconv"
 	"time"
 
 	"github.com/ethereum/go-ethereum/common"
@@ -30,10 +32,37 @@ import (
 )
 
 const (
-	outOfSyncTolerance = 1 * time.Minute
-	walletSyncPeriod   = 1 * time.Hour
-	shutdownTimeout    = 10 * time.Second
+	// DEV-ONLY OVERRIDE (2026-08-08, HyperMove Dream Cycle Confidential
+	// Extraction on Flare FCC deployment): outOfSyncTolerance loosened from
+	// the upstream default (1 minute) to 5 minutes via
+	// TEE_PROXY_OUT_OF_SYNC_TOLERANCE_SECONDS, because this constrained VPS's
+	// self-hosted flare-system-c-chain-indexer cannot reliably index Coston2
+	// blocks faster than the chain produces them (confirmed: indexer lag
+	// oscillates 1-4 minutes under real, sustained load on this host, not a
+	// one-time startup catchup lag). Loosening this tolerance trades a small
+	// amount of result/action-processing latency for indexer-throughput
+	// headroom — it does NOT affect correctness of what IS indexed, only how
+	// stale the proxy tolerates its own view being before treating it as
+	// failed. NEVER rely on this override in a deployment with adequate
+	// indexer throughput; fix the underlying resource constraint instead.
+	walletSyncPeriod = 1 * time.Hour
+	shutdownTimeout  = 10 * time.Second
 )
+
+var outOfSyncTolerance = resolveOutOfSyncTolerance()
+
+func resolveOutOfSyncTolerance() time.Duration {
+	const defaultTolerance = 1 * time.Minute
+	v := os.Getenv("TEE_PROXY_OUT_OF_SYNC_TOLERANCE_SECONDS")
+	if v == "" {
+		return defaultTolerance
+	}
+	secs, err := strconv.Atoi(v)
+	if err != nil || secs <= 0 {
+		return defaultTolerance
+	}
+	return time.Duration(secs) * time.Second
+}
 
 // Run boots the proxy and blocks until ctx is cancelled, then drains the HTTP servers.
 func Run(ctx context.Context, cfgPath string) {
@@ -253,7 +282,20 @@ func metricsConfig(c config.Metrics) metrics.Config {
 
 func buildAttestationConfig(cfg *config.Attestation, chainID uint64) (*attestation.Config, error) {
 	if !cfg.Enable {
-		return &attestation.Config{Enabled: false}, nil
+		// Fixed (2026-08-08, HyperMove Coston2 dev deployment): return nil, not a
+		// non-nil &attestation.Config{Enabled:false}. info.go's NewService doc
+		// comment explicitly says its attestationCfg param "may be nil or
+		// disabled" and gates the ENTIRE signature-verification block (not just
+		// the deeper attestation.Verify() call) on `if s.attestationCfg != nil`
+		// — but this function never actually returned nil, so a disabled
+		// attestation config still forced response-signature verification to
+		// run unconditionally. That's how a real, correct TEE_INFO round trip
+		// (proxy -> extension-tee -> proxy, status 1, genuine response) still
+		// panicked with "verifying response signature: invalid signature
+		// length" on this SIMULATED_TEE dev deployment: the check ran despite
+		// attestation being configured off. Returning nil here restores the
+		// documented, intended behavior.
+		return nil, nil
 	}
 
 	root, err := attestation.GoogleCSRoot()
@@ -290,7 +332,9 @@ func buildAttestationConfig(cfg *config.Attestation, chainID uint64) (*attestati
 }
 
 func logAttestationPosture(cfg *attestation.Config) {
-	if !cfg.Enabled {
+	// nil is now a real, valid state (see buildAttestationConfig's 2026-08-08
+	// fix) — guard before dereferencing.
+	if cfg == nil || !cfg.Enabled {
 		logger.Warn("attestation verification disabled — bootstrap relies on network isolation only")
 		return
 	}

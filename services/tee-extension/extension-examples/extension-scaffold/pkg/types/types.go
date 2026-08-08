@@ -43,14 +43,51 @@ type GenericAgentTaskRequest struct {
 
 // GenericAgentTaskResponse is the JSON payload returned in ActionResult.Data.
 //
-// Result is deliberately unset in this ship — real confidential-compute task execution
-// is an honest, tracked fast-follow (see FinancialActionResponse's doc comment for the
-// same discipline applied here).
+// Fixed 2026-08-08 (Task 2, Dream Cycle Confidential Extraction on Flare FCC):
+// for taskType == "dream.extract", this now carries a REAL result from
+// calling out to HyperMove's llm-service /dream/extract route — Insights is
+// populated with the genuine extraction output, and AttestationQuote carries
+// whatever this TEE machine's attestation mechanism produced (see
+// handleGenericAgentTask's doc comment: under SIMULATED_TEE=true this is
+// Google Confidential Space's dev-only "magicpass" sentinel, NOT a real
+// cryptographic quote — confidential.ts's verifyAttestation() correctly,
+// honestly rejects it; this is documented, expected behavior for this dev
+// deployment, not a bug). Any other taskType still returns the honest
+// not-yet-implemented refusal exactly as before.
 type GenericAgentTaskResponse struct {
-	TaskType   string  `json:"taskType"`
-	Status     string  `json:"status"` // always "not_yet_implemented" in this ship
-	Result     *string `json:"result"`
-	TaskCount  int     `json:"taskCount"`
+	TaskType         string           `json:"taskType"`
+	Status           string           `json:"status"` // "ok" | "not_yet_implemented" | "extract_failed"
+	Result           *string          `json:"result"`
+	TaskCount        int              `json:"taskCount"`
+	AttestationQuote string           `json:"attestationQuote,omitempty"`
+	Insights         *DreamInsights   `json:"insights,omitempty"`
+}
+
+// DreamInsights mirrors src/lib/mcp/dream/extract.ts's ExtractedInsights shape
+// exactly (rules/preferences/error_patterns/facts) — the documented contract
+// GENERIC_AGENT_TASK/dream.extract must satisfy for the TS caller side.
+type DreamInsights struct {
+	Rules         []string `json:"rules"`
+	Preferences   []string `json:"preferences"`
+	ErrorPatterns []string `json:"error_patterns"`
+	Facts         []string `json:"facts"`
+}
+
+// DreamExtractRequest is the request body POSTed to services/llm's
+// /dream/extract route (see src/lib/mcp/dream/extract.ts's module doc for
+// the authoritative contract this must match).
+type DreamExtractRequest struct {
+	Summary         string `json:"summary"`
+	MaxOutputTokens int    `json:"max_output_tokens"`
+}
+
+// DreamExtractResponse is /dream/extract's response body.
+type DreamExtractResponse struct {
+	Rules                  []string `json:"rules"`
+	Preferences            []string `json:"preferences"`
+	ErrorPatterns          []string `json:"error_patterns"`
+	Facts                  []string `json:"facts"`
+	ExtractionFailureReason string  `json:"extraction_failure_reason,omitempty"`
 }
 
 // GenericAgentTaskMessageArg describes the ABI layout of GenericAgentTaskMessage from the

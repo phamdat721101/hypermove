@@ -24,6 +24,8 @@ import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { NextRequest } from 'next/server';
 import { getTools, type ToolDef } from './tools';
+import { getPrompts, type PromptDef } from './prompts';
+import { isMcpResourcesEnabled } from '../platform-flag';
 import { callTool } from './gateway';
 import { authenticate, type McpSession } from './auth';
 
@@ -121,6 +123,35 @@ function registerTool(server: Parameters<Parameters<typeof createMcpHandler>[0]>
   });
 }
 
+/**
+ * The MCP Prompts primitive — net-new (see prompts.ts's module doc for why
+ * nothing before this called server.registerPrompt() despite
+ * isMcpResourcesEnabled() existing). Mirrors registerTool()'s exact shape:
+ * PromptDef.arguments (always plain strings per the MCP spec's prompt
+ * argument contract, unlike a tool's arbitrarily-typed inputSchema) becomes
+ * a Zod raw shape of z.string()/z.string().optional(); PromptDef.resolve()'s
+ * PromptMessage[] return is wrapped 1:1 into the SDK's GetPromptResult shape
+ * ({messages: [...]}) — no reshaping needed since prompts.ts's PromptMessage
+ * type was defined to match the SDK's shape exactly.
+ */
+export function registerPrompt(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0], prompt: PromptDef): void {
+  const argsSchema: Record<string, ZodTypeAny> = {};
+  for (const arg of prompt.arguments) {
+    let field: ZodTypeAny = z.string();
+    if (arg.description) field = field.describe(arg.description);
+    argsSchema[arg.name] = arg.required ? field : field.optional();
+  }
+
+  server.registerPrompt(
+    prompt.name,
+    { description: prompt.description, argsSchema: argsSchema as ZodRawShape },
+    async (args) => {
+      const messages = await prompt.resolve((args ?? {}) as Record<string, string | undefined>);
+      return { messages };
+    },
+  );
+}
+
 /** Bridge HyperMove's 3-layer auth gate into an MCP AuthInfo (session in `extra`). */
 async function verifyToken(req: Request, bearer?: string): Promise<AuthInfo | undefined> {
   const outcome = await authenticate(req as unknown as NextRequest);
@@ -137,6 +168,16 @@ export function mcpHttpHandler(): (req: Request) => Promise<Response> {
   const base = createMcpHandler(
     (server) => {
       for (const tool of getTools()) registerTool(server, tool);
+      // Dream Cycle Confidential Extraction on Flare FCC, Task 7. First-ever
+      // real MCP prompt registration in this codebase — see prompts.ts's
+      // module doc for the "isMcpResourcesEnabled() existed but nothing
+      // called server.registerPrompt()" gap this closes. Gated by the SAME
+      // flag tools.ts's resources-adjacent tools already check, since that
+      // flag's own name ("MCP resources + prompts exposure") already
+      // promised prompt exposure — this task makes that promise true.
+      if (isMcpResourcesEnabled()) {
+        for (const prompt of getPrompts()) registerPrompt(server, prompt);
+      }
     },
     { serverInfo: { name: 'hypermove.xyz', version: '2.0.0' } },
     { basePath: '/api', disableSse: true, verboseLogs: false },

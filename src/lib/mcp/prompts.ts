@@ -1,154 +1,188 @@
 /**
  * src/lib/mcp/prompts.ts
  * -----------------------
- * MCP prompts — reusable prompt templates that compose tools into higher-level
- * workflows. Prompts are exposed through the MCP prompt API.
+ * MCP prompts — reusable, user-controlled templates a client can select and
+ * invoke, per the MCP spec's prompts/list + prompts/get methods.
+ *
+ * Prior to this file, no MCP prompt was ever real in this codebase: despite
+ * isMcpResourcesEnabled() existing (M6 — "MCP resources + prompts exposure")
+ * and docs/dream-cycle.json describing a `prompts` section, server.ts's
+ * mcpHttpHandler() only ever called server.tool(...) on the real
+ * @modelcontextprotocol/sdk handler — never server.prompt()/registerPrompt().
+ * This file is the data layer (parallel to tools.ts's ToolDef/getTools());
+ * server.ts's registerPrompt() is the transport-wiring layer that actually
+ * calls the SDK.
  *
  * SOLID:
- *  - Single Responsibility: each prompt is a thin composition over tools.
- *  - Open/Closed: add new prompts by appending to PROMPTS map.
+ *  - Single Responsibility: prompt definitions + their gating only. No
+ *    transport/SDK code lives here (that's server.ts's job, mirroring how
+ *    tools.ts never touches the SDK either).
+ *  - Open/Closed: add a new prompt by appending a PromptDef + one line in
+ *    getPrompts() — no caller (server.ts) changes.
  */
 
-import { isMcpBuilderBriefEnabled, isMcpFlareEnabled, isMcpGoatEnabled, isMcpXrplV3Enabled, isMcpDreamCycleEnabled } from '../platform-flag';
+import { isMcpDreamCycleEnabled, isMcpDreamConfidentialEnabled } from '../platform-flag';
 
-export interface McpPrompt {
+export interface PromptArgument {
   name: string;
-  description: string;
-  arguments: { name: string; description: string; required: boolean }[];
-  messages: { role: 'user' | 'assistant'; content: { type: 'text'; text: string } }[];
+  description?: string;
+  required?: boolean;
 }
 
-/** Builder brief prompt — generates a decision-ready brief for a chain. */
-const builderBriefPrompt: McpPrompt = {
-  name: 'builder.brief',
-  description: 'Synthesize a decision-ready builder brief for a chain (Flare, XRPL, GOAT) using live reads + corpus + news.',
-  arguments: [
-    { name: 'chain', description: 'Chain to build a brief for (flare-mainnet, xrpl-mainnet, goat-mainnet)', required: true },
-  ],
-  messages: [
-    {
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Generate a builder brief for the specified chain. Use the *.builder.brief tools to compose live reads + corpus + news into a decision-ready output.
+export interface PromptMessage {
+  role: 'user' | 'assistant';
+  content: { type: 'text'; text: string };
+}
 
-For Flare: use flare.builder.brief
-For XRPL: use xrpl.builder.brief
-For GOAT: use goat.builder.brief
+export interface PromptDef {
+  name: string;
+  description: string;
+  arguments: PromptArgument[];
+  /**
+   * Resolves the prompt's arguments into the messages a client should send.
+   * Mirrors ToolDef.handler's shape (args in, result out) but returns
+   * PromptMessage[] instead of a tool result — matching the MCP spec's
+   * GetPromptResult.messages shape exactly (server.ts's registerPrompt()
+   * wraps this 1:1, no reshaping needed).
+   */
+  resolve(args: Record<string, string | undefined>): Promise<PromptMessage[]>;
+}
 
-The brief must be:
-1. Source-labeled (every figure traces to a corpus entry or live read)
-2. Decision-ready (clear recommendations, not raw data)
-3. Enforcer-verified (missing required fields will be blocked)`,
-      },
-    },
-  ],
-};
-
-/** Settlement quote prompt — compare RLUSD vs XRP settlement. */
-const settlementQuotePrompt: McpPrompt = {
-  name: 'settlement.quote',
-  description: 'Compare RLUSD vs native XRP settlement cost/finality for an amount (Rule #33).',
-  arguments: [
-    { name: 'amount', description: 'Amount in USD to settle', required: true },
-  ],
-  messages: [
-    {
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Use xrpl.settlement.quote to compare RLUSD vs native XRP settlement for the specified amount.
-
-Rule #33: Native XRP is preferred for high-frequency micropayments (no trustline, deterministic fee).
-RLUSD is preferred for larger invoices (stable value).`,
-      },
-    },
-  ],
-};
-
-// ─── Dream Cycle prompts (2026-07-26) ──────────────────────────────────────
-//
-// Thin compositions over the dream/* tools + resources — each prompt tells
-// the client which tool/resource to call, never reimplements pipeline logic
-// here (matches builderBriefPrompt/settlementQuotePrompt's style exactly).
-
-const dreamSummarizeTodayPrompt: McpPrompt = {
+/**
+ * The original Dream Cycle spec's 3 prompts (docs/prd/dream-cycle-v1.md's
+ * Task 12/docs/dream-cycle.json's mcp_interface.prompts) — planned since the
+ * feature's original PRD but never actually built until this file existed
+ * (see this module's header doc). Gated by isMcpDreamCycleEnabled() (the
+ * base Dream Cycle flag, default ON) — these 3 are part of the core feature,
+ * not the confidential extension, so they follow Dream Cycle's own
+ * always-on-unless-opted-out convention, not the confidential feature's
+ * opt-in one.
+ */
+const dreamSummarizeTodayPrompt: PromptDef = {
   name: 'dream/summarize_today',
-  description: 'Returns a brief summary of what the last Dream Cycle learned for the agent.',
-  arguments: [
-    { name: 'agent_id', description: 'Unique identifier of the agent.', required: true },
-  ],
-  messages: [
-    {
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Summarize what Dream Cycle learned for agent {agent_id} today.
-
-Read the hypermove:///agents/{agent_id}/dream/summary resource (or call get_dream_stats(agent_id)
-if the resource is unavailable) and produce a brief, plain-language summary of:
-1. What was learned (rules, error patterns, facts)
-2. How many memories were added/removed this cycle
-3. What the agent should do differently next time`,
+  description: "Returns a brief summary of what the last Dream Cycle learned for the agent.",
+  arguments: [{ name: 'agent_id', description: 'Unique identifier of the agent.', required: true }],
+  async resolve(args) {
+    const agentId = args.agent_id ?? '';
+    return [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Summarize what the last Dream Cycle learned for agent "${agentId}". Read the hypermove:///agents/${agentId}/dream/summary resource for context before answering.`,
+        },
       },
-    },
-  ],
+    ];
+  },
 };
 
-const dreamSuggestPolicyUpdatesPrompt: McpPrompt = {
+const dreamSuggestPolicyUpdatesPrompt: PromptDef = {
   name: 'dream/suggest_policy_updates',
   description: 'Given a task_type, returns suggested policy changes based on learned rules and error patterns.',
   arguments: [
     { name: 'agent_id', description: 'Unique identifier of the agent.', required: true },
     { name: 'task_type', description: 'The task type to suggest policy updates for.', required: true },
   ],
-  messages: [
-    {
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Suggest policy updates for agent {agent_id}'s "{task_type}" tasks.
-
-Read hypermove:///agents/{agent_id}/dream/summary, hypermove:///agents/{agent_id}/dream/rules,
-and hypermove:///agents/{agent_id}/dream/errors (or call query_dream(agent_id, "{task_type}")
-if resources are unavailable). Synthesize concrete, actionable policy changes the agent should
-adopt for "{task_type}" tasks based on the rules and error patterns learned.`,
+  async resolve(args) {
+    const agentId = args.agent_id ?? '';
+    const taskType = args.task_type ?? '';
+    return [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Suggest policy updates for agent "${agentId}" on task_type "${taskType}", grounded in its learned rules and error patterns. Read hypermove:///agents/${agentId}/dream/summary, hypermove:///agents/${agentId}/dream/rules, and hypermove:///agents/${agentId}/dream/errors for context before answering.`,
+        },
       },
-    },
-  ],
+    ];
+  },
 };
 
-const dreamCompareBeforeAfterPrompt: McpPrompt = {
+const dreamCompareBeforeAfterPrompt: PromptDef = {
   name: 'dream/compare_before_after',
   description: 'Takes a JSON blob of evaluation scores and returns a brief comparison.',
-  arguments: [
-    { name: 'eval_scores_json', description: 'JSON blob of before/after evaluation scores.', required: true },
-  ],
-  messages: [
-    {
-      role: 'user',
-      content: {
-        type: 'text',
-        text: `Compare the before/after evaluation scores in this JSON blob: {eval_scores_json}
-
-You may also read hypermove:///agents/{agent_id}/dream/stats for the Dream Cycle run that
-produced the "after" state. Produce a brief comparison highlighting what improved, what
-regressed, and whether the Dream Cycle appears to have helped.`,
+  arguments: [{ name: 'eval_scores_json', description: 'JSON blob of before/after evaluation scores to compare.', required: true }],
+  async resolve(args) {
+    const evalScoresJson = args.eval_scores_json ?? '{}';
+    return [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Compare the before/after evaluation scores in this JSON blob and summarize whether Dream Cycle improved performance: ${evalScoresJson}`,
+        },
       },
-    },
-  ],
+    ];
+  },
 };
 
-/** All prompts, gated by their respective feature flags. */
-export function getPrompts(): McpPrompt[] {
-  const prompts: McpPrompt[] = [];
-  if (isMcpBuilderBriefEnabled()) prompts.push(builderBriefPrompt);
-  if (isMcpXrplV3Enabled()) prompts.push(settlementQuotePrompt);
-  if (isMcpDreamCycleEnabled()) prompts.push(dreamSummarizeTodayPrompt, dreamSuggestPolicyUpdatesPrompt, dreamCompareBeforeAfterPrompt);
+/**
+ * Dream Cycle Confidential Extraction on Flare FCC, Task 8. Pre-fills a
+ * start_dream({confidential:true}) call for the given agent_id, using
+ * whatever budget/preset default is already stored for that agent (Task 9's
+ * confidential_default/preferred_settlement, or the plain dream_configs
+ * default from Task 2 if no confidential-specific default exists yet),
+ * falling back to the 'balanced' preset / global default budget if no
+ * config is stored at all — same fallback discipline startDream() itself
+ * already uses (see pipeline.ts's `DREAM_PRESETS[config.preset] ?
+ * config.preset : 'balanced'`).
+ *
+ * Gated behind isMcpDreamConfidentialEnabled() (Task 6) — getPrompts() below
+ * omits this prompt entirely from prompts/list when the flag is off, rather
+ * than registering it and erroring on invoke. A disabled capability should
+ * not even be discoverable, matching how getTools() omits every flag-gated
+ * tool the same way (see tools.ts's `if (isMcpXEnabled()) tools.push(...)`
+ * pattern) rather than registering-then-rejecting.
+ */
+const dreamRunConfidentialPrompt: PromptDef = {
+  name: 'dream/run_confidential',
+  description: 'Start a confidential Dream Cycle run for an agent — extraction routes through Flare Confidential Compute (TEE) instead of the plaintext path, settled via XRPL/RLUSD. Pre-fills start_dream with confidential:true and the agent\'s stored defaults.',
+  arguments: [
+    { name: 'agent_id', description: 'Unique identifier of the agent to run confidential Dream Cycle for.', required: true },
+  ],
+  async resolve(args) {
+    const agentId = args.agent_id ?? '';
+    const { getDreamConfig } = await import('./dream/pipeline');
+    const stored = agentId ? await getDreamConfig(agentId) : { config: null };
+    const budgetUsd = stored.config?.budget_usd ?? (Number(process.env.DREAM_MAX_BUDGET_USD_PER_CYCLE) || 0.1);
+    const preset = stored.config?.preset ?? 'balanced';
+
+    const callText = JSON.stringify({
+      tool: 'start_dream',
+      arguments: {
+        agent_id: agentId,
+        config: { budget_usd: budgetUsd, preset, confidential: true },
+      },
+    });
+
+    return [
+      {
+        role: 'user',
+        content: {
+          type: 'text',
+          text: `Run a confidential Dream Cycle for agent "${agentId}". Extraction will execute inside Flare's Confidential Compute TEE (falls back to an honest fcc_not_live result if Flare hasn't shipped live compute yet) and settles via XRPL/RLUSD. Call the start_dream tool with this exact input: ${callText}`,
+        },
+      },
+    ];
+  },
+};
+
+/**
+ * The full prompt registry. Mirrors getTools()'s exact shape (flag-gated
+ * pushes, no unconditional entries yet since every current prompt belongs to
+ * Dream Cycle) — server.ts's registerPrompt() loop is a direct parallel of
+ * registerTool()'s.
+ */
+export function getPrompts(): PromptDef[] {
+  const prompts: PromptDef[] = [];
+  if (isMcpDreamCycleEnabled()) {
+    prompts.push(dreamSummarizeTodayPrompt, dreamSuggestPolicyUpdatesPrompt, dreamCompareBeforeAfterPrompt);
+  }
+  if (isMcpDreamConfidentialEnabled()) prompts.push(dreamRunConfidentialPrompt);
   return prompts;
 }
 
-/** Find a prompt by name. */
-export function findPrompt(name: string): McpPrompt | undefined {
+export function findPrompt(name: string): PromptDef | undefined {
   return getPrompts().find((p) => p.name === name);
 }
+

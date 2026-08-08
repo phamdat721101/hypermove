@@ -1,5 +1,6 @@
-import { isMcpGatewayEnabled, isMcpAuthEnabled } from '@/lib/platform-flag';
+import { isMcpGatewayEnabled, isMcpAuthEnabled, isMcpResourcesEnabled } from '@/lib/platform-flag';
 import { getTools } from '@/lib/mcp/tools';
+import { getPrompts } from '@/lib/mcp/prompts';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -12,6 +13,14 @@ export async function GET() {
     auth_required: isMcpAuthEnabled(),
     transport: 'streamable-http',
     tools: isMcpGatewayEnabled() ? getTools().map((t) => t.name) : ['payment.x402', 'reputation.read'],
+    // Dream Cycle Confidential Extraction on Flare FCC, Task 10. Additive —
+    // mirrors the `tools` field's exact shape/gating (empty when the
+    // gateway or isMcpResourcesEnabled() is off) so a client-side page (see
+    // /mcp-connect) can detect whether dream/run_confidential is currently
+    // registered without needing a live MCP prompts/list round-trip of its
+    // own. First real consumer of getPrompts() outside the MCP transport
+    // itself (server.ts) and its own tests.
+    prompts: isMcpGatewayEnabled() && isMcpResourcesEnabled() ? getPrompts().map((p) => p.name) : [],
     version: '2.0.0',
     // PRD-A (2026-07-27 dream-cycle-practical-readiness-feedback): commit +
     // deployed_at — build-time constants only (see scripts/deploy-vps.sh),

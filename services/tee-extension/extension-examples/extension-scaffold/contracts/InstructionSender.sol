@@ -93,7 +93,11 @@ contract HyperMoveInstructionSender {
     /// @notice Sends a FINANCIAL_ACTION instruction to the TEE.
     /// @param _opCommand One of OP_COMMAND_SWAP / OP_COMMAND_SETTLE.
     /// @param _message ABI-encoded FinancialActionMessage.
-    function sendFinancialAction(bytes32 _opCommand, bytes calldata _message) external payable {
+    /// @return _instructionId The registry-assigned instruction id, propagated from
+    /// TEE_EXTENSION_REGISTRY.sendInstructions() (fixed 2026-08-08 — previously
+    /// discarded; callers had no way to poll ext-proxy by the real instruction id
+    /// and fell back to using the submission tx hash instead).
+    function sendFinancialAction(bytes32 _opCommand, bytes calldata _message) external payable returns (bytes32 _instructionId) {
         require(
             _opCommand == OP_COMMAND_SWAP || _opCommand == OP_COMMAND_SETTLE,
             "Unsupported financial-action opCommand."
@@ -111,7 +115,7 @@ contract HyperMoveInstructionSender {
             claimBackAddress: msg.sender
         });
 
-        TEE_EXTENSION_REGISTRY.sendInstructions{value: msg.value}(
+        _instructionId = TEE_EXTENSION_REGISTRY.sendInstructions{value: msg.value}(
             teeIds,
             params
         );
@@ -119,7 +123,10 @@ contract HyperMoveInstructionSender {
 
     /// @notice Sends a GENERIC_AGENT_TASK/COMPUTE instruction to the TEE.
     /// @param _message ABI-encoded GenericAgentTaskMessage.
-    function sendGenericAgentTask(bytes calldata _message) external payable {
+    /// @return _instructionId The registry-assigned instruction id, propagated from
+    /// TEE_EXTENSION_REGISTRY.sendInstructions() (fixed 2026-08-08, same rationale
+    /// as sendFinancialAction above).
+    function sendGenericAgentTask(bytes calldata _message) external payable returns (bytes32 _instructionId) {
         address[] memory teeIds = TEE_MACHINE_REGISTRY.getRandomTeeIds(_getExtensionId(), 1);
         address[] memory cosigners = new address[](0);
 
@@ -132,7 +139,7 @@ contract HyperMoveInstructionSender {
             claimBackAddress: msg.sender
         });
 
-        TEE_EXTENSION_REGISTRY.sendInstructions{value: msg.value}(
+        _instructionId = TEE_EXTENSION_REGISTRY.sendInstructions{value: msg.value}(
             teeIds,
             params
         );

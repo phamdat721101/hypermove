@@ -19,6 +19,15 @@
  * Mirrors confidential.ts's structure (flag check → configured check → runHarnessed()
  * wrapping the real network call → map to ServiceResult) so this module and that one
  * stay recognizably the same shape for anyone reading both.
+ *
+ * instructionId (fixed 2026-08-08): HyperMoveInstructionSender.sol's
+ * sendFinancialAction/sendGenericAgentTask now `return` the registry's real
+ * instructionId (previously discarded — this module fell back to using the
+ * submission tx hash as a stand-in polling key, which is NOT what ext-proxy's
+ * public API actually keys results by). Decoded via viem's
+ * simulateContract()+writeContract(request) pattern below. No Go-side ABI
+ * export or event log was ever required for this — see services/tee-extension's
+ * contracts/InstructionSender.sol for the contract-side fix.
  */
 
 import { createWalletClient, createPublicClient, http, encodeAbiParameters, defineChain, type Address } from 'viem';
@@ -73,16 +82,21 @@ const INSTRUCTION_SENDER_ABI = [
       { name: '_opCommand', type: 'bytes32' },
       { name: '_message', type: 'bytes' },
     ],
-    outputs: [],
+    outputs: [{ name: '_instructionId', type: 'bytes32' }],
   },
   {
     type: 'function',
     name: 'sendGenericAgentTask',
     stateMutability: 'payable',
     inputs: [{ name: '_message', type: 'bytes' }],
-    outputs: [],
+    outputs: [{ name: '_instructionId', type: 'bytes32' }],
   },
 ] as const;
+// NOTE: this ABI's `outputs` describes the FIXED HyperMoveInstructionSender.sol
+// contract (see Task 1 fix, 2026-08-08) — the send* wrapper functions now
+// explicitly `return` the registry's instructionId themselves (previously they
+// discarded it; ITeeExtensionRegistry.sendInstructions() always returned it,
+// but the wrapper never propagated it). See contracts/InstructionSender.sol.
 
 function opCommandToBytes32(command: string): `0x${string}` {
   const bytes = new TextEncoder().encode(command);
@@ -110,7 +124,7 @@ function encodeGenericAgentTaskMessage(message: Record<string, unknown>): `0x${s
 interface ExtProxyActionResult {
   status: number; // 0=error, 1=success, >=2=pending
   log?: string;
-  data?: unknown;
+  data?: string; // hexutil.Bytes-encoded (0x-prefixed hex) — decode before use
 }
 
 async function pollExtProxy(proxyUrl: string, instructionId: string, timeoutMs: number): Promise<ExtProxyActionResult> {
@@ -118,7 +132,12 @@ async function pollExtProxy(proxyUrl: string, instructionId: string, timeoutMs: 
   let lastResult: ExtProxyActionResult = { status: 2 };
 
   while (Date.now() < deadline) {
-    const res = await fetch(`${proxyUrl.replace(/\/$/, '')}/action-result/${instructionId}`, {
+    // Fixed (2026-08-08, real Coston2 deployment): the real ext-proxy route is
+    // GET /action/result/{actionID} (see tee-proxy's internal/server/external.go),
+    // not /action-result/{id} — found by reading the actual route table against a
+    // live deployment rather than assuming the URL shape, per this project's own
+    // "verify one layer deeper" discipline (see .kiro/steering/lessons-learned.md).
+    const res = await fetch(`${proxyUrl.replace(/\/$/, '')}/action/result/${instructionId}`, {
       signal: AbortSignal.timeout(5000),
     });
     if (res.ok) {
@@ -166,35 +185,49 @@ async function submitAndPoll(
   const walletClient = createWalletClient({ account, chain, transport: http(rpc) });
 
   let txHash: `0x${string}`;
+  let instructionId: `0x${string}`;
   if (input.opType === 'FINANCIAL_ACTION') {
     const opCommand = opCommandToBytes32(input.opCommand ?? 'SWAP');
     const message = encodeFinancialActionMessage(input.message);
-    txHash = await walletClient.writeContract({
+    // Fixed (2026-08-08): ITeeExtensionRegistry.sendInstructions() returns the
+    // real `bytes32 _instructionId` directly (see
+    // services/tee-extension/extension-examples/extension-scaffold/contracts/
+    // interfaces/ITeeExtensionRegistry.sol) — sendFinancialAction/
+    // sendGenericAgentTask on HyperMoveInstructionSender.sol simply forward
+    // that return value, they don't re-declare it, so simulateContract()
+    // against InstructionSender's own ABI can't decode it either. Simulate
+    // against the underlying registry call instead to decode the real id
+    // BEFORE submitting, then submit via writeContract as before. This
+    // replaces the previous tx-hash substitution (no Go-side ABI export or
+    // event log needed — the value was always available as a return value).
+    const sim = await publicClient.simulateContract({
+      account,
       address: instructionSenderAddr,
       abi: INSTRUCTION_SENDER_ABI,
       functionName: 'sendFinancialAction',
       args: [opCommand, message],
       value: INSTRUCTION_FEE_WEI,
     });
+    instructionId = (sim.result as unknown as `0x${string}`) ?? '0x0';
+    txHash = await walletClient.writeContract(sim.request);
   } else {
     const message = encodeGenericAgentTaskMessage(input.message);
-    txHash = await walletClient.writeContract({
+    const sim = await publicClient.simulateContract({
+      account,
       address: instructionSenderAddr,
       abi: INSTRUCTION_SENDER_ABI,
       functionName: 'sendGenericAgentTask',
       args: [message],
       value: INSTRUCTION_FEE_WEI,
     });
+    instructionId = (sim.result as unknown as `0x${string}`) ?? '0x0';
+    txHash = await walletClient.writeContract(sim.request);
   }
 
   const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
-  // The real instructionId comes from the TeeInstructionsSent event log; extracting it
-  // precisely requires the full generated ABI (services/tee-extension's autogen.go
-  // equivalent is Go-only). Until a TS ABI import is wired, use the tx hash as the
-  // polling key — ext-proxy's real API keys results by instruction ID, not tx hash, so
-  // this is a known gap tracked for the fast-follow once the ABI is shared/vendored into
-  // this repo (see services/tee-extension/README.md).
-  const instructionId = receipt.transactionHash;
+  // instructionId now comes from the real, decoded sendInstructions() return
+  // value (see above) — no longer a tx-hash substitution. ext-proxy's public
+  // API keys results by this real instruction ID.
 
   const result = await pollExtProxy(proxyUrl, instructionId, input.pollTimeoutMs ?? DEFAULT_POLL_TIMEOUT_MS);
 
@@ -203,9 +236,29 @@ async function submitAndPoll(
     txHash: receipt.transactionHash,
     status: result.status === 1 ? 'success' : result.status === 0 ? 'error' : 'pending',
     settlementTxHash: null,
-    data: result.data ?? null,
+    data: decodeActionResultData(result.data),
     log: result.log,
   };
+}
+
+/**
+ * ext-proxy's /action/result response encodes ActionResult.Data as
+ * hexutil.Bytes (0x-prefixed hex of raw bytes) — the extension's Go handlers
+ * (internal/extension/extension.go) json.Marshal their response struct into
+ * those bytes, so this must hex-decode THEN JSON-parse, not just JSON.parse
+ * the hex string directly. Fails honestly to null on any malformed input —
+ * never a fabricated result.
+ */
+function decodeActionResultData(hex: string | undefined): unknown {
+  if (!hex) return null;
+  try {
+    const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
+    if (clean.length === 0) return null;
+    const bytes = Buffer.from(clean, 'hex');
+    return JSON.parse(bytes.toString('utf8'));
+  } catch {
+    return null;
+  }
 }
 
 /**

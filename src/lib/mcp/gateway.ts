@@ -161,6 +161,15 @@ async function recordCall(c: {
   const bytes = safeByteLen(c.result);
   // Confidential-tool args (attestation quotes) are never persisted in plaintext
   // via the standard ledger path — redacted to key names only (success criterion 5).
+  //
+  // Dream Cycle Confidential Extraction on Flare FCC, Task 6: start_dream is
+  // deliberately NOT added to this prefix list. Checked, not assumed: its MCP
+  // args are {agent_id, config:{budget_usd, preset, confidential, trigger_criteria}}
+  // — no attestation quote or other TEE secret ever flows through a client-
+  // supplied tool argument for this feature (the quote lives entirely inside
+  // extractOneClusterConfidential()'s internal dispatch/verify call chain, see
+  // dream/extract.ts's Task 4/5). Redacting start_dream's args here would only
+  // hide non-sensitive budget/preset values with no real confidentiality gain.
   const CONFIDENTIAL_TOOL_PREFIX = ['confidential.', 'flare.confidential.'];
   const argsForLog = CONFIDENTIAL_TOOL_PREFIX.some((p) => c.tool.startsWith(p))
     ? { redacted: true, argKeys: Object.keys((c.args as Record<string, unknown>) ?? {}) }

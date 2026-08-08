@@ -1,8 +1,10 @@
 package extension
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 
@@ -14,6 +16,7 @@ import (
 	teetypes "github.com/flare-foundation/tee-node/pkg/types"
 	teeutils "github.com/flare-foundation/tee-node/pkg/utils"
 
+	"github.com/flare-foundation/tee-node/pkg/attestation"
 	"github.com/flare-foundation/tee-node/pkg/processorutils"
 )
 
@@ -156,11 +159,34 @@ func (e *Extension) processGenericAgentTask(action teetypes.Action, df *instruct
 	}
 }
 
-// handleGenericAgentTask decodes a GenericAgentTaskRequest and returns an HONEST
-// not-yet-implemented result. Same discipline as handleFinancialAction: the routing
-// and decode path is real and tested; the actual confidential-compute task logic is
-// the tracked fast-follow (per the user's own "do it later" scoping decision for this
-// PRD — see 06-prd-sub-tee-extension-service.md's "Explicit boundary" section).
+// handleGenericAgentTask decodes a GenericAgentTaskRequest and dispatches by
+// taskType. "dream.extract" (Task 2, 2026-08-08, Dream Cycle Confidential
+// Extraction on Flare FCC) calls out to HyperMove's already-deployed
+// llm-service /dream/extract route and returns REAL extraction output —
+// every other taskType still returns the honest not-yet-implemented refusal
+// unchanged from before.
+//
+// Scope boundary (documented per this feature's own explicit decision,
+// 2026-08-08): this ships "TEE-attested dispatch + result signing," NOT "the
+// LLM call itself runs inside the TEE" — the actual token generation still
+// happens in the existing non-TEE services/llm process, reached over the
+// network exactly like any other external HTTP call this extension makes.
+// Duplicating Bedrock/DeepSeek calls natively in Go here was explicitly
+// rejected in favor of reusing the already-built, already-tested prompt/
+// parsing logic in one place. Do not read AttestationQuote below as "this
+// proves the LLM call was confidential" — it does not.
+//
+// Attestation quote: under SIMULATED_TEE=true (the only mode this ship
+// targets — no GCP Confidential VM hardware requested), the real Google
+// Confidential Space attestation flow is unavailable, so this returns
+// tee-node/pkg/attestation.MagicPass verbatim — a real, public, documented
+// "testing outside of the google cloud" sentinel constant, NEVER a
+// fabricated-but-plausible-looking fake quote hex. confidential.ts's
+// verifyAttestation() (a real Phala Cloud API call) will correctly, honestly
+// REJECT this value as a malformed quote — that is the expected, correct
+// outcome for this dev deployment, not a bug to work around. Real hardware
+// hosting (SIMULATED_TEE=false) is required before this can ever pass real
+// attestation verification.
 func (e *Extension) handleGenericAgentTask(action teetypes.Action, df *instruction.DataFixed) teetypes.ActionResult {
 	var req types.GenericAgentTaskRequest
 	err := structs.DecodeTo(types.GenericAgentTaskMessageArg, df.OriginalMessage, &req)
@@ -175,13 +201,107 @@ func (e *Extension) handleGenericAgentTask(action teetypes.Action, df *instructi
 	e.mu.Lock()
 	e.genericTaskCount++
 	e.lastGenericTask = req.TaskType
+	taskCount := e.genericTaskCount
 	e.mu.Unlock()
 
-	return buildResult(action, df, nil, 0, fmt.Errorf(
-		"generic-agent-task execution not yet implemented in this ship — interface and "+
-			"OPCommand routing are real and tested; task logic is the tracked fast-follow. "+
-			"Decoded request: taskType=%s payloadBytes=%d",
-		req.TaskType, len(req.Payload),
-	))
+	if req.TaskType != "dream.extract" {
+		return buildResult(action, df, nil, 0, fmt.Errorf(
+			"generic-agent-task execution not yet implemented for taskType=%s — only "+
+				"\"dream.extract\" is implemented in this ship. Decoded request: taskType=%s payloadBytes=%d",
+			req.TaskType, req.TaskType, len(req.Payload),
+		))
+	}
+
+	insights, extractErr := callDreamExtract(string(req.Payload))
+	if extractErr != nil {
+		resp := types.GenericAgentTaskResponse{
+			TaskType:  req.TaskType,
+			Status:    "extract_failed",
+			TaskCount: taskCount,
+		}
+		b, _ := json.Marshal(resp)
+		// Honest failure: non-2xx / timeout / malformed /dream/extract response
+		// -> ActionResult.Status = 0, never a fabricated success. Mirrors
+		// extract.ts's own extractOneCluster() fail-safe discipline on the TS
+		// side (empty-but-well-formed result, never a crash, never fabricated).
+		return buildResult(action, df, b, 0, fmt.Errorf("dream.extract call failed: %w", extractErr))
+	}
+
+	resp := types.GenericAgentTaskResponse{
+		TaskType:         req.TaskType,
+		Status:           "ok",
+		TaskCount:        taskCount,
+		AttestationQuote: string(attestation.MagicPass),
+		Insights:         insights,
+	}
+	b, marshalErr := json.Marshal(resp)
+	if marshalErr != nil {
+		return buildResult(action, df, nil, 0, fmt.Errorf("marshaling response: %w", marshalErr))
+	}
+	return buildResult(action, df, b, 1, nil)
+}
+
+// callDreamExtract POSTs to config.DreamExtractURL (services/llm's
+// /dream/extract route) and returns the genuine extraction result. Fails
+// honestly (non-nil error, nil insights) on any non-2xx status, network
+// error, timeout, or a response carrying extraction_failure_reason (mirrors
+// extract.ts's own "genuine" tagging on the TS side — a services/llm
+// fail-safe empty stub must never be reported as real insights here either).
+func callDreamExtract(summary string) (*types.DreamInsights, error) {
+	reqBody, err := json.Marshal(types.DreamExtractRequest{
+		Summary:         summary,
+		MaxOutputTokens: 300,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("encoding request: %w", err)
+	}
+
+	client := &http.Client{Timeout: config.DreamExtractTimeout}
+	httpReq, err := http.NewRequest(http.MethodPost, config.DreamExtractURL, bytes.NewReader(reqBody))
+	if err != nil {
+		return nil, fmt.Errorf("building request: %w", err)
+	}
+	httpReq.Header.Set("content-type", "application/json")
+
+	res, err := client.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("calling %s: %w", config.DreamExtractURL, err)
+	}
+	defer res.Body.Close() //nolint:errcheck
+
+	body, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %w", err)
+	}
+
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		return nil, fmt.Errorf("extract endpoint returned %d: %s", res.StatusCode, string(body))
+	}
+
+	var parsed types.DreamExtractResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
+	}
+
+	if parsed.ExtractionFailureReason != "" {
+		return nil, fmt.Errorf("extraction not genuine: %s", parsed.ExtractionFailureReason)
+	}
+
+	return &types.DreamInsights{
+		Rules:         truncate(parsed.Rules, 10),
+		Preferences:   truncate(parsed.Preferences, 10),
+		ErrorPatterns: truncate(parsed.ErrorPatterns, 10),
+		Facts:         truncate(parsed.Facts, 10),
+	}, nil
+}
+
+func truncate(s []string, max int) []string {
+	if s == nil {
+		return []string{}
+	}
+	if len(s) <= max {
+		return s
+	}
+	return s[:max]
 }
 

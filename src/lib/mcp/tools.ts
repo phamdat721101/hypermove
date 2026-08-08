@@ -730,8 +730,19 @@ const submitEpisodeLogTool: ToolDef = {
 
 const startDreamTool: ToolDef = {
   name: 'start_dream',
-  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default).',
+  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default). When config.confidential is true and FEATURE_MCP_DREAM_CONFIDENTIAL is enabled, requires a settled "confidential" price-tier (XRPL/RLUSD, $0.50) payment — see dream/pipeline.ts\'s startDream() for the self-contained payment gate.',
   tier: 't1_read',
+  // Dream Cycle Confidential Extraction on Flare FCC, Task 6: stays
+  // unmetered:true even for a confidential:true call. This is intentional,
+  // not an oversight — startDream() (dream/pipeline.ts) is its OWN complete
+  // payment gate for the confidential path, reusing the EXISTING 'confidential'
+  // PriceTier ($0.50, XRPL/RLUSD-only — see catalog.ts/paywall.ts, unchanged
+  // by this feature) via findActiveSession/consumeSession. If this tool were
+  // metered at the gateway level too, a confidential call would be charged
+  // twice under two different tiers for one call. `tier: 't1_read'` above is
+  // therefore purely informational here (gateway.ts's callTool() never reads
+  // it, since unmetered:true skips that whole branch) — no new tool tier was
+  // introduced; the confidential tier already existed and Task 3 wired to it.
   unmetered: true,
   inputSchema: {
     type: 'object',
@@ -771,6 +782,30 @@ const startDreamTool: ToolDef = {
               min_raw_tokens: { type: 'number' },
             },
           },
+          // Dream Cycle Confidential Extraction on Flare FCC, Task 2. Opt-in,
+          // default false — byte-identical behavior for every existing
+          // caller. When true, extraction routes through Flare's
+          // Confidential Compute (FCC) TEE path (see dream/extract.ts's
+          // extractOneClusterConfidential(), gated by
+          // providers/flare.ts's isFccLiveOnNetwork()) instead of the plain
+          // services/llm HTTP call, and requires a settled XRPL/RLUSD
+          // payment before the pipeline runs (see payment-router.ts's
+          // validateConfidentialSelection()). Whole surface stays inert
+          // until isMcpDreamConfidentialEnabled() is on (default OFF).
+          confidential: {
+            type: 'boolean',
+            default: false,
+            description: 'Route extraction through Flare Confidential Compute (TEE) instead of the default plaintext path. Requires a settled XRPL/RLUSD payment. Gated by isMcpDreamConfidentialEnabled() (default OFF). Omit this field entirely to inherit the agent\'s stored confidential_default, if any.',
+          },
+          // Dream Cycle Confidential Extraction on Flare FCC, Task 9. A
+          // STICKY per-agent default distinct from `confidential` above —
+          // set this once to make every FUTURE start_dream call that omits
+          // `confidential` inherit it. Omit this field to leave any existing
+          // stored default untouched.
+          confidential_default: {
+            type: 'boolean',
+            description: 'Set a sticky per-agent default for confidential Dream Cycle. Future start_dream calls that omit `confidential` inherit this value. Omit this field to leave any existing stored default unchanged.',
+          },
         },
         required: ['budget_usd'],
       },
@@ -784,6 +819,12 @@ const startDreamTool: ToolDef = {
       budget_usd: Number(cfg.budget_usd),
       preset: (cfg.preset as string) ?? 'balanced',
       trigger_criteria: cfg.trigger_criteria as Record<string, unknown> | undefined,
+      // Task 9: preserve `undefined` when the caller omitted `confidential`
+      // entirely — coercing to `false` here would defeat startDream()'s
+      // stored-default inheritance (it only looks up the default when
+      // config.confidential is exactly undefined, not false).
+      confidential: cfg.confidential === undefined ? undefined : cfg.confidential === true,
+      confidential_default: cfg.confidential_default === undefined ? undefined : cfg.confidential_default === true,
     });
   },
 };

@@ -3,6 +3,7 @@ package extension
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"extension-scaffold/internal/config"
@@ -11,6 +12,7 @@ import (
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/common/hexutil"
+	"github.com/flare-foundation/tee-node/pkg/attestation"
 	teetypes "github.com/flare-foundation/tee-node/pkg/types"
 	teeutils "github.com/flare-foundation/tee-node/pkg/utils"
 )
@@ -419,4 +421,217 @@ func searchSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+// --- dream.extract (Task 2, 2026-08-08, Dream Cycle Confidential Extraction) ---
+
+func TestHandleGenericAgentTask_DreamExtract_Success(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		var body types.DreamExtractRequest
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		if body.Summary != "agent retried gripper pick after timeout" {
+			t.Errorf("unexpected summary forwarded: %q", body.Summary)
+		}
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.DreamExtractResponse{
+			Rules:         []string{"always cooldown after gripper timeout"},
+			Preferences:   []string{},
+			ErrorPatterns: []string{"gripper fails on immediate retry"},
+			Facts:         []string{},
+		})
+	}))
+	defer srv.Close()
+
+	orig := config.DreamExtractURL
+	config.DreamExtractURL = srv.URL
+	defer func() { config.DreamExtractURL = orig }()
+
+	e := &Extension{}
+	payload := abiEncodeGenericAgentTask("dream.extract", []byte("agent retried gripper pick after timeout"))
+	action := buildTestAction(
+		toHash(config.OPTypeGenericAgentTask),
+		toHash(config.OPCommandCompute),
+		payload,
+	)
+
+	status, body := e.processAction(action)
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, status, body)
+	}
+
+	var result teetypes.ActionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal ActionResult: %v", err)
+	}
+	// Genuine success -> Status=1, matching this ship's honest-stub discipline
+	// in reverse: a real extraction result MUST be reported as success, not
+	// silently downgraded to a refusal.
+	if result.Status != 1 {
+		t.Fatalf("expected ActionResult.Status=1 (genuine success), got %d, log=%q", result.Status, result.Log)
+	}
+
+	var resp types.GenericAgentTaskResponse
+	if err := json.Unmarshal(result.Data, &resp); err != nil {
+		t.Fatalf("failed to unmarshal GenericAgentTaskResponse: %v", err)
+	}
+	if resp.Status != "ok" {
+		t.Errorf("expected response Status=\"ok\", got %q", resp.Status)
+	}
+	if resp.Insights == nil {
+		t.Fatal("expected Insights to be populated")
+	}
+	if len(resp.Insights.Rules) != 1 || resp.Insights.Rules[0] != "always cooldown after gripper timeout" {
+		t.Errorf("expected genuine rules to be forwarded, got %v", resp.Insights.Rules)
+	}
+	// Documented, expected simulated-mode value — a real cryptographic quote
+	// this is NOT. See handleGenericAgentTask's doc comment.
+	if resp.AttestationQuote != string(attestation.MagicPass) {
+		t.Errorf("expected AttestationQuote=%q (SIMULATED_TEE sentinel), got %q", attestation.MagicPass, resp.AttestationQuote)
+	}
+}
+
+func TestHandleGenericAgentTask_DreamExtract_HonestFailure_NonGenuine(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "application/json")
+		_ = json.NewEncoder(w).Encode(types.DreamExtractResponse{
+			Rules:                   []string{},
+			Preferences:             []string{},
+			ErrorPatterns:           []string{},
+			Facts:                   []string{},
+			ExtractionFailureReason: "truncated_response",
+		})
+	}))
+	defer srv.Close()
+
+	orig := config.DreamExtractURL
+	config.DreamExtractURL = srv.URL
+	defer func() { config.DreamExtractURL = orig }()
+
+	e := &Extension{}
+	payload := abiEncodeGenericAgentTask("dream.extract", []byte("some summary"))
+	action := buildTestAction(
+		toHash(config.OPTypeGenericAgentTask),
+		toHash(config.OPCommandCompute),
+		payload,
+	)
+
+	status, body := e.processAction(action)
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, status, body)
+	}
+
+	var result teetypes.ActionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal ActionResult: %v", err)
+	}
+	// A non-genuine (extraction_failure_reason present) result must NEVER be
+	// reported as success — this is the same "genuine" discipline as
+	// extract.ts's own ClusterExtractionAttempt.genuine tagging on the TS side.
+	if result.Status != 0 {
+		t.Fatalf("expected ActionResult.Status=0 (honest failure, non-genuine extraction), got %d", result.Status)
+	}
+	if !contains(result.Log, "not genuine") {
+		t.Errorf("expected log to mention non-genuine extraction, got %q", result.Log)
+	}
+}
+
+func TestHandleGenericAgentTask_DreamExtract_HonestFailure_Unreachable(t *testing.T) {
+	orig := config.DreamExtractURL
+	// Deliberately unroutable — simulates the extraction service being down.
+	config.DreamExtractURL = "http://127.0.0.1:1"
+	defer func() { config.DreamExtractURL = orig }()
+
+	e := &Extension{}
+	payload := abiEncodeGenericAgentTask("dream.extract", []byte("some summary"))
+	action := buildTestAction(
+		toHash(config.OPTypeGenericAgentTask),
+		toHash(config.OPCommandCompute),
+		payload,
+	)
+
+	status, body := e.processAction(action)
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, status, body)
+	}
+
+	var result teetypes.ActionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal ActionResult: %v", err)
+	}
+	if result.Status != 0 {
+		t.Fatalf("expected ActionResult.Status=0 (honest failure, unreachable service), got %d", result.Status)
+	}
+	if !contains(result.Log, "dream.extract call failed") {
+		t.Errorf("expected log to mention the call failure, got %q", result.Log)
+	}
+}
+
+func TestHandleGenericAgentTask_DreamExtract_HonestFailure_NonOKStatus(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		_, _ = w.Write([]byte(`{"error":"bedrock unavailable"}`))
+	}))
+	defer srv.Close()
+
+	orig := config.DreamExtractURL
+	config.DreamExtractURL = srv.URL
+	defer func() { config.DreamExtractURL = orig }()
+
+	e := &Extension{}
+	payload := abiEncodeGenericAgentTask("dream.extract", []byte("some summary"))
+	action := buildTestAction(
+		toHash(config.OPTypeGenericAgentTask),
+		toHash(config.OPCommandCompute),
+		payload,
+	)
+
+	status, body := e.processAction(action)
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, status, body)
+	}
+
+	var result teetypes.ActionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal ActionResult: %v", err)
+	}
+	if result.Status != 0 {
+		t.Fatalf("expected ActionResult.Status=0 (honest failure, 500 from extract endpoint), got %d", result.Status)
+	}
+	if !contains(result.Log, "500") {
+		t.Errorf("expected log to mention the 500 status, got %q", result.Log)
+	}
+}
+
+// Other taskTypes must remain the unchanged honest not-yet-implemented refusal —
+// this test is a regression guard proving dream.extract's new real logic did not
+// widen to accidentally "implement" every taskType.
+func TestHandleGenericAgentTask_OtherTaskType_StillHonestStub(t *testing.T) {
+	e := &Extension{}
+	payload := abiEncodeGenericAgentTask("SUMMARIZE", []byte("hello world"))
+	action := buildTestAction(
+		toHash(config.OPTypeGenericAgentTask),
+		toHash(config.OPCommandCompute),
+		payload,
+	)
+
+	status, body := e.processAction(action)
+	if status != http.StatusOK {
+		t.Fatalf("expected status %d, got %d: %s", http.StatusOK, status, body)
+	}
+
+	var result teetypes.ActionResult
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatalf("failed to unmarshal ActionResult: %v", err)
+	}
+	if result.Status != 0 {
+		t.Fatalf("expected ActionResult.Status=0 (honest refusal for non-dream.extract taskType), got %d", result.Status)
+	}
+	if !contains(result.Log, "not yet implemented") {
+		t.Errorf("expected log to mention 'not yet implemented', got %q", result.Log)
+	}
 }

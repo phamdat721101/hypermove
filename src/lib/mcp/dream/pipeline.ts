@@ -63,6 +63,26 @@ export interface DreamConfig {
   budget_usd: number;
   preset: keyof typeof DREAM_PRESETS | string;
   trigger_criteria?: TriggerCriteria;
+  /**
+   * Dream Cycle Confidential Extraction on Flare FCC, Task 2. Opt-in,
+   * default false. When true, startDream() requires a settled XRPL/RLUSD
+   * payment (Task 3) before runPipeline() is invoked, and extraction routes
+   * through Flare's Confidential Compute TEE path (Task 4) instead of the
+   * plain services/llm call. Persisted into both dream_configs and
+   * dream_cycle_runs.confidential (Task 1's column) at INSERT time.
+   */
+  confidential?: boolean;
+  /**
+   * Dream Cycle Confidential Extraction on Flare FCC, Task 9. A STICKY
+   * per-agent default — when set (via any start_dream call, typically once),
+   * persists into dream_configs.confidential_default and is inherited by
+   * every FUTURE start_dream call that omits `confidential` entirely. An
+   * explicit per-call `confidential` value always overrides the stored
+   * default. Distinct from `confidential` above, which only reflects THIS
+   * call's own value. Omit this field to leave any existing stored default
+   * untouched (never silently reset to false by a plain start_dream call).
+   */
+  confidential_default?: boolean;
 }
 
 export interface StartDreamResult {
@@ -79,6 +99,17 @@ export interface StartDreamResult {
    * deliberately distinct from every other (intentionally public) field here.
    */
   _cost?: { tokensUsed: number; costUsd: number };
+  /**
+   * Dream Cycle Confidential Extraction on Flare FCC, Task 3. Present only
+   * on a confidential:true call rejected for lack of payment — deliberately
+   * NOT underscore-prefixed (unlike _cost above), since gateway.callTool()
+   * strips every underscore-prefixed field before returning to the MCP
+   * client and the agent needs to see this to know how to pay. Shape matches
+   * paywall.ts's buildChallenge() output exactly, so an agent handling the
+   * gateway's own -32402 x402 challenge (gateway.ts) can reuse the identical
+   * parsing logic for this in-band challenge.
+   */
+  payment_challenge?: ReturnType<typeof import('../paywall').buildChallenge>;
 }
 
 export interface GetDreamConfigResult {
@@ -86,6 +117,15 @@ export interface GetDreamConfigResult {
   config: DreamConfig | null;
   last_run_timestamp?: string;
   status?: string;
+  /**
+   * Dream Cycle Confidential Extraction on Flare FCC, Task 9. The agent's
+   * stored settlement preference for the confidential price tier. Only
+   * 'xrpl-rlusd' exists today (payment-router.ts's CONFIDENTIAL_TIER_CHAINS
+   * is XRPL-only by design) but is stored explicitly rather than hardcoded
+   * inline, so a future second settlement option doesn't need a schema
+   * change. Absent when config is null (no stored config for this agent).
+   */
+  preferred_settlement?: string;
 }
 
 function globalMaxBudgetUsd(): number {
@@ -98,6 +138,21 @@ function globalMaxBudgetUsd(): number {
  * pipeline synchronously: preprocess -> cluster -> extract -> consolidate ->
  * prune -> (rebuild-on-read index invalidation). Returns once the run has
  * reached a terminal status ('completed' | 'partial' | 'error').
+ *
+ * Dream Cycle Confidential Extraction on Flare FCC, Tasks 3+6: when
+ * config.confidential is true AND isMcpDreamConfidentialEnabled() is on
+ * (default OFF — see platform-flag.ts's doc comment for why), this requires
+ * an already-settled 'confidential' price-tier paid session (see paywall.ts's
+ * findActiveSession/consumeSession — the SAME session mechanism gateway.ts's
+ * callTool() already uses for every other metered tool, not a new payment
+ * path). No dream_configs/dream_cycle_runs row is created and runPipeline()
+ * is never invoked until that check passes — a confidential run never starts
+ * on credit. When the flag is OFF, confidential:true is silently treated as
+ * false — byte-identical to the pre-confidential-feature free path, never an
+ * error — matching every other v3.0+ sub-flag's "byte-identical off" rollback
+ * discipline in this codebase. The tool itself is registered unmetered:true
+ * (Task 6) specifically so gateway.ts's own metering never double-charges;
+ * this function is the sole payment gate for the confidential path.
  */
 export async function startDream(
   agentId: string,
@@ -113,6 +168,38 @@ export async function startDream(
     return { status: 'error', message: `budget_usd (${config.budget_usd}) exceeds the global max (${maxBudget})` };
   }
 
+  const { isMcpDreamConfidentialEnabled } = await import('../../platform-flag');
+  // Dream Cycle Confidential Extraction on Flare FCC, Task 9. `confidential`
+  // omitted entirely (undefined, not false) inherits the agent's stored
+  // confidential_default; an explicit true/false always wins. This lookup
+  // is a no-op read (single indexed SELECT) and only runs when needed —
+  // callers who always pass an explicit confidential value never pay for it.
+  let resolvedConfidential = config.confidential;
+  if (resolvedConfidential === undefined) {
+    const storedDefault = await withClient(async (client) => {
+      const { rows } = await client.query<{ confidential_default: boolean }>(
+        `SELECT confidential_default FROM dream_configs WHERE agent_id = $1 LIMIT 1`,
+        [agentId],
+      );
+      return rows[0]?.confidential_default ?? false;
+    });
+    resolvedConfidential = storedDefault ?? false;
+  }
+  const confidentialRequested = resolvedConfidential === true && isMcpDreamConfidentialEnabled();
+
+  if (confidentialRequested) {
+    const { findActiveSession, consumeSession, buildChallenge, TIER_PRICE_USD } = await import('../paywall');
+    const active = await findActiveSession(userId, 'confidential');
+    const consumed = active ? await consumeSession(active.sessionId) : false;
+    if (!consumed) {
+      return {
+        status: 'error',
+        message: `Payment required for confidential Dream Cycle (${TIER_PRICE_USD.confidential} USD equivalent). Call payments.settle with tier="confidential" (XRPL/RLUSD only) to unlock.`,
+        payment_challenge: buildChallenge('confidential', 0),
+      };
+    }
+  }
+
   const ownership = await claimOrCheckOwnership(agentId, userId);
   if (!ownership.ok) {
     return { status: 'error', message: ownership.reason ?? 'ownership check failed' };
@@ -125,21 +212,22 @@ export async function startDream(
 
   await withClient(async (client) => {
     await client.query(
-      `INSERT INTO dream_configs (agent_id, budget_usd, preset, trigger_criteria, last_run_id, updated_at)
-       VALUES ($1,$2,$3,$4,$5,NOW())
+      `INSERT INTO dream_configs (agent_id, budget_usd, preset, trigger_criteria, last_run_id, confidential, confidential_default, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,COALESCE($7, false),NOW())
        ON CONFLICT (agent_id) DO UPDATE SET
-         budget_usd = $2, preset = $3, trigger_criteria = $4, last_run_id = $5, updated_at = NOW()`,
-      [agentId, config.budget_usd, presetName, config.trigger_criteria ? JSON.stringify(config.trigger_criteria) : null, runId],
+         budget_usd = $2, preset = $3, trigger_criteria = $4, last_run_id = $5, confidential = $6,
+         confidential_default = COALESCE($7, dream_configs.confidential_default), updated_at = NOW()`,
+      [agentId, config.budget_usd, presetName, config.trigger_criteria ? JSON.stringify(config.trigger_criteria) : null, runId, confidentialRequested, config.confidential_default ?? null],
     );
     await client.query(
-      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot, triggered_by)
-       VALUES ($1,$2,'started',$3,$4)`,
-      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {} }), triggeredBy],
+      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot, triggered_by, confidential)
+       VALUES ($1,$2,'started',$3,$4,$5)`,
+      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {}, confidential: confidentialRequested }), triggeredBy, confidentialRequested],
     );
     return true;
   });
 
-  const cost = await runPipeline(runId, agentId, config.budget_usd, preset);
+  const cost = await runPipeline(runId, agentId, config.budget_usd, preset, confidentialRequested);
 
   return { run_id: runId, status: 'started', _cost: cost };
 }
@@ -220,13 +308,16 @@ function buildStageSummaries(
  * to the mcp_calls ledger via the SAME recordCall() invocation the gateway
  * already makes for this tool call — no second ledger write.
  */
-async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset): Promise<{ tokensUsed: number; costUsd: number }> {
+async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset, confidential = false): Promise<{ tokensUsed: number; costUsd: number }> {
   const startedAt = Date.now();
   const cost = new CostTracker(budgetUsd);
   const stagesCompleted: string[] = [];
   let memoriesAdded = 0;
   let memoriesRemoved = 0;
   let finalStatus: 'completed' | 'partial' | 'failed' = 'completed';
+  /** Dream Cycle Confidential Extraction on Flare FCC, Task 5. See its
+   *  set-site in the extraction stage below and its persistence below. */
+  let attestationRef: string | undefined;
   // Additive (2026-07-27 root-cause fix): assembled across the stages below,
   // persisted to dream_cycle_runs.stage_summaries, and returned verbatim by
   // getDreamStats() — see StageSummaries below for the exact shape.
@@ -256,9 +347,17 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     const clusters = await clusterEpisodes(preprocessed, { maxClusters: preset.max_clusters });
     stagesCompleted.push('clustering');
 
-    const extraction = await extractInsights(clusters, cost, preset.max_extraction_output_tokens_per_cluster);
+    const extraction = await extractInsights(clusters, cost, preset.max_extraction_output_tokens_per_cluster, confidential);
     stagesCompleted.push('extraction');
     if (extraction.status === 'partial') finalStatus = 'partial';
+    // Dream Cycle Confidential Extraction on Flare FCC, Task 5. Captured here,
+    // persisted via its own separate UPDATE below (never as a new positional
+    // param on the existing $1..$9 terminal-status UPDATE further down —
+    // that query's param order is a documented fragile spot, see this file's
+    // history and tests/mcp-dream-cycle.test.ts's mock comment). Empty
+    // string list today for every real run (FCC/tee-extension never returns
+    // genuine output yet) — see extract.ts's Task 5 doc comment.
+    if (extraction.attestation_refs.length > 0) attestationRef = extraction.attestation_refs[0];
 
     const flat = dedupeInsights(flattenInsights(extraction.extracted));
     const existing = await loadExistingMemories(agentId);
@@ -314,6 +413,20 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     return true;
   });
 
+  // Dream Cycle Confidential Extraction on Flare FCC, Task 5. Deliberately a
+  // SEPARATE query from the terminal-status UPDATE above, not a new $10 param
+  // on it — that query's $1..$9 positional order is a documented fragile
+  // spot (a prior additive column change there silently broke a test mock's
+  // positional destructure; see tests/mcp-dream-cycle.test.ts's history).
+  // No-op (skipped entirely) when attestationRef is unset, which is every run
+  // today — FCC/tee-extension never returns genuine output yet.
+  if (attestationRef) {
+    await withClient(async (client) => {
+      await client.query(`UPDATE dream_cycle_runs SET attestation_ref = $1 WHERE run_id = $2`, [attestationRef, runId]);
+      return true;
+    });
+  }
+
   const tokensUsed = Object.values(cost.perStageTokenCounts).reduce((sum, n) => sum + n, 0);
   return { tokensUsed, costUsd: cost.budgetUsedUsd };
 }
@@ -332,9 +445,10 @@ async function loadExistingMemories(agentId: string): Promise<ExistingMemory[]> 
 export async function getDreamConfig(agentId: string): Promise<GetDreamConfigResult> {
   const row = await withClient(async (client) => {
     const { rows } = await client.query<{
-      budget_usd: string; preset: string; trigger_criteria: TriggerCriteria | null; updated_at: string;
+      budget_usd: string; preset: string; trigger_criteria: TriggerCriteria | null; updated_at: string; confidential: boolean;
+      confidential_default: boolean; preferred_settlement: string;
     }>(
-      `SELECT budget_usd, preset, trigger_criteria, updated_at::text FROM dream_configs WHERE agent_id = $1 LIMIT 1`,
+      `SELECT budget_usd, preset, trigger_criteria, confidential, confidential_default, preferred_settlement, updated_at::text FROM dream_configs WHERE agent_id = $1 LIMIT 1`,
       [agentId],
     );
     return rows[0] ?? null;
@@ -343,7 +457,12 @@ export async function getDreamConfig(agentId: string): Promise<GetDreamConfigRes
   if (!row) return { agent_id: agentId, config: null };
   return {
     agent_id: agentId,
-    config: { budget_usd: Number(row.budget_usd), preset: row.preset, trigger_criteria: row.trigger_criteria ?? undefined },
+    config: {
+      budget_usd: Number(row.budget_usd), preset: row.preset, trigger_criteria: row.trigger_criteria ?? undefined,
+      confidential: row.confidential === true,
+      confidential_default: row.confidential_default === true,
+    },
+    preferred_settlement: row.preferred_settlement,
     last_run_timestamp: row.updated_at,
     status: 'stored',
   };
@@ -406,6 +525,17 @@ export interface DreamStatsResult {
    * autonomously on trigger_criteria's behalf.
    */
   triggered_by?: 'manual' | 'scheduler';
+  /**
+   * Dream Cycle Confidential Extraction on Flare FCC, Task 1/6. False for
+   * every run predating this feature (column default) or any run that never
+   * set confidential:true. attestation_ref is the TEE attestation's
+   * quoteHash once Flare FCC returns genuine, attestation-verified output
+   * (Task 5) — null otherwise, including for every run today since FCC is
+   * not yet live off Songbird canary (see providers/flare.ts's
+   * isFccLiveOnNetwork()).
+   */
+  confidential?: boolean;
+  attestation_ref?: string | null;
 }
 
 export async function getDreamStats(agentId: string): Promise<DreamStatsResult> {
@@ -413,9 +543,9 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     const { rows } = await client.query<{
       started_at: string; status: string; budget_used_usd: string; stages_completed: string[];
       per_stage_tokens: Record<string, number> | null; stage_summaries: StageSummaries | null;
-      triggered_by: 'manual' | 'scheduler';
+      triggered_by: 'manual' | 'scheduler'; confidential: boolean; attestation_ref: string | null;
     }>(
-      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries, triggered_by
+      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries, triggered_by, confidential, attestation_ref
        FROM dream_cycle_runs WHERE agent_id = $1 ORDER BY started_at DESC LIMIT 1`,
       [agentId],
     );
@@ -438,5 +568,7 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     per_stage_tokens: row.per_stage_tokens ?? {},
     ...(row.stage_summaries ? { stage_summaries: row.stage_summaries } : {}),
     triggered_by: row.triggered_by ?? 'manual',
+    confidential: row.confidential === true,
+    attestation_ref: row.attestation_ref ?? null,
   };
 }

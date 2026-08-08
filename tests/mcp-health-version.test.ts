@@ -51,3 +51,45 @@ describe('PRD-A · GET /api/mcp/health reports commit + deployed_at', () => {
     expect(Array.isArray(body.tools)).toBe(true);
   });
 });
+
+// ─── Dream Cycle Confidential Extraction on Flare FCC, Task 10 ────────────
+
+describe('Task 10 · GET /api/mcp/health surfaces registered prompts', () => {
+  it('lists dream/run_confidential when the confidential + resources flags are both on', async () => {
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    process.env.FEATURE_MCP_RESOURCES = 'true';
+    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as { prompts?: string[] };
+    expect(body.prompts).toContain('dream/run_confidential');
+  });
+
+  it('omits dream/run_confidential when FEATURE_MCP_DREAM_CONFIDENTIAL is off (default)', async () => {
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    process.env.FEATURE_MCP_RESOURCES = 'true';
+    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL;
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as { prompts?: string[] };
+    expect(body.prompts).not.toContain('dream/run_confidential');
+  });
+
+  it('returns an empty prompts array when isMcpResourcesEnabled() is off, even if other flags are on', async () => {
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
+    process.env.FEATURE_MCP_RESOURCES = 'false';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as { prompts?: string[] };
+    expect(body.prompts).toEqual([]);
+  });
+
+  it('returns an empty prompts array when the gateway master flag is off', async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'false';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as { prompts?: string[] };
+    expect(body.prompts).toEqual([]);
+  });
+});
