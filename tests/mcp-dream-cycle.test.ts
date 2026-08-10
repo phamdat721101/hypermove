@@ -102,6 +102,12 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
               const row = rows.find((r) => r.agent_id === (params[0] as string));
               return { rows: row ? [{ owner_user_id: row.owner_user_id }] : [] };
             }
+            if (sql.includes('UPDATE mcp_agent_ownership SET owner_user_id')) {
+              const [newOwnerUserId, agentId] = params as [string, string];
+              const row = rows.find((r) => r.agent_id === agentId);
+              if (row) row.owner_user_id = newOwnerUserId;
+              return { rows: [], rowCount: row ? 1 : 0 };
+            }
             throw new Error(`unexpected SQL in ownership test fake: ${sql}`);
           }),
         };
@@ -151,6 +157,65 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/choose a different agent_id/i);
     expect(result.reason).toMatch(/same authenticated session/i);
+  });
+
+  // ─── reclaimDeviceOwnership (2026-08-10, dream-cycle blocker escalation,
+  // issue #2). Closes the gap where a device-auth session's random new
+  // userId per approval permanently locked an agent_id away from any future
+  // device-auth session.
+
+  it('reclaim succeeds when the current owner is a device-kind session', async () => {
+    installFakeOwnershipDb();
+    const { claimOrCheckOwnership, reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
+    await claimOrCheckOwnership('robot-42', 'device:aaaaaaaaaaaa');
+    const result = await reclaimDeviceOwnership('robot-42', 'device:bbbbbbbbbbbb');
+    expect(result).toEqual({ ok: true });
+    // The new session can now use the agent_id normally.
+    const check = await claimOrCheckOwnership('robot-42', 'device:bbbbbbbbbbbb');
+    expect(check).toEqual({ ok: true });
+    // The OLD device session is now locked out — this is a genuine transfer,
+    // not a shared/multi-owner grant.
+    const oldOwnerCheck = await claimOrCheckOwnership('robot-42', 'device:aaaaaaaaaaaa');
+    expect(oldOwnerCheck.ok).toBe(false);
+  });
+
+  it('reclaim is REJECTED when the current owner is a wallet-authed session — never silently transferable', async () => {
+    installFakeOwnershipDb();
+    const { claimOrCheckOwnership, reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
+    await claimOrCheckOwnership('robot-42', 'wallet:0xabc123');
+    const result = await reclaimDeviceOwnership('robot-42', 'device:bbbbbbbbbbbb');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/wallet- or account-authenticated/i);
+    // Confirm the wallet owner is genuinely untouched.
+    const check = await claimOrCheckOwnership('robot-42', 'wallet:0xabc123');
+    expect(check).toEqual({ ok: true });
+  });
+
+  it('reclaim on an agent_id with no existing owner is a clear no-op, not a silent success', async () => {
+    installFakeOwnershipDb();
+    const { reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
+    const result = await reclaimDeviceOwnership('never-claimed-agent', 'device:bbbbbbbbbbbb');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/no existing owner/i);
+  });
+
+  it('reclaim by the CURRENT owner itself is a harmless idempotent no-op', async () => {
+    installFakeOwnershipDb();
+    const { claimOrCheckOwnership, reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
+    await claimOrCheckOwnership('robot-42', 'device:aaaaaaaaaaaa');
+    const result = await reclaimDeviceOwnership('robot-42', 'device:aaaaaaaaaaaa');
+    expect(result).toEqual({ ok: true });
+  });
+
+  it('is registered as an unmetered t1_read tool, gated by the flag', async () => {
+    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    vi.resetModules();
+    const { getTools } = await import('../src/lib/mcp/tools');
+    const tool = getTools().find((t) => t.name === 'reclaim_agent_ownership');
+    expect(tool).toBeDefined();
+    expect(tool?.unmetered).toBe(true);
+    expect(tool?.tier).toBe('t1_read');
   });
 });
 
@@ -1144,6 +1209,36 @@ describe('Task 7 · extractInsights — services/llm HTTP call + budget gating',
     // throws and non-2xx into this one bucket (kept consistent with the
     // confidential path's own coarseness).
     expect(result.failure_reasons).toEqual({ upstream_error: 1 });
+  });
+
+  // Issue #1 fix (2026-08-10, dream-cycle blocker escalation). services/llm's
+  // /dream/extract route already returns a specific, actionable error body
+  // on failure (e.g. {"error":"Dream extract failed","detail":"BEDROCK_API_KEY
+  // not set"}) — this was previously discarded entirely on the !res.ok path.
+  // This test proves the real detail string now survives client-side.
+  it('captures the real server error detail (e.g. "BEDROCK_API_KEY not set") from a non-2xx response body', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(
+      JSON.stringify({ error: 'Dream extract failed', detail: 'BEDROCK_API_KEY not set' }),
+      { status: 500, headers: { 'content-type': 'application/json' } },
+    )));
+
+    const cost = new CostTracker(0.10);
+    const result = await extractInsights([fixtureCluster('c-1')], cost, 100);
+    expect(result.failure_reasons).toEqual({ upstream_error: 1 });
+    expect(result.last_upstream_error_detail).toBe('BEDROCK_API_KEY not set');
+  });
+
+  it('leaves last_upstream_error_detail undefined when the failure response has no parseable detail (e.g. a plain-text 500)', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response('boom', { status: 500 })));
+
+    const cost = new CostTracker(0.10);
+    const result = await extractInsights([fixtureCluster('c-1')], cost, 100);
+    expect(result.failure_reasons).toEqual({ upstream_error: 1 });
+    expect(result.last_upstream_error_detail).toBeUndefined();
   });
 
   // Finding C fix (2026-08-10, PRD 04). A thrown network error (fetch itself

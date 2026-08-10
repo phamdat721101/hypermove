@@ -336,6 +336,15 @@ export interface StageSummaries {
      * clusters_failed is 0.
      */
     failure_reasons: Record<string, number>;
+    /**
+     * Additive (2026-08-10, issue #1 — dream-cycle blocker escalation). The
+     * real server-side error detail (e.g. "BEDROCK_API_KEY not set") from
+     * the most recent failed extraction attempt this run, when the failure
+     * response carried one — see extract.ts's ExtractionOutcome.
+     * last_upstream_error_detail doc comment. undefined when no attempt
+     * captured one.
+     */
+    last_upstream_error_detail?: string;
   };
   pruning_summary: {
     candidates_extracted: number;
@@ -376,6 +385,7 @@ function buildStageSummaries(
       clusters_failed: extraction.clusters_failed_extraction.length,
       candidates_extracted: candidatesExtracted,
       failure_reasons: extraction.failure_reasons,
+      ...(extraction.last_upstream_error_detail ? { last_upstream_error_detail: extraction.last_upstream_error_detail } : {}),
     },
     pruning_summary: {
       candidates_extracted: candidatesExtracted,

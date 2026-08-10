@@ -91,6 +91,20 @@ export interface ExtractionOutcome {
    * `confidential` boolean — a run is one or the other, never both).
    */
   failure_reasons: Record<string, number>;
+  /**
+   * Additive (2026-08-10, issue #1 — dream-cycle blocker escalation). The
+   * most recent real error detail string captured from services/llm's own
+   * failure response body (see ClusterExtractionAttempt.errorDetail) across
+   * every non-genuine attempt this run — e.g. "BEDROCK_API_KEY not set".
+   * Deliberately just the LAST one, not a per-cluster list: every cluster in
+   * a single run hits the SAME misconfigured backend for the SAME reason in
+   * practice (this is a deployment-level failure, not a per-cluster one), so
+   * one representative detail string is more useful than a repeated list.
+   * undefined when no non-genuine attempt captured a detail (e.g. every
+   * failure was a network-level throw with no response body to read, or the
+   * run used the confidential path, which has its own separate taxonomy).
+   */
+  last_upstream_error_detail?: string;
 }
 
 function extractUrl(): string {
@@ -122,6 +136,23 @@ interface ClusterExtractionAttempt {
    */
   failureReason?: 'fcc_not_live' | 'fcc_not_configured' | 'fcc_dispatch_failed' | 'upstream_error' | 'parse_error';
   /**
+   * Additive (2026-08-10, issue #1 — dream-cycle blocker escalation).
+   * services/llm's /dream/extract route already returns an informative
+   * JSON body on failure (`{"error":"Dream extract failed","detail":"..."}`
+   * — see server.ts's dream/extract handler), but extractOneCluster()
+   * previously discarded it entirely on the `!res.ok` path, meaning the
+   * REAL reason (e.g. "BEDROCK_API_KEY not set") was computed server-side
+   * and thrown away client-side every time, leaving a caller with only the
+   * coarse 'upstream_error' bucket count and no way to tell "your API key
+   * is missing" apart from "the network timed out" apart from "the server
+   * is genuinely down." Present only on the plaintext path's upstream_error
+   * case when the server responded with a parseable JSON error body;
+   * undefined for a network-level throw (no response to read at all) or any
+   * other failure kind. Capped to a short length before ever being surfaced
+   * to a caller — see extractOneCluster()'s own truncation.
+   */
+  errorDetail?: string;
+  /**
    * Dream Cycle Confidential Extraction on Flare FCC, Task 5. Present only
    * on a genuine CONFIDENTIAL attempt (see extractOneClusterConfidential())
    * — the verified TEE attestation's quoteHash (confidential.ts's
@@ -145,7 +176,21 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
     // land in the same bucket (this fix's taxonomy merges network-throw and
     // non-2xx into one 'upstream_error' bucket), but tagging it at the actual
     // failure site keeps the intent explicit rather than incidental.
-    if (!res.ok) return emptyAttempt(cluster.cluster_id, 'upstream_error');
+    //
+    // Issue #1 fix (2026-08-10): read the response body before discarding it.
+    // services/llm's own /dream/extract handler already computes and returns
+    // a real, specific error (e.g. {"error":"Dream extract failed",
+    // "detail":"BEDROCK_API_KEY not set"}) on every failure — previously this
+    // was thrown away entirely, leaving a caller with only the bucket count.
+    // Best-effort: if the body isn't valid JSON or doesn't have the expected
+    // shape, errorDetail stays undefined rather than fabricating one.
+    if (!res.ok) {
+      const detail = await res.json().then(
+        (b: unknown) => (typeof b === 'object' && b !== null && 'detail' in b ? String((b as { detail: unknown }).detail) : undefined),
+        () => undefined,
+      );
+      return emptyAttempt(cluster.cluster_id, 'upstream_error', detail?.slice(0, 200));
+    }
     const body = (await res.json()) as Partial<ExtractedInsights> & { extraction_failure_reason?: string };
     const insights: ExtractedInsights = {
       cluster_id: cluster.cluster_id,
@@ -177,11 +222,12 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
   }
 }
 
-function emptyAttempt(clusterId: string, failureReason: ClusterExtractionAttempt['failureReason']): ClusterExtractionAttempt {
+function emptyAttempt(clusterId: string, failureReason: ClusterExtractionAttempt['failureReason'], errorDetail?: string): ClusterExtractionAttempt {
   return {
     insights: { cluster_id: clusterId, rules: [], preferences: [], error_patterns: [], facts: [] },
     genuine: false,
     failureReason,
+    errorDetail,
   };
 }
 
@@ -338,6 +384,9 @@ export async function extractInsights(
   // only from the plaintext/confidential path actually used this run (see
   // the `confidential` boolean below) — never mixed.
   const failureReasons: Record<string, number> = {};
+  // Issue #1 fix (2026-08-10): the most recent real error detail captured
+  // from a failed attempt's response body, if any.
+  let lastUpstreamErrorDetail: string | undefined;
 
   for (const cluster of clusters) {
     const inputTokens = estimateTokens(cluster.summary);
@@ -363,6 +412,7 @@ export async function extractInsights(
       // non-genuine return, but never let an unset reason go unaccounted.
       const reason = attempt.failureReason ?? 'unknown';
       failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
+      if (attempt.errorDetail) lastUpstreamErrorDetail = attempt.errorDetail;
     }
   }
 
@@ -373,5 +423,6 @@ export async function extractInsights(
     clusters_failed_extraction: failedExtraction,
     attestation_refs: attestationRefs,
     failure_reasons: failureReasons,
+    ...(lastUpstreamErrorDetail ? { last_upstream_error_detail: lastUpstreamErrorDetail } : {}),
   };
 }
