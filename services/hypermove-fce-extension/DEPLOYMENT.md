@@ -9,7 +9,7 @@ extension's config has to match theirs.
 
 | Piece | What it is | Where it's documented | Who runs it |
 |---|---|---|---|
-| **HyperMove MCP gateway** | `hypermove-app` (Next.js), the actual data/tool source this extension calls | `hypermove-app/README.md` ("Deploy" section) | HyperMove (already running at `hypermove.xyz`) |
+| **HyperMove MCP gateway** | `hypermove-app` (Next.js), the actual data/tool source this extension calls | `hypermove-app/README.md` ("Deploy" section) | HyperMove (already running at `hypermove.duckdns.org`) |
 | **Flare TEE Proxy + TEE Node** | `ext-proxy` + `extension-tee` (Go), the real Flare Confidential Compute infra | `services/tee-extension/README.md` | Whoever registers the Flare Compute Extension (HyperMove, per Sub-PRD A) |
 | **This extension** | The `/action` task-logic handler the TEE node forwards to | this file | Same operator as the TEE Node — must run on the same Docker network/host, since the TEE node calls it over an unauthenticated loopback boundary |
 
@@ -23,7 +23,7 @@ live TEE node, using `curl` directly against `POST :8889/action` — see
 
 ## 1. HyperMove side — already deployed, nothing new required here
 
-This extension talks to `https://hypermove.xyz/api/mcp` (or a self-hosted
+This extension talks to `https://hypermove.duckdns.org/api/mcp` (or a self-hosted
 `hypermove-app` instance) as an ordinary external HTTP client, authenticated
 via `HYPERMOVE_MCP_ADMIN_TOKEN` — the same admin-bypass token already
 supported by `hypermove-app`'s `src/lib/mcp/auth.ts`. No changes to
@@ -93,7 +93,7 @@ services:
     environment:
       - TEE_EXTENSION_PORT=7702
       - TEE_SIGN_URL=http://extension-tee:7701   # the TEE node's OWN sign server, same container's other port
-      - HYPERMOVE_MCP_URL=${HYPERMOVE_MCP_URL:-https://hypermove.xyz/api/mcp}
+      - HYPERMOVE_MCP_URL=${HYPERMOVE_MCP_URL:-https://hypermove.duckdns.org/api/mcp}
       - HYPERMOVE_MCP_ADMIN_TOKEN=${HYPERMOVE_MCP_ADMIN_TOKEN}
     ports:
       - "7702:7702"
@@ -134,7 +134,7 @@ services:
     environment:
       - TEE_EXTENSION_PORT=7702   # MUST match extension-tee's EXTENSION_PORT above
       - TEE_SIGN_URL=http://localhost:7701   # same shared network namespace, same host
-      - HYPERMOVE_MCP_URL=${HYPERMOVE_MCP_URL:-https://hypermove.xyz/api/mcp}
+      - HYPERMOVE_MCP_URL=${HYPERMOVE_MCP_URL:-https://hypermove.duckdns.org/api/mcp}
       - HYPERMOVE_MCP_ADMIN_TOKEN=${HYPERMOVE_MCP_ADMIN_TOKEN}
     # no `ports:` here — network_mode: service:X containers cannot publish their own ports;
     # publish 7702/7701 on the extension-tee service definition instead if external access is needed
@@ -234,6 +234,6 @@ result.
 | Var | Required | Default | Notes |
 |---|---|---|---|
 | `HYPERMOVE_MCP_ADMIN_TOKEN` | **Yes** | — | Fails fast at startup if unset |
-| `HYPERMOVE_MCP_URL` | No | `https://hypermove.xyz/api/mcp` | Point at a self-hosted `hypermove-app` if needed |
+| `HYPERMOVE_MCP_URL` | No | `https://hypermove.duckdns.org/api/mcp` | Point at a self-hosted `hypermove-app` if needed |
 | `TEE_SIGN_URL` | No | `http://localhost:8888` | Must match wherever the real TEE node's sign server actually listens — **not always 8888**, see the real compose file's `SIGN_PORT=7701` override above |
 | `TEE_EXTENSION_PORT` | No | `8889` | This extension's own listening port — must match whatever the TEE node's `ForwardRouter` is configured to forward to |

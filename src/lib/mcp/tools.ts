@@ -730,7 +730,7 @@ const submitEpisodeLogTool: ToolDef = {
 
 const startDreamTool: ToolDef = {
   name: 'start_dream',
-  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default). When config.confidential is true and FEATURE_MCP_DREAM_CONFIDENTIAL is enabled, requires a settled "confidential" price-tier (XRPL/RLUSD, $0.50) payment — see dream/pipeline.ts\'s startDream() for the self-contained payment gate.',
+  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default). When config.confidential is true and FEATURE_MCP_DREAM_CONFIDENTIAL is enabled, requires a settled "confidential" price-tier (XRPL/RLUSD, $0.50) payment — see dream/pipeline.ts\'s startDream() for the self-contained payment gate. If confidential was requested but the gate (feature flag or payment) is not satisfied, the run still proceeds in plaintext, but the response includes confidential_requested/confidential_actual/confidential_fallback_reason so the caller is never silently downgraded without knowing it.',
   tier: 't1_read',
   // Dream Cycle Confidential Extraction on Flare FCC, Task 6: stays
   // unmetered:true even for a confidential:true call. This is intentional,

@@ -151,7 +151,7 @@ export async function authenticate(req: NextRequest): Promise<AuthOutcome> {
     ok: false,
     status: 401,
     message: 'authentication required — sign in via /api/mcp/authorize',
-    wwwAuthenticate: `Bearer realm="hypermove.xyz/mcp", authorize="/api/mcp/authorize"`,
+    wwwAuthenticate: `Bearer realm="hypermove.duckdns.org/mcp", authorize="/api/mcp/authorize"`,
   };
 }
 

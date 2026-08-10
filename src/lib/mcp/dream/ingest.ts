@@ -34,6 +34,17 @@ export interface RejectedEpisode {
 export interface IngestResult {
   ingested_count: number;
   rejected: RejectedEpisode[];
+  /**
+   * Ergonomics fix (2026-08-10, PRD 05 — dream-cycle-fcc-live-session-feedback).
+   * Groups `rejected` by exact reason string and counts occurrences, so a
+   * caller whose whole batch was rejected for one root cause (e.g. an
+   * ownership conflict, which rejects every episode in the batch with the
+   * identical message) sees one summarized count instead of having to
+   * de-duplicate N identical strings themselves. Per-episode detail in
+   * `rejected` is unchanged and still fully present. Omitted when
+   * `rejected` is empty.
+   */
+  rejected_reason_summary?: Record<string, number>;
 }
 
 const VALID_OUTCOMES = new Set(['success', 'failure', 'timeout']);
@@ -66,12 +77,15 @@ export async function ingestEpisodes(
 ): Promise<IngestResult> {
   const ownership = await claimOrCheckOwnership(agentId, userId);
   if (!ownership.ok) {
+    const reason = ownership.reason ?? 'ownership check failed';
+    const rejected = episodes.map((ep) => ({
+      episode_id: (ep as Partial<EpisodeLog>)?.episode_id ?? 'unknown',
+      reason,
+    }));
     return {
       ingested_count: 0,
-      rejected: episodes.map((ep) => ({
-        episode_id: (ep as Partial<EpisodeLog>)?.episode_id ?? 'unknown',
-        reason: ownership.reason ?? 'ownership check failed',
-      })),
+      rejected,
+      ...(rejected.length > 0 ? { rejected_reason_summary: summarizeRejectionReasons(rejected) } : {}),
     };
   }
 
@@ -114,7 +128,18 @@ export async function ingestEpisodes(
     if (inserted === null || inserted > 0) ingestedCount++;
   }
 
-  return { ingested_count: ingestedCount, rejected };
+  return {
+    ingested_count: ingestedCount,
+    rejected,
+    ...(rejected.length > 0 ? { rejected_reason_summary: summarizeRejectionReasons(rejected) } : {}),
+  };
+}
+
+/** Groups rejected episodes by exact reason string, counting occurrences. */
+function summarizeRejectionReasons(rejected: RejectedEpisode[]): Record<string, number> {
+  const summary: Record<string, number> = {};
+  for (const r of rejected) summary[r.reason] = (summary[r.reason] ?? 0) + 1;
+  return summary;
 }
 
 /** Cheap, deterministic token estimate (chars/4) — no LLM/embedding call. */

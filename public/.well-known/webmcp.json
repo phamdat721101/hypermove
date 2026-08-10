@@ -1,8 +1,8 @@
 {
   "version": "4.0",
-  "name": "hypermove.xyz",
+  "name": "hypermove.duckdns.org",
   "description": "The HyperMove MCP Gateway v4.0 — one Model Context Protocol endpoint for external-protocol integration: cross-chain web3 data (EVM + Stellar + XRPL + Flare + GOAT), FTSO oracle, builder briefs, XRPL ecosystem tools (yield comparison, toolkit directory, hub trending, FXRP bridge status), daily news + AI insight, agentic tools, and per-query x402/MPP payment settled via n-payment. Agent-skills install & run locally in your workspace (GET /api/skills) — MCP is not required to install or run a skill.",
-  "homepage": "https://hypermove.xyz",
+  "homepage": "https://hypermove.duckdns.org",
   "license": "MIT",
   "transport": {
     "type": "streamable-http",

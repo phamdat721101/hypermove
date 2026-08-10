@@ -138,6 +138,20 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/already claimed/i);
   });
+
+  // Task 1 fix (2026-08-10, PRD 05 — dream-cycle-fcc-live-session-feedback,
+  // Finding D). The rejection message previously stated only the problem
+  // ("already claimed by a different session") with no resolution path. It
+  // must now state both actionable fixes inline.
+  it('the ownership-conflict message states both resolution paths inline (Finding D)', async () => {
+    installFakeOwnershipDb();
+    const { claimOrCheckOwnership } = await import('../src/lib/mcp/dream/ownership');
+    await claimOrCheckOwnership('robot-42', 'user-a');
+    const result = await claimOrCheckOwnership('robot-42', 'user-b');
+    expect(result.ok).toBe(false);
+    expect(result.reason).toMatch(/choose a different agent_id/i);
+    expect(result.reason).toMatch(/same authenticated session/i);
+  });
 });
 
 // ─── Task 3 · submit_episode_log — zero-token ingestion ────────────────────
@@ -224,6 +238,45 @@ describe('Task 3 · ingestEpisodes — zero-token cold storage', () => {
     const result = await ingestEpisodes('robot-42', 'user-b', [validEpisode('ep-2')]);
     expect(result.ingested_count).toBe(0);
     expect(result.rejected[0].reason).toMatch(/already claimed/i);
+  });
+
+  // Task 1 fix (2026-08-10, PRD 05, Finding D). A batch whose N episodes all
+  // fail for the identical reason (the common ownership-conflict case) should
+  // report a summarized count instead of forcing the caller to de-duplicate
+  // N identical strings themselves. Per-episode detail in `rejected` stays
+  // fully present — this is additive, not a replacement.
+  it('rejected_reason_summary groups a same-reason batch rejection by count (ownership conflict)', async () => {
+    installFakeIngestDb();
+    const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
+    await ingestEpisodes('robot-42', 'user-a', [validEpisode('ep-1')]);
+    const batch = [validEpisode('ep-2'), validEpisode('ep-3'), validEpisode('ep-4')];
+    const result = await ingestEpisodes('robot-42', 'user-b', batch);
+    expect(result.ingested_count).toBe(0);
+    expect(result.rejected).toHaveLength(3);
+    expect(result.rejected_reason_summary).toBeDefined();
+    const total = Object.values(result.rejected_reason_summary ?? {}).reduce((s, n) => s + n, 0);
+    expect(total).toBe(3);
+  });
+
+  it('rejected_reason_summary groups mixed-reason validation rejections by their distinct reasons', async () => {
+    installFakeIngestDb();
+    const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
+    const malformed1 = { episode_id: 'ep-bad-1', agent_id: 'robot-42', outcome: 'success' }; // missing timestamp/steps
+    const malformed2 = { episode_id: 'ep-bad-2', agent_id: 'robot-42', outcome: 'success' }; // same reason as bad-1
+    const result = await ingestEpisodes('robot-42', 'user-a', [validEpisode('ep-good'), malformed1, malformed2]);
+    expect(result.ingested_count).toBe(1);
+    expect(result.rejected).toHaveLength(2);
+    expect(result.rejected_reason_summary).toBeDefined();
+    const total = Object.values(result.rejected_reason_summary ?? {}).reduce((s, n) => s + n, 0);
+    expect(total).toBe(2);
+  });
+
+  it('omits rejected_reason_summary entirely when there is nothing rejected', async () => {
+    installFakeIngestDb();
+    const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
+    const result = await ingestEpisodes('robot-42', 'user-a', [validEpisode('ep-1')]);
+    expect(result.rejected).toEqual([]);
+    expect(result.rejected_reason_summary).toBeUndefined();
   });
 
   it('is registered as an unmetered t1_read tool, gated by the flag', async () => {
@@ -671,6 +724,62 @@ describe('Task 4 · startDream / getDreamConfig', () => {
     expect(cfg.config?.confidential).toBe(false); // never persisted as true when the flag is off
   });
 
+  // ─── Task 2 fix (2026-08-10, PRD 03 — dream-cycle-fcc-live-session-feedback,
+  // Finding B). The run above (flag OFF) still starts in plaintext exactly as
+  // before this fix — but its OWN response must now say so, rather than only
+  // discoverable via a separate get_dream_config call (the exact gap the live
+  // session found).
+
+  it('Finding B: confidential:true with the FEATURE_MCP_DREAM_CONFIDENTIAL flag OFF reports the downgrade in start_dream\'s own response', async () => {
+    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL;
+    installFakePipelineDb();
+    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
+    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
+    expect(result.status).toBe('started'); // still runs in plaintext — "report the downgrade," not a hard refusal
+    expect(result.confidential_requested).toBe(true);
+    expect(result.confidential_actual).toBe(false);
+    expect(result.confidential_fallback_reason).toBe('feature_disabled');
+  });
+
+  it('Finding B: confidential:true with the flag ON but NO settled payment reports the downgrade with reason no_settled_payment', async () => {
+    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
+    installFakePipelineDb(); // no paid sessions seeded
+    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
+    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
+    // This path already correctly errors out (Task 3's pre-existing payment
+    // gate) — Finding B's fix adds the SAME 3 fields to that existing error
+    // response too, so a caller inspecting either outcome shape sees a
+    // consistent signal rather than only the plaintext-fallback case being
+    // instrumented.
+    expect(result.status).toBe('error');
+    expect(result.confidential_requested).toBe(true);
+    expect(result.confidential_actual).toBe(false);
+    expect(result.confidential_fallback_reason).toBe('no_settled_payment');
+  });
+
+  it('Finding B: a settled payment + flag ON reports confidential_actual:true, no fallback_reason', async () => {
+    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
+    installFakePipelineDb([
+      { session_id: 'sess-1', user_id: 'user-a', tier: 'confidential', chain: 'xrpl-mainnet', quota_limit: 100, quota_used: 0, expires_at: new Date(Date.now() + 3_600_000).toISOString() },
+    ]);
+    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
+    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
+    expect(result.status).toBe('started');
+    expect(result.confidential_requested).toBe(true);
+    expect(result.confidential_actual).toBe(true);
+    expect(result.confidential_fallback_reason).toBeUndefined();
+  });
+
+  it('Finding B: a plain call that never touches confidential omits all 3 new fields entirely (byte-identical response)', async () => {
+    installFakePipelineDb();
+    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
+    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced' });
+    expect(result.status).toBe('started');
+    expect(result.confidential_requested).toBeUndefined();
+    expect(result.confidential_actual).toBeUndefined();
+    expect(result.confidential_fallback_reason).toBeUndefined();
+  });
+
   it('Task 6: flag OFF is byte-identical to never having passed confidential at all', async () => {
     delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL;
     installFakePipelineDb();
@@ -793,7 +902,26 @@ describe('Task 5 · preprocessEpisodes', () => {
     // instantly") carries real signal and used to be silently dropped.
     expect(result.episodes).toHaveLength(1);
     expect(result.episodes[0].episode_id).toBe('short-success');
-    expect(result.summary).toEqual({ episodes_in: 2, episodes_discarded: 1, discard_reasons: { empty_steps: 1 } });
+    expect(result.summary).toEqual({ episodes_in: 2, episodes_discarded: 1, discard_reasons: { empty_steps: 1 }, unaccounted: 0 });
+  });
+
+  // Task 4 fix (2026-08-10, PRD 02 — dream-cycle-fcc-live-session-feedback,
+  // Finding A safety net, NOT a claimed root-cause fix). Every currently-
+  // understood code path must report unaccounted: 0 — this is the
+  // accounting invariant that would surface a FUTURE silent episode-loss
+  // divergence (including possibly a recurrence of this exact live bug) in
+  // the API response instead of requiring a manual investigation.
+  it('unaccounted is always 0 across a mixed batch (accounting invariant safety net, Finding A)', async () => {
+    const { preprocessEpisodes } = await import('../src/lib/mcp/dream/preprocess');
+    const episodes = [
+      baseEpisode({ episode_id: 'empty', outcome: 'success', steps: [] }),
+      baseEpisode({ episode_id: 'short-success', outcome: 'success', steps: [{ action: 'a' }] }),
+      baseEpisode({ episode_id: 'a-failure', outcome: 'failure', steps: [{ action: 'x' }, { action: 'y', error: 'boom' }] }),
+    ];
+    const result = preprocessEpisodes(episodes);
+    expect(result.summary.unaccounted).toBe(0);
+    // Every input episode is either discarded or present in the output batch.
+    expect(result.summary.episodes_discarded + result.episodes.length).toBe(result.summary.episodes_in);
   });
 
   it('keeps success episodes with >2 steps', async () => {
@@ -1011,6 +1139,70 @@ describe('Task 7 · extractInsights — services/llm HTTP call + budget gating',
     expect(result.clusters_failed_extraction).toEqual(['c-1']);
     expect(result.status).toBe('partial');
     expect(cost.budgetUsedUsd).toBe(0);
+    // Finding C fix (2026-08-10, PRD 04): a non-2xx response is bucketed as
+    // 'upstream_error' — the plaintext path's coarse taxonomy merges network
+    // throws and non-2xx into this one bucket (kept consistent with the
+    // confidential path's own coarseness).
+    expect(result.failure_reasons).toEqual({ upstream_error: 1 });
+  });
+
+  // Finding C fix (2026-08-10, PRD 04). A thrown network error (fetch itself
+  // rejects, not just a non-2xx response) must land in the SAME
+  // 'upstream_error' bucket as a non-2xx response — both are "the HTTP call
+  // to services/llm didn't work," per this fix's own taxonomy decision.
+  it('bucket-tags a thrown network error as upstream_error, same bucket as a non-2xx response', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('ECONNREFUSED'); }));
+
+    const cost = new CostTracker(0.10);
+    const result = await extractInsights([fixtureCluster('c-1')], cost, 100);
+    expect(result.extracted).toEqual([]);
+    expect(result.clusters_failed_extraction).toEqual(['c-1']);
+    expect(cost.budgetUsedUsd).toBe(0);
+    expect(result.failure_reasons).toEqual({ upstream_error: 1 });
+  });
+
+  // Finding C fix (2026-08-10, PRD 04). A 2xx response whose body still
+  // carries extraction_failure_reason (services/llm's own malformed/
+  // truncated-output signal, per the 2026-07-27 fix) is a DIFFERENT failure
+  // mode from a non-2xx/network error — the HTTP call itself worked, but the
+  // LLM's output never parsed into a valid 4-key JSON object. Bucketed
+  // distinctly as 'parse_error'.
+  it('bucket-tags a 2xx response with extraction_failure_reason as parse_error, distinct from upstream_error', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      rules: [], preferences: [], error_patterns: [], facts: [], extraction_failure_reason: 'truncated_output',
+    }), { status: 200 })));
+
+    const cost = new CostTracker(0.10);
+    const result = await extractInsights([fixtureCluster('c-1')], cost, 100);
+    expect(result.extracted).toEqual([]);
+    expect(result.clusters_failed_extraction).toEqual(['c-1']);
+    expect(cost.budgetUsedUsd).toBe(0); // still zero cost — 07-27 fix unaffected by this addition
+    expect(result.failure_reasons).toEqual({ parse_error: 1 });
+  });
+
+  // Finding C fix (2026-08-10, PRD 04). failure_reasons values must always
+  // sum to clusters_failed_extraction.length, across a mixed-failure batch.
+  it('failure_reasons values sum to clusters_failed_extraction.length across a mixed-failure batch', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    let call = 0;
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      call++;
+      if (call === 1) return new Response('boom', { status: 500 }); // upstream_error
+      return new Response(JSON.stringify({ rules: [], preferences: [], error_patterns: [], facts: [], extraction_failure_reason: 'x' }), { status: 200 }); // parse_error
+    }));
+
+    const cost = new CostTracker(0.10);
+    const clusters = [fixtureCluster('c-1'), fixtureCluster('c-2')];
+    const result = await extractInsights(clusters, cost, 100);
+    expect(result.clusters_failed_extraction).toHaveLength(2);
+    const total = Object.values(result.failure_reasons).reduce((s, n) => s + n, 0);
+    expect(total).toBe(result.clusters_failed_extraction.length);
+    expect(result.failure_reasons).toEqual({ upstream_error: 1, parse_error: 1 });
   });
 });
 
@@ -1389,6 +1581,12 @@ describe('Task 10 · end-to-end pipeline (submit_episode_log -> start_dream -> q
     expect(stats.stage_summaries?.extraction.candidates_extracted).toBeGreaterThan(0);
     expect(stats.stage_summaries?.pruning_summary.candidates_extracted).toBe(stats.stage_summaries?.extraction.candidates_extracted);
     expect(stats.stage_summaries?.pruning_summary.candidates_promoted).toBeGreaterThan(0);
+    // Task 4 fix (2026-08-10, Finding A safety net): unaccounted must be 0 on
+    // a genuinely-successful end-to-end run — no episodes silently vanished.
+    expect(stats.stage_summaries?.preprocessing.unaccounted).toBe(0);
+    // Task 3 fix (2026-08-10, Finding C): no cluster failed extraction on
+    // this genuinely-successful run, so failure_reasons is an empty object.
+    expect(stats.stage_summaries?.extraction.failure_reasons).toEqual({});
 
     const result = await queryDream('robot-e2e', 'gripper timeout', 5, 0);
     expect(result.memories.length).toBeGreaterThan(0);

@@ -82,7 +82,7 @@ describe('loadConfigFromEnv — F005 secret management', () => {
   it('loads real config when the token is set, with sensible defaults', () => {
     const cfg = loadConfigFromEnv({ HYPERMOVE_MCP_ADMIN_TOKEN: 'tok' } as unknown as NodeJS.ProcessEnv);
     expect(cfg.hyperMoveBearerToken).toBe('tok');
-    expect(cfg.hyperMoveBaseUrl).toBe('https://hypermove.xyz/api/mcp');
+    expect(cfg.hyperMoveBaseUrl).toBe('https://hypermove.duckdns.org/api/mcp');
     expect(cfg.teeSignBaseUrl).toBe('http://localhost:8888');
   });
 });

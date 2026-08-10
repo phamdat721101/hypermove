@@ -1,16 +1,16 @@
 {
   "name": "HyperMove",
   "description": "An MCP gateway for cross-chain web3 data (EVM + Stellar + XRPL), news + insight, agentic tools, and n-payment settlement.",
-  "url": "https://hypermove.xyz",
+  "url": "https://hypermove.duckdns.org",
   "version": "2.0.0",
   "capabilities": {
     "tools": ["search", "data.call", "news.search", "codemode.news.insight", "insight.roadmap", "ideas.generate", "skillify", "payments.settle", "payments.status"],
     "transports": ["streamable-http"]
   },
   "endpoints": {
-    "mcp": "https://hypermove.xyz/api/mcp",
-    "manifest": "https://hypermove.xyz/.well-known/webmcp.json",
-    "bundles": "https://hypermove.xyz/bundles.json"
+    "mcp": "https://hypermove.duckdns.org/api/mcp",
+    "manifest": "https://hypermove.duckdns.org/.well-known/webmcp.json",
+    "bundles": "https://hypermove.duckdns.org/bundles.json"
   },
   "license": "MIT",
   "source": "https://github.com/phamdat721721"

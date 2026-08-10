@@ -14,7 +14,7 @@ import { join } from 'node:path';
 export const runtime = 'nodejs';
 export const dynamic = 'force-static';
 
-const SITE = process.env.HYPERMOVE_SITE_URL ?? 'https://hypermove.xyz';
+const SITE = process.env.HYPERMOVE_SITE_URL ?? 'https://hypermove.duckdns.org';
 
 /** Doc order mirrors the DOCS_NAV outline: Overview → Get started → Platform → Payments. */
 const DOCS: ReadonlyArray<{ slug: string; title: string; file: string }> = [

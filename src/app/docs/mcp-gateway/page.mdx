@@ -2,7 +2,7 @@ export const metadata = { title: 'MCP Gateway — agent connectivity for cross-c
 
 # MCP Gateway v4.0 + v2.1 Guardians
 
-> One endpoint — `https://hypermove.xyz/api/mcp` — makes cross-chain web3 agent-callable.
+> One endpoint — `https://hypermove.duckdns.org/api/mcp` — makes cross-chain web3 agent-callable.
 > **40 tools** today (verified live via `/api/mcp/health`): search + catalog discovery,
 > daily news + AI insight, tiered multi-chain payment, XRPL/Flare/GOAT builder briefs and
 > deep reads, confidential compute, and Dream Cycle — an offline memory-consolidation
@@ -169,7 +169,7 @@ memories — without an LLM in the read path and at near-zero cost:
 
 ```bash
 # 1 — log what happened (zero LLM calls, idempotent per episode_id)
-curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
+curl -s https://hypermove.duckdns.org/api/mcp -H 'authorization: Bearer <token>' -d '{
   "jsonrpc":"2.0","id":1,"method":"tools/call",
   "params":{"name":"submit_episode_log","arguments":{
     "agent_id":"robot-42",
@@ -180,14 +180,14 @@ curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
 # 2 — run the pipeline (preprocess -> cluster -> extract -> consolidate -> prune),
 # bounded by budget_usd — never spends more than this per call, independent of the
 # gateway's own free-tier metering.
-curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
+curl -s https://hypermove.duckdns.org/api/mcp -H 'authorization: Bearer <token>' -d '{
   "jsonrpc":"2.0","id":2,"method":"tools/call",
   "params":{"name":"start_dream","arguments":{
     "agent_id":"robot-42","config":{"budget_usd":0.05,"preset":"balanced"}
   }}}'
 
 # 3 — ask what it learned, any time later
-curl -s https://hypermove.xyz/api/mcp -H 'authorization: Bearer <token>' -d '{
+curl -s https://hypermove.duckdns.org/api/mcp -H 'authorization: Bearer <token>' -d '{
   "jsonrpc":"2.0","id":3,"method":"tools/call",
   "params":{"name":"query_dream","arguments":{"agent_id":"robot-42","query":"gripper timeout"}}}'
 ```
@@ -222,7 +222,7 @@ catalog at `GET /api/skills`.
 
 `/api/mcp` requires a key — there is no anonymous free tier.
 
-**[hypermove.xyz/mcp-connect](/mcp-connect)** is the fastest path:
+**[hypermove.duckdns.org/mcp-connect](/mcp-connect)** is the fastest path:
 - Connects your wallet.
 - Has you sign one free message (no gas).
 - Issues a bearer token from that signature.
@@ -233,7 +233,7 @@ wallet. No wallet and no browser at all? See
 
 ```bash
 # Wallet flow happens in-browser at /mcp-connect. Scripted equivalent (WorkOS):
-open https://hypermove.xyz/api/mcp/authorize
+open https://hypermove.duckdns.org/api/mcp/authorize
 # → WorkOS AuthKit → /api/mcp/callback → redirects to /mcp-connect?token=…
 # (send `Accept: application/json` to get { "token": "…" } back instead of the redirect)
 ```
@@ -246,7 +246,7 @@ Local dev needs no WorkOS: set `HYPERMOVE_DEV_UNAUTHENTICATED=true` and call fro
 ## 2 — Search (free tier: 5 / 24h)
 
 ```bash
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call",
@@ -282,7 +282,7 @@ Discover options, then select chain + rail + asset via headers:
 
 # after the free tier, the gateway returns JSON-RPC error -32402 with an x-payment-required
 # challenge listing chains + assets + amounts. Select and pay:
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'x-payment-chain: xrpl-mainnet' \
   -H 'x-payment-rail: x402' \
@@ -309,9 +309,9 @@ Sub-flags for partial rollback: `FEATURE_MCP_AUTH_WORKOS`, `FEATURE_MCP_RATE_LIM
 ## Health & spec (public, no auth)
 
 ```bash
-curl https://hypermove.xyz/.well-known/webmcp.json  # manifest: tools, endpoints, auth mode
-curl https://hypermove.xyz/api/mcp/health   # { ok, gateway_enabled, tools[], commit, deployed_at }
-curl https://hypermove.xyz/api/mcp/spec     # OpenAPI-3.1-style super spec
+curl https://hypermove.duckdns.org/.well-known/webmcp.json  # manifest: tools, endpoints, auth mode
+curl https://hypermove.duckdns.org/api/mcp/health   # { ok, gateway_enabled, tools[], commit, deployed_at }
+curl https://hypermove.duckdns.org/api/mcp/spec     # OpenAPI-3.1-style super spec
 ```
 
 `/api/mcp/health`'s `commit` / `deployed_at` fields let you confirm which build is

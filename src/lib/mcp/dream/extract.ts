@@ -66,6 +66,31 @@ export interface ExtractionOutcome {
    * without forcing pipeline.ts to guess which one "the" ref is.
    */
   attestation_refs: string[];
+  /**
+   * Additive (2026-08-10, PRD 04 — dream-cycle-fcc-live-session-feedback,
+   * Finding C). Bucketed counts of WHY each cluster in
+   * clusters_failed_extraction failed, so a caller without server-log
+   * access can distinguish "your LLM extraction backend is down" (retry
+   * later) from "the deployment is misconfigured" from a parse issue —
+   * three different actions that were previously indistinguishable from a
+   * bare cluster-id list. Two buckets for the plaintext path (see
+   * extractOneCluster()): 'upstream_error' (network throw OR non-2xx
+   * response — merged into one bucket per this fix's own taxonomy
+   * decision, keeping parity with the confidential path's coarser
+   * fcc_dispatch_failed granularity) and 'parse_error' (a 2xx response
+   * whose body still carried extraction_failure_reason — the LLM's output
+   * never parsed into a valid 4-key JSON object). Values always sum to
+   * clusters_failed_extraction.length. Confidential-path failures
+   * (fcc_not_live/fcc_not_configured/fcc_dispatch_failed) are NOT
+   * aggregated here — the confidential path already has its own richer,
+   * differently-shaped failureReason taxonomy surfaced via a separate
+   * mechanism (dream_cycle_runs.attestation_ref + this file's own doc
+   * comments); mixing the two taxonomies into one bucket set would lose
+   * the confidential path's existing granularity for no benefit, since a
+   * single run is never a mix of both paths (see extractInsights()'s
+   * `confidential` boolean — a run is one or the other, never both).
+   */
+  failure_reasons: Record<string, number>;
 }
 
 function extractUrl(): string {
@@ -83,13 +108,19 @@ interface ClusterExtractionAttempt {
    *  extraction_failure_reason — i.e. genuine, cost-worthy LLM output. */
   genuine: boolean;
   /**
-   * Dream Cycle Confidential Extraction on Flare FCC, Task 4. Present only
-   * on a non-genuine CONFIDENTIAL attempt, so callers/observability (Task 4's
-   * StageSummaries wiring) can distinguish "FCC isn't live yet" from the
-   * plaintext path's generic extraction_failure_reason. Always undefined for
-   * the plaintext extractOneCluster() above.
+   * Dream Cycle Confidential Extraction on Flare FCC, Task 4, extended
+   * 2026-08-10 (PRD 04, Finding C) to also cover the PLAINTEXT path.
+   * 'fcc_not_live' | 'fcc_not_configured' | 'fcc_dispatch_failed' are
+   * CONFIDENTIAL-path-only (see extractOneClusterConfidential()).
+   * 'upstream_error' | 'parse_error' are PLAINTEXT-path-only (see
+   * extractOneCluster() below) — 'upstream_error' covers both a thrown
+   * network error and a non-2xx HTTP response (merged into one bucket per
+   * this fix's taxonomy decision); 'parse_error' covers a 2xx response
+   * whose body still carried extraction_failure_reason. The two path's
+   * value sets never mix within one attempt (a run is confidential or
+   * plaintext, never both — see extractInsights()'s `confidential` arg).
    */
-  failureReason?: 'fcc_not_live' | 'fcc_not_configured' | 'fcc_dispatch_failed';
+  failureReason?: 'fcc_not_live' | 'fcc_not_configured' | 'fcc_dispatch_failed' | 'upstream_error' | 'parse_error';
   /**
    * Dream Cycle Confidential Extraction on Flare FCC, Task 5. Present only
    * on a genuine CONFIDENTIAL attempt (see extractOneClusterConfidential())
@@ -109,7 +140,12 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ summary: cluster.summary, max_output_tokens: maxOutputTokens }),
     });
-    if (!res.ok) throw new Error(`extract endpoint ${res.status}`);
+    // Finding C fix (2026-08-10): a non-2xx response is tagged 'upstream_error'
+    // right here rather than relying on the generic catch block below — both
+    // land in the same bucket (this fix's taxonomy merges network-throw and
+    // non-2xx into one 'upstream_error' bucket), but tagging it at the actual
+    // failure site keeps the intent explicit rather than incidental.
+    if (!res.ok) return emptyAttempt(cluster.cluster_id, 'upstream_error');
     const body = (await res.json()) as Partial<ExtractedInsights> & { extraction_failure_reason?: string };
     const insights: ExtractedInsights = {
       cluster_id: cluster.cluster_id,
@@ -125,16 +161,19 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
     // which is exactly what the live-session bug report could NOT
     // distinguish from the client side. Absence of the field (undefined) is
     // the only "genuine" case; any string value means treat as non-genuine.
-    return { insights, genuine: body.extraction_failure_reason === undefined };
+    if (body.extraction_failure_reason !== undefined) {
+      // Finding C fix (2026-08-10): a 2xx response that still failed to
+      // produce genuine output is a parse/malformed-output failure, distinct
+      // from the upstream_error bucket above — the HTTP call itself worked.
+      return { insights, genuine: false, failureReason: 'parse_error' };
+    }
+    return { insights, genuine: true };
   } catch {
     // Fail-safe: an unreachable/erroring extraction service degrades to an
     // empty-but-well-formed result for this cluster — never a crash, never
     // a fabricated insight. The pipeline still marks the run 'partial'.
     // Never genuine — a thrown/network-level failure is never cost-worthy.
-    return {
-      insights: { cluster_id: cluster.cluster_id, rules: [], preferences: [], error_patterns: [], facts: [] },
-      genuine: false,
-    };
+    return emptyAttempt(cluster.cluster_id, 'upstream_error');
   }
 }
 
@@ -295,6 +334,10 @@ export async function extractInsights(
   const skipped: string[] = [];
   const failedExtraction: string[] = [];
   const attestationRefs: string[] = [];
+  // Finding C fix (2026-08-10): bucketed failure-reason counts, aggregated
+  // only from the plaintext/confidential path actually used this run (see
+  // the `confidential` boolean below) — never mixed.
+  const failureReasons: Record<string, number> = {};
 
   for (const cluster of clusters) {
     const inputTokens = estimateTokens(cluster.summary);
@@ -315,6 +358,11 @@ export async function extractInsights(
       if (attempt.attestationRef) attestationRefs.push(attempt.attestationRef);
     } else {
       failedExtraction.push(cluster.cluster_id);
+      // Defensive fallback bucket: should not occur given extractOneCluster()/
+      // extractOneClusterConfidential() always set failureReason on every
+      // non-genuine return, but never let an unset reason go unaccounted.
+      const reason = attempt.failureReason ?? 'unknown';
+      failureReasons[reason] = (failureReasons[reason] ?? 0) + 1;
     }
   }
 
@@ -324,5 +372,6 @@ export async function extractInsights(
     clusters_skipped: skipped,
     clusters_failed_extraction: failedExtraction,
     attestation_refs: attestationRefs,
+    failure_reasons: failureReasons,
   };
 }

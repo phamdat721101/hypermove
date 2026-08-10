@@ -72,7 +72,7 @@ export function loadConfigFromEnv(env: NodeJS.ProcessEnv = process.env): Runtime
     );
   }
   return {
-    hyperMoveBaseUrl: env.HYPERMOVE_MCP_URL ?? 'https://hypermove.xyz/api/mcp',
+    hyperMoveBaseUrl: env.HYPERMOVE_MCP_URL ?? 'https://hypermove.duckdns.org/api/mcp',
     hyperMoveBearerToken,
     teeSignBaseUrl: env.TEE_SIGN_URL ?? `http://localhost:${PORTS.sign}`,
   };

@@ -110,6 +110,33 @@ export interface StartDreamResult {
    * parsing logic for this in-band challenge.
    */
   payment_challenge?: ReturnType<typeof import('../paywall').buildChallenge>;
+  /**
+   * Additive (2026-08-10, PRD 03 — dream-cycle-fcc-live-session-feedback,
+   * Finding B). Present ONLY when the caller's request actually touched
+   * `confidential` (an explicit `confidential: true` on this call, OR an
+   * inherited `confidential_default` of true) — omitted entirely for a
+   * plain non-confidential call, keeping that response byte-identical to
+   * before this fix. Reports whether confidential extraction was actually
+   * requested and whether it actually ran, so a caller never has to make a
+   * separate get_dream_config call to discover a silent downgrade (the
+   * exact gap this session's live test found: `start_dream({confidential:
+   * true})` against an unsatisfied gate used to return a response
+   * indistinguishable from a normal call).
+   */
+  confidential_requested?: boolean;
+  /** Additive, see confidential_requested above. True only when extraction
+   *  actually routed through the Flare FCC path for this run. */
+  confidential_actual?: boolean;
+  /**
+   * Additive, see confidential_requested above. Present only when
+   * confidential_requested is true and confidential_actual is false —
+   * 'feature_disabled' when isMcpDreamConfidentialEnabled() is off,
+   * 'no_settled_payment' when the flag is on but no active/consumable
+   * 'confidential'-tier paid session exists (mirrors the same condition
+   * that produces the payment_challenge error response above, for the case
+   * where the run proceeds in plaintext instead of erroring out).
+   */
+  confidential_fallback_reason?: 'feature_disabled' | 'no_settled_payment';
 }
 
 export interface GetDreamConfigResult {
@@ -185,7 +212,28 @@ export async function startDream(
     });
     resolvedConfidential = storedDefault ?? false;
   }
-  const confidentialRequested = resolvedConfidential === true && isMcpDreamConfidentialEnabled();
+  // Finding B fix (2026-08-10): `confidentialWanted` tracks the caller's
+  // actual intent (explicit true, or an inherited confidential_default of
+  // true) SEPARATELY from whether the gate (flag + payment) is satisfied —
+  // previously `confidentialRequested` conflated the two, so a
+  // flag-disabled or unpaid request silently collapsed into "false" with
+  // zero trace of the original ask. `confidentialWanted` is what gets
+  // reported back via confidential_requested; `confidentialRequested`
+  // remains the internal "actually run confidential" gate exactly as before
+  // (used for the payment check, dream_configs/dream_cycle_runs.confidential
+  // persistence, and runPipeline()'s extraction routing — byte-identical
+  // behavior to before this fix in every case).
+  const confidentialWanted = resolvedConfidential === true;
+  const featureEnabled = isMcpDreamConfidentialEnabled();
+  const confidentialRequested = confidentialWanted && featureEnabled;
+  // Finding B fix: when the flag is off but the caller wanted confidential,
+  // the run still proceeds in plaintext exactly as before this fix (product
+  // intent is "best effort," not a hard refusal — PRD 03's accepted
+  // response shape) — confidentialRequested is already correctly `false`
+  // for this case via the `&& featureEnabled` above, so no special-cased
+  // early return is needed; the downgrade is reported at the final return
+  // below instead, via confidentialFallbackReason computed once here.
+  const confidentialFallbackReason: 'feature_disabled' | undefined = confidentialWanted && !featureEnabled ? 'feature_disabled' : undefined;
 
   if (confidentialRequested) {
     const { findActiveSession, consumeSession, buildChallenge, TIER_PRICE_USD } = await import('../paywall');
@@ -196,6 +244,9 @@ export async function startDream(
         status: 'error',
         message: `Payment required for confidential Dream Cycle (${TIER_PRICE_USD.confidential} USD equivalent). Call payments.settle with tier="confidential" (XRPL/RLUSD only) to unlock.`,
         payment_challenge: buildChallenge('confidential', 0),
+        confidential_requested: true,
+        confidential_actual: false,
+        confidential_fallback_reason: 'no_settled_payment',
       };
     }
   }
@@ -229,7 +280,23 @@ export async function startDream(
 
   const cost = await runPipeline(runId, agentId, config.budget_usd, preset, confidentialRequested);
 
-  return { run_id: runId, status: 'started', _cost: cost };
+  return {
+    run_id: runId,
+    status: 'started',
+    _cost: cost,
+    // Finding B fix: only present when the caller's request actually
+    // touched `confidential` (explicit true, or an inherited
+    // confidential_default of true) — a plain non-confidential call's
+    // response stays byte-identical to before this fix (no new fields at
+    // all), matching this PRD's own acceptance criterion.
+    ...(confidentialWanted
+      ? {
+          confidential_requested: true,
+          confidential_actual: confidentialRequested,
+          ...(confidentialFallbackReason ? { confidential_fallback_reason: confidentialFallbackReason } : {}),
+        }
+      : {}),
+  };
 }
 
 /**
@@ -245,12 +312,30 @@ export interface StageSummaries {
     episodes_in: number;
     episodes_discarded: number;
     discard_reasons: Record<string, number>;
+    /**
+     * Safety net, NOT a claimed fix (2026-08-10, PRD 02 —
+     * dream-cycle-fcc-live-session-feedback, Finding A). See
+     * preprocess.ts's PreprocessSummary.unaccounted doc comment. Always 0
+     * in every currently-understood code path; exists to make a future
+     * silent episode loss loudly visible instead of requiring a manual
+     * investigation. Finding A's root cause was NOT found by this fix —
+     * see docs/prd/dream-cycle-2026-08-10-live-feedback-fixes.md.
+     */
+    unaccounted: number;
   };
   extraction: {
     clusters_total: number;
     clusters_skipped: number;
     clusters_failed: number;
     candidates_extracted: number;
+    /**
+     * Additive (2026-08-10, PRD 04 — dream-cycle-fcc-live-session-feedback,
+     * Finding C). Bucketed counts of why clusters_failed clusters failed —
+     * see extract.ts's ExtractionOutcome.failure_reasons doc comment for the
+     * exact taxonomy. Sums to clusters_failed. Empty object when
+     * clusters_failed is 0.
+     */
+    failure_reasons: Record<string, number>;
   };
   pruning_summary: {
     candidates_extracted: number;
@@ -283,12 +368,14 @@ function buildStageSummaries(
       episodes_in: preprocessingSummary.episodes_in,
       episodes_discarded: preprocessingSummary.episodes_discarded,
       discard_reasons: preprocessingSummary.discard_reasons,
+      unaccounted: preprocessingSummary.unaccounted,
     },
     extraction: {
       clusters_total: extraction.extracted.length + extraction.clusters_skipped.length + extraction.clusters_failed_extraction.length,
       clusters_skipped: extraction.clusters_skipped.length,
       clusters_failed: extraction.clusters_failed_extraction.length,
       candidates_extracted: candidatesExtracted,
+      failure_reasons: extraction.failure_reasons,
     },
     pruning_summary: {
       candidates_extracted: candidatesExtracted,
@@ -335,6 +422,20 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
       );
       return rows;
     });
+
+    // Debug instrumentation (2026-08-10, Finding A safety net — PRD 02,
+    // dream-cycle-fcc-live-session-feedback). Env-gated, zero-cost when
+    // unset. Logs the raw row count this exact query returned for this
+    // exact agentId, immediately at the fetch site — the single log line
+    // needed to correlate against submit_episode_log's own confirmed
+    // ingested_count in a live-paired debugging session (this bug was NOT
+    // root-caused by static code reading; the query itself is agent_id-
+    // scoped correctly, so this instrumentation exists to capture what a
+    // live repro actually sees at this exact point, not to fix the bug).
+    if (process.env.DREAM_DEBUG_PREPROCESSING === 'true') {
+      // eslint-disable-next-line no-console
+      console.log(`[dream:pipeline] unconsumed fetch agent_id=${agentId} row_count=${(unconsumed ?? []).length}`);
+    }
 
     const episodes: EpisodeLog[] = (unconsumed ?? []).map((r) => ({
       episode_id: r.episode_id, agent_id: r.agent_id, timestamp: r.occurred_at,

@@ -12,7 +12,7 @@
 
 import type { SkillDef } from '../harness/types';
 
-export const SITE = process.env.HYPERMOVE_SITE_URL ?? 'https://hypermove.xyz';
+export const SITE = process.env.HYPERMOVE_SITE_URL ?? 'https://hypermove.duckdns.org';
 export const MCP_URL = `${SITE}/api/mcp`;
 
 export type Host =

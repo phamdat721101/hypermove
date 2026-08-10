@@ -21,10 +21,12 @@
 
 import { createMcpHandler, withMcpAuth } from 'mcp-handler';
 import { z, type ZodRawShape, type ZodTypeAny } from 'zod';
+import { ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import type { NextRequest } from 'next/server';
 import { getTools, type ToolDef } from './tools';
 import { getPrompts, type PromptDef } from './prompts';
+import { getResources, type McpResource } from './resources';
 import { isMcpResourcesEnabled } from '../platform-flag';
 import { callTool } from './gateway';
 import { authenticate, type McpSession } from './auth';
@@ -152,6 +154,53 @@ export function registerPrompt(server: Parameters<Parameters<typeof createMcpHan
   );
 }
 
+/**
+ * Task 7 (2026-08-10, dream-cycle-fcc-live-session-feedback plan). The MCP
+ * Resources primitive — net-new, closing a documented "Known gap" (see
+ * docs/prd/dream-cycle-flare-confidential-v1.md): resources.ts's 4 Dream
+ * Cycle resources (dream/summary|rules|errors|stats) and the FTSO/XRPL/FXRP
+ * static resources were always fully implemented and unit-tested in
+ * isolation, but never reachable via a real `resources/list`/`resources/read`
+ * MCP call — nothing before this called server.registerResource() (mirrors
+ * registerPrompt()'s exact "data layer already existed, only transport
+ * wiring was missing" shape).
+ *
+ * McpResource.uri is either a fixed URI (no `{param}`, e.g. "xrpl://amendments")
+ * or a path template (e.g. "hypermove:///agents/{agent_id}/dream/summary").
+ * The SDK's registerResource() overloads require a STRING for a fixed URI vs
+ * a ResourceTemplate instance for a templated one — this function picks the
+ * right overload per-resource rather than forcing every resource through one
+ * shape. Every resource's `read(matchedUri)` already accepts the exact
+ * requested URI string and does its own param extraction internally
+ * (resources.ts's extractAgentId()) — this function reuses that as-is,
+ * never re-implementing URI parsing here.
+ *
+ * `list: undefined` on the ResourceTemplate is intentional (not a stub to
+ * fill in later): resources.ts's own module doc explains these are strictly
+ * per-agent, scoped by the {agent_id} in the requested URI — there is no
+ * finite, enumerable "list every agent's dream/summary" operation to offer,
+ * matching the SDK's own documented meaning of an omitted list callback (the
+ * template resource is reachable via `resources/read` but never appears as
+ * a synthesized entry in a `resources/list` response).
+ */
+export function registerResource(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0], resource: McpResource): void {
+  const config = { description: resource.description, mimeType: resource.mimeType };
+
+  const readCallback = async (uri: URL) => {
+    const result = await resource.read(uri.toString());
+    return {
+      contents: [{ uri: uri.toString(), mimeType: resource.mimeType, text: JSON.stringify(result) }],
+    };
+  };
+
+  if (resource.uri.includes('{')) {
+    const template = new ResourceTemplate(resource.uri, { list: undefined });
+    server.registerResource(resource.name, template, config, readCallback);
+  } else {
+    server.registerResource(resource.name, resource.uri, config, readCallback);
+  }
+}
+
 /** Bridge HyperMove's 3-layer auth gate into an MCP AuthInfo (session in `extra`). */
 async function verifyToken(req: Request, bearer?: string): Promise<AuthInfo | undefined> {
   const outcome = await authenticate(req as unknown as NextRequest);
@@ -177,9 +226,14 @@ export function mcpHttpHandler(): (req: Request) => Promise<Response> {
       // promised prompt exposure — this task makes that promise true.
       if (isMcpResourcesEnabled()) {
         for (const prompt of getPrompts()) registerPrompt(server, prompt);
+        // Task 7: same flag as prompts above — that flag's own name ("MCP
+        // resources + prompts exposure") already promised resource exposure
+        // too; this closes that promise for resources the same way the
+        // prompts registration above closed it for prompts.
+        for (const resource of getResources()) registerResource(server, resource);
       }
     },
-    { serverInfo: { name: 'hypermove.xyz', version: '2.0.0' } },
+    { serverInfo: { name: 'hypermove.duckdns.org', version: '2.0.0' } },
     { basePath: '/api', disableSse: true, verboseLogs: false },
   );
   handler = withMcpAuth(base, verifyToken, { required: true });

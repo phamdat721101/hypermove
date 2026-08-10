@@ -47,6 +47,10 @@ describe('Task 4 · extractInsights(confidential=true) — FCC not live (real cu
     expect(outcome.clusters_failed_extraction).toEqual(['c1', 'c2']);
     expect(outcome.extracted).toHaveLength(0);
     expect(cost.budgetUsedUsd).toBe(0); // never charge for a non-genuine confidential attempt
+    // Finding C fix (2026-08-10): confidential-path failures use their own
+    // richer taxonomy (fcc_not_live/fcc_not_configured/fcc_dispatch_failed),
+    // not the plaintext path's upstream_error/parse_error buckets.
+    expect(outcome.failure_reasons).toEqual({ fcc_not_live: 2 });
   });
 
   it('never calls dispatchInstruction at all when the liveness check itself fails (fail-closed, no wasted dispatch)', async () => {

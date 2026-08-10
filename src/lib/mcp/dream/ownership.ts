@@ -50,5 +50,12 @@ export async function claimOrCheckOwnership(agentId: string, userId: string): Pr
   if (result === null) return { ok: true };
 
   if (result === userId) return { ok: true };
-  return { ok: false, reason: `agent_id "${agentId}" is already claimed by a different session` };
+  // Message-copy fix (2026-08-10, PRD 05 — dream-cycle-fcc-live-session-feedback):
+  // the prior message stated only the problem, not the fix. A caller hitting
+  // this had no signal of the two actual resolution paths short of guessing.
+  // No change to the claim/check logic above — copy only.
+  return {
+    ok: false,
+    reason: `agent_id "${agentId}" is already claimed by a different session. Choose a different agent_id, or if you own this agent_id, verify you're using the same authenticated session/credentials that first claimed it.`,
+  };
 }

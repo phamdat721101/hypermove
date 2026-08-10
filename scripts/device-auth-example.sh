@@ -2,12 +2,9 @@
 # hypermove-device-auth.sh — get an MCP bearer token with no browser,
 # no wallet extension, no email. Just this terminal.
 #
-# Usage: ./hypermove-device-auth.sh [origin]   (defaults to https://www.hypermove.xyz)
-# NOTE: the bare https://hypermove.xyz apex domain 308-redirects to
-# https://www.hypermove.xyz — use the www host directly so a plain POST
-# doesn't silently drop its body on the redirect.
+# Usage: ./hypermove-device-auth.sh [origin]   (defaults to https://hypermove.duckdns.org)
 set -euo pipefail
-ORIGIN="${1:-https://www.hypermove.xyz}"
+ORIGIN="${1:-https://hypermove.duckdns.org}"
 
 # 1) Start — mint a device_code (for polling) + user_code (for you to approve).
 start=$(curl -s -X POST "$ORIGIN/api/mcp/device/start")

@@ -6,7 +6,7 @@ export const metadata = { title: 'Dream Cycle — offline memory for MCP agents'
 > Log what happened during the day (`submit_episode_log`), trigger a consolidation pass
 > (`start_dream`), and the next session reads back small, durable lessons
 > (`query_dream`) instead of re-learning the same mistake. Zero setup — it's on by
-> default on the same `https://hypermove.xyz/api/mcp` endpoint you already use.
+> default on the same `https://hypermove.duckdns.org/api/mcp` endpoint you already use.
 
 ## Why this exists
 
@@ -54,7 +54,7 @@ sugar on top of those three calls.
 
 ## For agents — the fastest path to using this
 
-1. Connect to `https://hypermove.xyz/api/mcp` the same way you already do (see
+1. Connect to `https://hypermove.duckdns.org/api/mcp` the same way you already do (see
    [MCP Gateway](/docs/mcp-gateway) if you haven't yet — bearer token from
    [/mcp-connect](/mcp-connect) or the [no-wallet flow](/docs/agent-auth)).
 2. Call `tools/list` — if Dream Cycle is enabled (default: yes) you'll see the 5 tools below.
@@ -72,7 +72,7 @@ unique string (e.g. your robot's serial number, your bot's slug) and reuse it ev
 ## 1 — Log what happened
 
 ```bash
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{
@@ -109,7 +109,7 @@ that render tool schemas surface the valid values without a round-trip.
 ## 2 — Trigger a Dream Cycle
 
 ```bash
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
@@ -127,7 +127,7 @@ batch of new episodes worth consolidating — there's no scheduler, you decide w
 ## 3 — Query before you plan
 
 ```bash
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{
@@ -237,7 +237,7 @@ If you want that dispatch attested through HyperMove's own Flare Compute Extensi
 — a real, deployed TEE-proxy/extension pair on Coston2, not a mock — opt in per-run:
 
 ```bash
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{
@@ -283,6 +283,37 @@ the same discipline the plain extraction path already uses for a failed/unreacha
 `llm-service` call. Check `stage_summaries` (see "Check in on a cycle" above) to see this
 distinction directly rather than guessing from silence.
 
+### If you request `confidential:true` and the gate isn't satisfied, you're told — not silently downgraded
+
+`FEATURE_MCP_DREAM_CONFIDENTIAL` off, or on but with no settled `confidential`-tier
+payment, both mean the run happens in plaintext instead of via Flare FCC — this was
+already true before 2026-08-10. What changed: `start_dream`'s own response now says so,
+instead of requiring a separate `get_dream_config` call to discover it after the fact.
+
+These 3 fields appear **only** when your request actually touched `confidential` (an
+explicit `true`, or an inherited `confidential_default` of `true`) — a plain
+non-confidential call's response is unaffected, byte-identical to before this fix:
+
+```json
+{
+  "run_id": "...",
+  "status": "started",
+  "confidential_requested": true,
+  "confidential_actual": false,
+  "confidential_fallback_reason": "feature_disabled"
+}
+```
+
+`confidential_fallback_reason` is one of:
+- `"feature_disabled"` — `FEATURE_MCP_DREAM_CONFIDENTIAL` is off.
+- `"no_settled_payment"` — the flag is on, but no active/consumable `confidential`-tier
+  paid session exists (this case already returned `status: "error"` with a
+  `payment_challenge` before this fix — the 3 fields above are now included on that
+  existing error response too, for a consistent signal either way).
+
+A successful confidential run (flag on + settled payment) reports
+`confidential_actual: true` with no `confidential_fallback_reason` field at all.
+
 ## `flare.instruct.dispatch` (standalone tool)
 
 Beyond Dream Cycle, `flare.instruct.dispatch` is callable on its own — submit either a
@@ -291,7 +322,7 @@ Flare's Protocol Managed Wallets interface) or `GENERIC_AGENT_TASK` (`COMPUTE`) 
 to HyperMove's Coston2 extension and poll for the result:
 
 ```bash
-curl -s https://hypermove.xyz/api/mcp \
+curl -s https://hypermove.duckdns.org/api/mcp \
   -H 'authorization: Bearer <token>' \
   -H 'content-type: application/json' \
   -d '{"jsonrpc":"2.0","id":6,"method":"tools/call","params":{

@@ -3,7 +3,7 @@
 A Flare Compute Extension (FCE) — the `POST /action` handler a Flare TEE
 node (`extension-tee`) forwards confidential-compute instructions to — that
 fulfils `GENERIC_AGENT_TASK` instructions by calling out to
-[HyperMove](https://hypermove.xyz)'s public MCP gateway, then signs a
+[HyperMove](https://hypermove.duckdns.org)'s public MCP gateway, then signs a
 commitment digest of the result via the TEE node's own identity key.
 
 This is a **standalone TypeScript/Hono rewrite** of the honest-stub Go

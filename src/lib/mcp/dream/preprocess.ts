@@ -37,6 +37,25 @@ export interface PreprocessSummary {
   episodes_in: number;
   episodes_discarded: number;
   discard_reasons: Record<string, number>;
+  /**
+   * Safety net, NOT a claimed fix (2026-08-10, PRD 02 —
+   * dream-cycle-fcc-live-session-feedback, Finding A). Always
+   * `episodes_in - episodes_discarded - <surviving batch length>`. In every
+   * currently-understood code path this is 0 — every episode is either
+   * discarded (counted in episodes_discarded/discard_reasons) or survives
+   * into the returned batch. Its purpose is to make a FUTURE divergence
+   * (including possibly a recurrence of the live-session's `episodes_in: 0`
+   * despite confirmed ingestion bug) loudly visible in the API response
+   * instead of requiring a manual investigation. Finding A's actual root
+   * cause was NOT found by static code reading during this fix's own
+   * investigation (the unconsumed-episode query and schema are structurally
+   * correct) — this field and DREAM_DEBUG_PREPROCESSING (see runPipeline()
+   * in pipeline.ts and this file's DEBUG log lines) are a deliberately
+   * honest safety net, not a resolution. See
+   * docs/prd/dream-cycle-2026-08-10-live-feedback-fixes.md for the
+   * documented open status.
+   */
+  unaccounted: number;
 }
 
 export interface PreprocessResult {
@@ -86,6 +105,16 @@ export function preprocessEpisodes(episodes: EpisodeLog[], config: PreprocessCon
   const discardReasons: Record<string, number> = {};
   let discardedCount = 0;
 
+  // Debug instrumentation (2026-08-10, Finding A safety net) — env-gated,
+  // zero-cost when unset. Logs the exact input count this function received,
+  // for a live-paired debugging session to correlate against the raw DB row
+  // count logged in pipeline.ts's runPipeline() at the unconsumed-episode
+  // fetch, immediately before this function is called.
+  if (process.env.DREAM_DEBUG_PREPROCESSING === 'true') {
+    // eslint-disable-next-line no-console
+    console.log(`[dream:preprocess] entry episodes_in=${episodes.length}`);
+  }
+
   for (const ep of episodes) {
     // Discard only genuinely empty episodes — zero steps carries no signal
     // at all for any outcome. (Previously also discarded success episodes
@@ -116,8 +145,25 @@ export function preprocessEpisodes(episodes: EpisodeLog[], config: PreprocessCon
     });
   }
 
+  // Accounting invariant (Finding A safety net): every input episode must be
+  // either discarded (counted above) or present in `result`. A nonzero value
+  // here means episodes vanished somewhere in this function without being
+  // accounted for — should be structurally impossible given the loop above
+  // (every episode hits either `continue` after incrementing discardedCount,
+  // or gets pushed to result), but is computed explicitly rather than
+  // assumed, so a future refactor that breaks this invariant fails loudly in
+  // the API response instead of silently.
+  const unaccounted = episodes.length - discardedCount - result.length;
+
+  if (process.env.DREAM_DEBUG_PREPROCESSING === 'true') {
+    // eslint-disable-next-line no-console
+    console.log(
+      `[dream:preprocess] exit episodes_out=${result.length} discarded=${discardedCount} discard_reasons=${JSON.stringify(discardReasons)} unaccounted=${unaccounted}`,
+    );
+  }
+
   return {
     episodes: result,
-    summary: { episodes_in: episodes.length, episodes_discarded: discardedCount, discard_reasons: discardReasons },
+    summary: { episodes_in: episodes.length, episodes_discarded: discardedCount, discard_reasons: discardReasons, unaccounted },
   };
 }
