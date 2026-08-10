@@ -43,7 +43,17 @@ export interface PaymentRail {
   readonly id: RailId;
   /** True for the deterministic mock rail (blocked from granting paid sessions in prod). */
   readonly isMock: boolean;
-  settle(input: { selection: PaymentSelection; amount: string; userId: string; proof?: string }): Promise<ServiceResult<PaymentReceipt>>;
+  /**
+   * `tier` added 2026-08-10 (xrpl-rlusd-settlement-gap-feedback PRD 03) —
+   * needed by the XRPL "already-submitted tx hash" settlement path
+   * (npayment-rails.ts's settleXrplAlreadySubmitted()) to scope the replay-
+   * protection record in mcp_xrpl_settled_txs. Every existing implementer
+   * (createNPaymentRail, MockPaymentRail) already has `tier` available at
+   * its one call site (paywall.ts's settleSelection()) — this is a pure
+   * additive parameter, not a behavior change for any caller that doesn't
+   * read it.
+   */
+  settle(input: { selection: PaymentSelection; amount: string; userId: string; tier: string; proof?: string }): Promise<ServiceResult<PaymentReceipt>>;
 }
 
 /** Chains that carry a given protocol id. */
@@ -133,7 +143,7 @@ export function validateConfidentialSelection(sel: Partial<PaymentSelection>): S
 export class MockPaymentRail implements PaymentRail {
   readonly isMock = true;
   constructor(readonly id: RailId) {}
-  async settle(input: { selection: PaymentSelection; amount: string; userId: string; proof?: string }): Promise<ServiceResult<PaymentReceipt>> {
+  async settle(input: { selection: PaymentSelection; amount: string; userId: string; tier: string; proof?: string }): Promise<ServiceResult<PaymentReceipt>> {
     const seed = `${input.userId}:${input.selection.chain}:${input.amount}:${input.proof ?? 'mock'}`;
     const txHash = `0x${createHash('sha256').update(seed).digest('hex').slice(0, 64)}`;
     return ok({ txHash, chain: input.selection.chain, rail: this.id, asset: input.selection.asset, amount: input.amount });

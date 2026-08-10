@@ -199,8 +199,8 @@ describe('payment routing', () => {
   it('mock rail settles deterministically', async () => {
     const rail = new MockPaymentRail('x402');
     const sel = { chain: 'base-mainnet', rail: 'x402' as const, asset: 'USDC' };
-    const a = await rail.settle({ selection: sel, amount: '0.01', userId: 'u1', proof: 'p' });
-    const b = await rail.settle({ selection: sel, amount: '0.01', userId: 'u1', proof: 'p' });
+    const a = await rail.settle({ selection: sel, amount: '0.01', userId: 'u1', tier: 't1_read', proof: 'p' });
+    const b = await rail.settle({ selection: sel, amount: '0.01', userId: 'u1', tier: 't1_read', proof: 'p' });
     expect(a).toEqual(b);
   });
 
@@ -226,7 +226,7 @@ describe('payment routing', () => {
     const { createNPaymentRail } = await import('@/lib/mcp/npayment-rails');
     const rail = createNPaymentRail('x402');
     for (const chain of ['goat-mainnet', 'stellar-mainnet']) {
-      const res = await rail.settle({ selection: { chain, rail: 'x402', asset: 'USDC' }, amount: '0.001', userId: 'u', proof: 'p' });
+      const res = await rail.settle({ selection: { chain, rail: 'x402', asset: 'USDC' }, amount: '0.001', userId: 'u', tier: 't1_read', proof: 'p' });
       expect(res.ok).toBe(false);
       if (!res.ok) {
         expect(['unsupported_chain', 'no_proof', 'not_configured', 'settle_failed']).toContain(res.error.code);

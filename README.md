@@ -235,6 +235,43 @@ integration, checkable on [testnet.xrpl.org](https://testnet.xrpl.org):
 - [`D7DFA2D617B306D305CBE490041FAA7961182F3DC150E231D9C23E1AB2DEE780`](https://testnet.xrpl.org/transactions/D7DFA2D617B306D305CBE490041FAA7961182F3DC150E231D9C23E1AB2DEE780) — 0.05 RLUSD
 - [`FF216AE38CF44D1F12B48C5A5345D4CDCF1E4D40528CC44EB8256BBC4CA24418`](https://testnet.xrpl.org/transactions/FF216AE38CF44D1F12B48C5A5345D4CDCF1E4D40528CC44EB8256BBC4CA24418) — 0.05 RLUSD
 
+### Which settlement flow do I use? (`payments.settle`'s `proof` field, XRPL)
+
+`payments.settle`'s `proof` parameter accepts **two different shapes** for
+XRPL chains (`xrpl-mainnet`/`xrpl-testnet`) — this was previously undocumented
+and a real source of confusion (see
+`docs/prd/xrpl-rlusd-settlement-gap-2026-08-10.md` for the full incident this
+section closes). Pick the one that matches how you actually paid:
+
+**(a) Facilitator-relay envelope** — you have a *signed but not yet
+broadcast* XRPL `Payment`, and want T54's facilitator to submit it on your
+behalf. `proof` is the base64 PAYMENT-SIGNATURE envelope
+(`np.decodePaymentSignatureHeader()`'s expected shape):
+
+```ts
+proof: Buffer.from(JSON.stringify({ accepted: { payTo, asset: 'RLUSD', amount }, /* ...signed blob */ })).toString('base64')
+```
+
+**(b) Already-submitted transaction hash** — you signed AND submitted the
+`Payment` directly yourself (e.g. via `rpc.submitAndWait()`, exactly what
+`scripts/demo-t54-rlusd-dream-cycle.ts` does and this README's own published
+tx hashes above come from), confirmed `tesSUCCESS`/`validated:true` on your
+own. `proof` is a JSON string naming that transaction — HyperMove
+independently re-verifies it on-ledger (validated + tesSUCCESS + correct
+destination + correct asset + amount) before granting the paid session.
+Never trusted from the caller's claim alone:
+
+```ts
+proof: JSON.stringify({ txHash: 'C9C74C7B59B02F99556D3E0EF0DB5B4AA4ECE9A1672F899BD66281A918C00B3B' })
+```
+
+A given `txHash` can only unlock **one** paid session — a second settlement
+attempt with the same hash is rejected (`code: "already_redeemed"`).
+
+Submitting a bare transaction hash where the facilitator-relay envelope is
+expected (or vice versa) now returns a specific `wrong_proof_shape` error
+naming the mismatch, instead of a generic decode failure.
+
 Full writeup with the Dream Cycle context: [`docs/posts/dream-cycle-rlusd-t54-xrpl-agent-payments.md`](./docs/posts/dream-cycle-rlusd-t54-xrpl-agent-payments.md).
 
 Try the settlement path yourself (real XRPL testnet transaction, zero mock):

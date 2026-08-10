@@ -194,7 +194,7 @@ const newsInsightTool: ToolDef = {
 
 const paymentsSettleTool: ToolDef = {
   name: 'payments.settle',
-  description: 'Settle a payment via n-payment to unlock a paid session (100 queries) for a price tier. Submit the x402 proof + network selection. Call codemode.payments.networks first to choose chain/rail/asset.',
+  description: 'Settle a payment via n-payment to unlock a paid session (100 queries) for a price tier. Submit the proof + network selection. Call codemode.payments.networks first to choose chain/rail/asset. Proof format depends on chain: EVM chains use the base64 EIP-3009 authorization+signature; XRPL chains (xrpl-mainnet/xrpl-testnet) accept EITHER a base64 PAYMENT-SIGNATURE facilitator-relay envelope OR, for a payment you already signed and submitted directly to the ledger yourself, a JSON string {"txHash":"..."} — the settlement independently re-verifies that transaction on-chain (validated + tesSUCCESS + correct destination/asset/amount) before granting the session. A txHash can only be redeemed once.',
   tier: 't1_read',
   unmetered: true,
   inputSchema: {
@@ -202,7 +202,10 @@ const paymentsSettleTool: ToolDef = {
     properties: {
       tier: { type: 'string', description: 't1_read | t2_realtime | t3_vector' },
       chain: { type: 'string' }, rail: { type: 'string' }, asset: { type: 'string' },
-      proof: { type: 'string', description: 'base64 EIP-3009 x402 authorization+signature' },
+      proof: {
+        type: 'string',
+        description: 'EVM chains: base64 EIP-3009 x402 authorization+signature. XRPL chains: EITHER a base64 PAYMENT-SIGNATURE facilitator-relay envelope, OR JSON.stringify({txHash}) for a transaction you already submitted directly — independently re-verified on-ledger, redeemable only once.',
+      },
     },
     required: ['tier', 'chain'],
   },

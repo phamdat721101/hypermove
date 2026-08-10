@@ -144,7 +144,7 @@ export async function settleSelection(
     return { ok: false, error: 'payment_rail_not_live', hint: 'configure n-payment (MCP_FACILITATOR_PRIVATE_KEY + PAY_TO_ADDRESS) to enable real settlement' };
   }
 
-  const settled = await rail.settle({ selection: sel, amount, userId, proof });
+  const settled = await rail.settle({ selection: sel, amount, userId, tier, proof });
   if (!settled.ok) return { ok: false, error: settled.error.message, hint: settled.error.hint };
 
   const sessionId = await openSession(userId, tier, sel, amount, settled.data.txHash);

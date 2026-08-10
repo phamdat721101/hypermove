@@ -147,6 +147,27 @@ CREATE TABLE IF NOT EXISTS mcp_paid_sessions (
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_sessions_user ON mcp_paid_sessions(user_id, expires_at);
 
+-- Replay protection for the "already-submitted XRPL transaction hash" settle
+-- path (2026-08-10, xrpl-rlusd-settlement-gap-feedback PRD 03). A caller who
+-- signed + submitted an XRPL Payment DIRECTLY (rpc.submitAndWait(), never
+-- touching the T54 facilitator's relay envelope) can redeem that real,
+-- independently-verified transaction against payments.settle exactly once —
+-- see npayment-rails.ts's settleXrplAlreadySubmitted(). Claim-on-success,
+-- never claim-then-verify: the row is inserted only AFTER on-chain
+-- verification succeeds, so a failed verification never poisons the replay
+-- table with a hash that was never actually valid. expires_at is set far in
+-- the future (see settleXrplAlreadySubmitted()'s doc comment) — the security
+-- property needed is "never redeemable twice," not "redeemable again after a
+-- window," so this is a permanent-in-practice record, not a TTL cache.
+CREATE TABLE IF NOT EXISTS mcp_xrpl_settled_txs (
+  tx_hash      TEXT PRIMARY KEY,
+  chain        TEXT NOT NULL,
+  tier         TEXT NOT NULL,
+  redeemed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  expires_at   TIMESTAMPTZ NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_xrpl_settled_txs_expires ON mcp_xrpl_settled_txs(expires_at);
+
 CREATE TABLE IF NOT EXISTS mcp_calls (
   call_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id       TEXT NOT NULL,

@@ -39,6 +39,15 @@ export const CHAINS: readonly Chain[] = [
   { id: 'initia-mainnet',    name: 'Initia',           tier: 'mainnet', kind: 'cosmos',  accent: 'primary',   supported: true },
   { id: 'morph-mainnet',     name: 'Morph',            tier: 'mainnet', kind: 'evm',     chainId: 2818,  accent: 'tertiary',  supported: true },
   { id: 'xrpl-mainnet',      name: 'XRPL',             tier: 'mainnet', kind: 'xrpl',    accent: 'secondary', supported: true },
+  // Added 2026-08-10 (xrpl-rlusd-settlement-gap-feedback) — payment-router.ts's
+  // CONFIDENTIAL_TIER_CHAINS already listed 'xrpl-testnet' as a valid
+  // confidential-tier network, but it was never actually registered here,
+  // so validateSelection()/validateConfidentialSelection() rejected it as
+  // "unsupported network" regardless of proof format — testnet settlement
+  // for the confidential tier was unreachable through payments.settle at
+  // all. Confirmed via a real live testnet settlement attempt during this
+  // fix's own verification.
+  { id: 'xrpl-testnet',      name: 'XRPL Testnet',     tier: 'testnet', kind: 'xrpl',    accent: 'secondary', supported: true },
   { id: 'stellar-mainnet',   name: 'Stellar',          tier: 'mainnet', kind: 'stellar', accent: 'primary',   supported: true },
   { id: 'solana-mainnet',    name: 'Solana',           tier: 'mainnet', kind: 'svm',     accent: 'tertiary',  supported: true },
   { id: 'sui-mainnet',       name: 'Sui',              tier: 'mainnet', kind: 'move',    accent: 'secondary', supported: true },
@@ -61,8 +70,8 @@ export const PROTOCOLS: readonly Protocol[] = [
   { id: 'stellar-channels',name: 'Stellar Channels',     summary: 'Sub-cent micropayments off-chain settle',         chains: ['stellar-mainnet'], accent: 'tertiary' },
   { id: 'wormhole-ntt',    name: 'Wormhole NTT',         summary: 'Native Token Transfers across 30+ chains',        chains: ['base-mainnet','arbitrum-mainnet','solana-mainnet','sui-mainnet'], accent: 'secondary' },
   { id: 'circle-gateway',  name: 'Circle Gateway',       summary: 'USDC mint/burn via Circle native bridge',         chains: ['base-mainnet','arbitrum-mainnet','optimism-mainnet','polygon-mainnet','solana-mainnet'], accent: 'primary' },
-  { id: 'rlusd',           name: 'RLUSD',                summary: 'Ripple-issued USD stablecoin on XRPL + EVM',      chains: ['xrpl-mainnet','base-mainnet'], accent: 'tertiary' },
-  { id: 'xrpl-x402',       name: 'XRPL x402',            summary: 'XRPL-native 402 paywall via MPT',                 chains: ['xrpl-mainnet'], accent: 'secondary' },
+  { id: 'rlusd',           name: 'RLUSD',                summary: 'Ripple-issued USD stablecoin on XRPL + EVM',      chains: ['xrpl-mainnet','xrpl-testnet','base-mainnet'], accent: 'tertiary' },
+  { id: 'xrpl-x402',       name: 'XRPL x402',            summary: 'XRPL-native 402 paywall via MPT',                 chains: ['xrpl-mainnet','xrpl-testnet'], accent: 'secondary' },
   { id: 'erc-8004',        name: 'ERC-8004',             summary: 'Agent identity + reputation registry',            chains: ['base-mainnet','celo-mainnet','arbitrum-mainnet'], accent: 'primary' },
   { id: 'aave-v3',         name: 'Aave V3 GHO',          summary: 'Idle USDC treasury yield',                        chains: ['base-mainnet','arbitrum-mainnet'], accent: 'tertiary' },
   { id: 'ows',             name: 'OWS Vault',            summary: 'Agent never touches a private key',               chains: CHAINS.map((c) => c.id), accent: 'primary' },
