@@ -882,6 +882,25 @@ const getDreamStatsTool: ToolDef = {
   },
 };
 
+// 2026-08-11 status-review upgrade, PRD 02 self-serve diagnostics. Free,
+// unmetered, read-oriented tool letting a caller with only an MCP bearer
+// token (no server/log access) check whether their own agent_id's episodes
+// are actually being picked up, and whether the exact agent_id string used
+// to write episodes matches the one used to read them — the corpus's
+// leading (still unconfirmed) hypothesis for the `episodes_in: 0` bug. This
+// tool does not fix that bug; see diagnostics.ts's header comment.
+const getDreamEpisodeDiagnosticsTool: ToolDef = {
+  name: 'get_dream_episode_diagnostics',
+  description: 'Diagnose Dream Cycle episode pickup for an agent: live unconsumed-episode count, plus an exact-string comparison between the agent_id most recently used to submit episodes and the agent_id most recently used to start a run — surfaces a case/whitespace/UUID-format mismatch directly, without needing server/log access. Read-only diagnostic; does not fix the underlying episodes_in:0 bug (see docs/dream-cycle).',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args, ctx) => {
+    const { getDreamEpisodeDiagnostics } = await import('./dream/diagnostics');
+    return getDreamEpisodeDiagnostics(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
+  },
+};
+
 const reclaimAgentOwnershipTool: ToolDef = {
   name: 'reclaim_agent_ownership',
   description: 'Reclaim an agent_id currently owned by a DIFFERENT device-auth (anonymous, terminal-only) session, so a new device-code sign-in can continue using the same agent_id instead of fragmenting memory across a fresh one every session. Only works when the CURRENT owner is itself a device-auth session — an agent_id owned by a wallet- or account-authenticated session is never reclaimable this way (re-authenticate with that same wallet/account instead). Calling this on an agent_id you already own, or one with no owner yet, is a harmless no-op.',
@@ -910,7 +929,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFccEnabled()) tools.push(flareConfidentialSwapTool, flareConfidentialStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, reclaimAgentOwnershipTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, reclaimAgentOwnershipTool);
   return tools;
 }
 

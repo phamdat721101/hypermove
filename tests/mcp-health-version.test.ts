@@ -93,3 +93,67 @@ describe('Task 10 · GET /api/mcp/health surfaces registered prompts', () => {
     expect(body.prompts).toEqual([]);
   });
 });
+
+// ─── PRD 05 (2026-08-11 dream-cycle-fcc-rlusd-status-review) ────────────────
+
+describe('PRD 05 · GET /api/mcp/health reports real_payments_configured', () => {
+  it('reports true when BOTH MCP_FACILITATOR_PRIVATE_KEY and PAY_TO_ADDRESS are set', async () => {
+    process.env.MCP_FACILITATOR_PRIVATE_KEY = '0xabc123';
+    process.env.PAY_TO_ADDRESS = '0xdef456';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.real_payments_configured).toBe(true);
+  });
+
+  it('reports false when MCP_FACILITATOR_PRIVATE_KEY is unset, even if PAY_TO_ADDRESS is set', async () => {
+    delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
+    process.env.PAY_TO_ADDRESS = '0xdef456';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.real_payments_configured).toBe(false);
+  });
+
+  it('reports false when PAY_TO_ADDRESS is unset, even if MCP_FACILITATOR_PRIVATE_KEY is set', async () => {
+    process.env.MCP_FACILITATOR_PRIVATE_KEY = '0xabc123';
+    delete process.env.PAY_TO_ADDRESS;
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.real_payments_configured).toBe(false);
+  });
+
+  it('reports false when both are unset (the default/mock-mode state)', async () => {
+    delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
+    delete process.env.PAY_TO_ADDRESS;
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const body = (await res.json()) as Record<string, unknown>;
+    expect(body.real_payments_configured).toBe(false);
+  });
+
+  it('never leaks the actual key/address values — only the boolean is present', async () => {
+    process.env.MCP_FACILITATOR_PRIVATE_KEY = 'super-secret-key-value';
+    process.env.PAY_TO_ADDRESS = '0xSecretAddress';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const res = await GET();
+    const bodyText = JSON.stringify(await res.json());
+    expect(bodyText).not.toContain('super-secret-key-value');
+    expect(bodyText).not.toContain('0xSecretAddress');
+  });
+
+  it('flips accordingly when toggled — confirms the field reflects a LIVE read, not a cached value', async () => {
+    delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
+    delete process.env.PAY_TO_ADDRESS;
+    const { GET } = await import('../src/app/api/mcp/health/route');
+
+    const before = (await (await GET()).json()) as Record<string, unknown>;
+    expect(before.real_payments_configured).toBe(false);
+
+    process.env.MCP_FACILITATOR_PRIVATE_KEY = '0xabc123';
+    process.env.PAY_TO_ADDRESS = '0xdef456';
+    const after = (await (await GET()).json()) as Record<string, unknown>;
+    expect(after.real_payments_configured).toBe(true);
+  });
+});

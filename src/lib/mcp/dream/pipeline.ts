@@ -322,6 +322,18 @@ export interface StageSummaries {
      * see docs/prd/dream-cycle-2026-08-10-live-feedback-fixes.md.
      */
     unaccounted: number;
+    /**
+     * Additive (2026-08-11 status-review upgrade, PRD 02 self-serve
+     * diagnostics). A LIVE count computed at get_dream_stats call time
+     * (not from the last run's stored snapshot) of unconsumed rows in
+     * dream_episode_logs for this agent_id right now. Lets a caller check
+     * "were my episodes actually picked up?" without server/log access —
+     * see getDreamStats() in pipeline.ts for the exact query. This is a
+     * diagnostic, not a fix for the `episodes_in: 0` bug (see
+     * get_dream_episode_diagnostics for the deeper agent_id-comparison
+     * tool aimed at that bug's leading hypothesis).
+     */
+    live_unconsumed_count: number;
   };
   extraction: {
     clusters_total: number;
@@ -378,6 +390,14 @@ function buildStageSummaries(
       episodes_discarded: preprocessingSummary.episodes_discarded,
       discard_reasons: preprocessingSummary.discard_reasons,
       unaccounted: preprocessingSummary.unaccounted,
+      // Placeholder at persistence time — this stored snapshot reflects
+      // what THIS run saw when it fetched episodes (immediately followed by
+      // marking them consumed_by_run below in runPipeline()), so 0 is
+      // correct for the row written here. getDreamStats() always overwrites
+      // this field with a freshly-computed LIVE count at read time (see its
+      // doc comment) — the persisted value is never the one a caller
+      // actually reads for this field.
+      live_unconsumed_count: 0,
     },
     extraction: {
       clusters_total: extraction.extracted.length + extraction.clusters_skipped.length + extraction.clusters_failed_extraction.length,
@@ -668,7 +688,38 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     return rows[0] ?? null;
   });
 
-  if (!row) return { memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0 };
+  // Additive (2026-08-11 status-review upgrade, PRD 02 self-serve
+  // diagnostics). A live count, computed AT CALL TIME against the exact
+  // same query shape runPipeline() uses to fetch unconsumed episodes
+  // (pipeline.ts's `SELECT ... FROM dream_episode_logs WHERE agent_id = $1
+  // AND consumed_by_run IS NULL`) — deliberately NOT read from the last
+  // run's stored stage_summaries snapshot, since that only reflects
+  // whatever the pipeline saw at the START of the most recent run. If a
+  // caller submits episodes AFTER their last start_dream call, this field
+  // lets them see that live, without needing server/log access to check
+  // (the exact gap PRD 02 in the 2026-08-11 status-review flagged as
+  // blocking investigation of the `episodes_in: 0` bug). This does NOT fix
+  // that bug — it is a caller-facing diagnostic, matching this repo's
+  // documented distinction between a safety net and a resolution (see
+  // preprocess.ts's PreprocessSummary.unaccounted doc comment for the same
+  // pattern applied to a different signal).
+  const liveUnconsumedRow = await withClient(async (client) => {
+    const { rows } = await client.query<{ count: string }>(
+      `SELECT COUNT(*)::text AS count FROM dream_episode_logs WHERE agent_id = $1 AND consumed_by_run IS NULL`,
+      [agentId],
+    );
+    return rows[0] ?? null;
+  });
+  const liveUnconsumedCount = liveUnconsumedRow ? Number(liveUnconsumedRow.count) : 0;
+
+  if (!row) {
+    return {
+      memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0,
+      stage_summaries: { preprocessing: { episodes_in: 0, episodes_discarded: 0, discard_reasons: {}, unaccounted: 0, live_unconsumed_count: liveUnconsumedCount } } as StageSummaries,
+    };
+  }
+
+  const baseStageSummaries = row.stage_summaries ?? undefined;
 
   return {
     last_run_at: row.started_at,
@@ -677,7 +728,22 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     stages_completed: row.stages_completed,
     memories_count: memoriesCountRow ? Number(memoriesCountRow.count) : 0,
     per_stage_tokens: row.per_stage_tokens ?? {},
-    ...(row.stage_summaries ? { stage_summaries: row.stage_summaries } : {}),
+    // live_unconsumed_count is merged additively onto whatever
+    // stage_summaries.preprocessing already contains (or an empty
+    // preprocessing object, for runs that predate the 2026-07-27
+    // stage_summaries fix) — every pre-existing field is passed through
+    // unchanged; this never replaces or restructures the stored snapshot.
+    stage_summaries: {
+      ...(baseStageSummaries ?? {}),
+      preprocessing: {
+        episodes_in: 0,
+        episodes_discarded: 0,
+        discard_reasons: {},
+        unaccounted: 0,
+        ...(baseStageSummaries?.preprocessing ?? {}),
+        live_unconsumed_count: liveUnconsumedCount,
+      },
+    } as StageSummaries,
     triggered_by: row.triggered_by ?? 'manual',
     confidential: row.confidential === true,
     attestation_ref: row.attestation_ref ?? null,

@@ -283,6 +283,32 @@ the same discipline the plain extraction path already uses for a failed/unreacha
 `llm-service` call. Check `stage_summaries` (see "Check in on a cycle" above) to see this
 distinction directly rather than guessing from silence.
 
+### Two different things are both called "confidential" — Coston2 vs. Songbird
+
+Everything above describes **HyperMove's own dev-only extension on Coston2** — the code
+path this deployment actually exercises today. That is deliberately a different system
+from **real Flare Confidential Compute (FCC) on Songbird**, and the codebase keeps the
+two separate on purpose (`src/lib/mcp/providers/flare.ts`):
+
+- **`isHyperMoveTeeExtensionLive(network)`** — `true` only for `network === 'coston2'`,
+  and only after a real `fetch('/health')` against HyperMove's own `tee-proxy` succeeds.
+  This is what everything above (`HyperMoveInstructionSender`, `tee-proxy/info`,
+  `SIMULATED_TEE=true`, `magic_pass`) is checking. It confirms HyperMove's own extension
+  is configured and reachable — nothing more.
+- **`isFccLiveOnNetwork(network, client)`** — `true` only for `network === 'songbird'`,
+  and only after a live on-chain query against Flare's own `FlareContractRegistry` finds
+  a registered `FlareConfidentialCompute` entry. **As of this writing, this returns
+  `false`** — Flare has not deployed the FCC contract to Songbird yet. This is Flare's own
+  infrastructure timeline, not something this codebase can fix or work around.
+
+Which one a given `start_dream({confidential:true})` call actually checks is controlled
+by `DREAM_CONFIDENTIAL_NETWORK` (default `coston2`, in `dream/extract.ts`). **Never
+conflate a passing Coston2 liveness check with "real Flare FCC is live"** — they are
+different claims about different infrastructure, and the code's own doc comments are
+emphatic about this distinction for exactly this reason. Either way, `confidential: true`
+never silently fails: it always either produces a genuinely attested result, or returns
+an explicit reason it couldn't (see the fallback-reason table below).
+
 ### If you request `confidential:true` and the gate isn't satisfied, you're told — not silently downgraded
 
 `FEATURE_MCP_DREAM_CONFIDENTIAL` off, or on but with no settled `confidential`-tier

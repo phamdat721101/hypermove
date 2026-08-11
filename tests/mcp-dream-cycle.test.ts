@@ -1533,6 +1533,79 @@ describe('Task 10 · getDreamStats', () => {
     expect(stats.memories_count).toBe(3);
   });
 
+  it('2026-08-11 status-review upgrade (PRD 02 diagnostics): adds a LIVE live_unconsumed_count to stage_summaries.preprocessing without altering any pre-existing field', async () => {
+    vi.doMock('../src/lib/db', () => ({
+      withClient: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn({
+        query: vi.fn(async (sql: string, params: unknown[] = []) => {
+          if (sql.includes('FROM dream_cycle_runs')) {
+            return {
+              rows: [{
+                started_at: '2026-07-26T00:00:00.000Z',
+                status: 'completed',
+                budget_used_usd: '0.02',
+                stages_completed: ['preprocessing', 'clustering'],
+                per_stage_tokens: { extraction: 120 },
+                // A stored snapshot from a PRIOR run — episodes_in here is
+                // stale on purpose, to prove live_unconsumed_count is
+                // computed fresh at call time, not read off this row.
+                stage_summaries: { preprocessing: { episodes_in: 5, episodes_discarded: 1, discard_reasons: { empty_steps: 1 }, unaccounted: 0, live_unconsumed_count: 0 }, extraction: { clusters_total: 1, clusters_skipped: 0, clusters_failed: 0, candidates_extracted: 2, failure_reasons: {} }, pruning_summary: { candidates_extracted: 2, candidates_promoted: 2, candidates_removed: 0, top_rejection_reason: null } },
+                triggered_by: 'manual',
+                confidential: false,
+                attestation_ref: null,
+              }],
+            };
+          }
+          // memories_count query
+          if (sql.includes('COUNT(*)::text AS count FROM dream_consolidated_memories')) return { rows: [{ count: '3' }] };
+          // NEW live-unconsumed-count query (Task 2) — deliberately returns
+          // a DIFFERENT number than memories_count and the stale snapshot,
+          // to prove the two COUNT(*) queries aren't being conflated.
+          if (sql.includes('FROM dream_episode_logs WHERE agent_id') && sql.includes('consumed_by_run IS NULL')) {
+            expect(params[0]).toBe('robot-42');
+            return { rows: [{ count: '7' }] };
+          }
+          return { rows: [] };
+        }),
+      })),
+    }));
+    vi.resetModules();
+    const { getDreamStats } = await import('../src/lib/mcp/dream/pipeline');
+    const stats = await getDreamStats('robot-42');
+
+    // Pre-existing fields unchanged (regression guard).
+    expect(stats.status).toBe('completed');
+    expect(stats.budget_used_usd).toBe(0.02);
+    expect(stats.stages_completed).toEqual(['preprocessing', 'clustering']);
+    expect(stats.memories_count).toBe(3);
+    expect(stats.stage_summaries?.preprocessing.episodes_in).toBe(5);
+    expect(stats.stage_summaries?.preprocessing.episodes_discarded).toBe(1);
+    expect(stats.stage_summaries?.preprocessing.discard_reasons).toEqual({ empty_steps: 1 });
+    expect(stats.stage_summaries?.extraction.candidates_extracted).toBe(2);
+    expect(stats.stage_summaries?.pruning_summary.candidates_promoted).toBe(2);
+
+    // New additive field: reflects the LIVE query result (7), not the
+    // stale stored snapshot's placeholder (0) and not memories_count (3).
+    expect(stats.stage_summaries?.preprocessing.live_unconsumed_count).toBe(7);
+  });
+
+  it('live_unconsumed_count defaults to 0 with a well-formed empty preprocessing object when no run has ever completed for this agent', async () => {
+    vi.doMock('../src/lib/db', () => ({
+      withClient: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn({
+        query: vi.fn(async (sql: string) => {
+          if (sql.includes('FROM dream_cycle_runs')) return { rows: [] };
+          if (sql.includes('COUNT(*)::text AS count FROM dream_consolidated_memories')) return { rows: [{ count: '0' }] };
+          if (sql.includes('FROM dream_episode_logs WHERE agent_id') && sql.includes('consumed_by_run IS NULL')) return { rows: [{ count: '4' }] };
+          return { rows: [] };
+        }),
+      })),
+    }));
+    vi.resetModules();
+    const { getDreamStats } = await import('../src/lib/mcp/dream/pipeline');
+    const stats = await getDreamStats('brand-new-agent');
+    expect(stats.memories_count).toBe(0);
+    expect(stats.stage_summaries?.preprocessing.live_unconsumed_count).toBe(4);
+  });
+
   it('registers query_dream and get_dream_stats as unmetered tools, gated by the flag', async () => {
     process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
     process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
@@ -1574,6 +1647,20 @@ describe('Task 10 · end-to-end pipeline (submit_episode_log -> start_dream -> q
               episodes.push({ agent_id: agentId, episode_id: episodeId, occurred_at: occurredAt, task_type: taskType, steps: JSON.parse(steps), outcome, tags, consumed_by_run: null });
             }
             return { rows: [], rowCount: 1 };
+          }
+          if (sql.includes('COUNT(*)::text AS count FROM dream_episode_logs WHERE agent_id') && sql.includes('consumed_by_run IS NULL')) {
+            // Task 2 (2026-08-11 status-review upgrade): live unconsumed
+            // count for get_dream_stats. Checked BEFORE the plain fetch-query
+            // branch below, since both SQL strings share the substring
+            // "FROM dream_episode_logs WHERE agent_id ... consumed_by_run IS
+            // NULL" — matching this one first, more-specific check avoids it
+            // being permanently shadowed by the broader branch. Reuses the
+            // same `episodes` fixture array this mock DB already maintains,
+            // so this e2e test exercises the real "episodes consumed by the
+            // run that already completed -> count drops to 0" behavior
+            // instead of a disconnected canned value.
+            const agentId = params[0] as string;
+            return { rows: [{ count: String(episodes.filter((e) => e.agent_id === agentId && e.consumed_by_run === null).length) }] };
           }
           if (sql.includes('FROM dream_episode_logs WHERE agent_id') && sql.includes('consumed_by_run IS NULL')) {
             const agentId = params[0] as string;

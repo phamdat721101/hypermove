@@ -98,6 +98,7 @@ import { randomUUID } from 'node:crypto';
 import { appendFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import path from 'node:path';
+import { assertWithinSpendGuard } from './lib/spend-guard';
 
 // ---------------------------------------------------------------------------
 // Local-only env file (scripts/.env.rlusd-demo, git-ignored via .gitignore's
@@ -337,6 +338,16 @@ async function settleLive(challenge: X402Challenge): Promise<PaymentProof> {
         'Get XRP: https://xrpl.org/resources/dev-tools/xrp-faucets — then RLUSD: https://tryrlusd.com/ — then re-run.',
     );
   }
+
+  // Max-spend safety guard (2026-08-11 status-review upgrade, Q&A item 8):
+  // refuse to submit a REAL on-chain payment above a small ceiling (default
+  // $0.10, override via MAX_LIVE_SPEND_USD), even though this script only
+  // ever targets XRPL *testnet* funds. This runs before any network call
+  // below — connect/preflight/trustline/submit are all gated on this check
+  // having already passed, so a misconfigured RLUSD_DEMO_PRICE can never
+  // reach a real submitAndWait().
+  assertWithinSpendGuard(challenge.amount);
+  console.log(`      spend guard: $${challenge.amount} is within the configured max-live-spend ceiling.`);
   const np = (await import('n-payment')) as typeof import('n-payment');
   const network: 'testnet' | 'mainnet' = XRPL_NETWORK === 'xrpl:0' ? 'mainnet' : 'testnet';
   if (network === 'mainnet') {

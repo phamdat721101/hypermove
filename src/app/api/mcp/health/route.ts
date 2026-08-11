@@ -1,6 +1,7 @@
 import { isMcpGatewayEnabled, isMcpAuthEnabled, isMcpResourcesEnabled } from '@/lib/platform-flag';
 import { getTools } from '@/lib/mcp/tools';
 import { getPrompts } from '@/lib/mcp/prompts';
+import { isRealPaymentsConfigured } from '@/lib/mcp/npayment-rails';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -30,6 +31,17 @@ export async function GET() {
     // fixed" claim. Additive-only: every existing field above is unchanged.
     commit: process.env.GIT_SHA || null,
     deployed_at: process.env.DEPLOYED_AT || null,
+    // PRD 05 (2026-08-11 dream-cycle-fcc-rlusd-status-review): a read-only
+    // boolean reflecting isRealPaymentsConfigured()'s live return value —
+    // never the underlying MCP_FACILITATOR_PRIVATE_KEY/PAY_TO_ADDRESS values
+    // themselves, so this carries no secret-disclosure risk. Closes the
+    // exact gap that review's corpus repeatedly hit: every settlement path
+    // (EVM x402, Stellar, XRPL RLUSD) collapses to this single gate, and
+    // there was previously no way for a caller (or an operator without
+    // shell access to this deployment) to check its state without either
+    // live server/env access or attempting a real payment and inferring
+    // from whether the response looked mock- or real-shaped.
+    real_payments_configured: isRealPaymentsConfigured(),
     time: new Date().toISOString(),
   });
 }
