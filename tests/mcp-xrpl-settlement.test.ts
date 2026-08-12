@@ -33,7 +33,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const ENV_KEYS = ['XRPL_TREASURY_ADDRESS', 'XRPL_FACILITATOR_URL', 'DATABASE_URL'] as const;
+const ENV_KEYS = ['XRPL_TREASURY_ADDRESS', 'XRPL_FACILITATOR_URL', 'DATABASE_URL', 'MCP_FACILITATOR_PRIVATE_KEY', 'PAY_TO_ADDRESS'] as const;
 let saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
@@ -269,6 +269,55 @@ describe('Tier 1b · settleXrplRlusd — PRD 02 proof shape disambiguation', () 
     });
     expect(res.ok).toBe(true);
     if (res.ok) expect(res.data.txHash).toBe(txHash);
+  });
+});
+
+// ─── Tier 1b.5: selectRail() chain-awareness regression (2026-08-12 fix) ──
+//
+// Prior to this fix, isRealPaymentsConfigured()/selectRail() applied a
+// single EVM-shaped credential check (MCP_FACILITATOR_PRIVATE_KEY +
+// PAY_TO_ADDRESS) to every chain, including XRPL — which never uses those
+// two vars at all (settleXrplRlusd() only reads XRPL_TREASURY_ADDRESS). The
+// bug: an XRPL selection with a correctly-configured XRPL_TREASURY_ADDRESS
+// but no MCP_FACILITATOR_PRIVATE_KEY/PAY_TO_ADDRESS still silently resolved
+// to MockPaymentRail, which production then refused outright
+// (payment_rail_not_live) — with a hint naming the wrong two variables. See
+// lessons-learned.md's 2026-08-12 entry for the live incident this
+// regenerates.
+describe('Tier 1b.5 · selectRail() chain-awareness (2026-08-12 regression)', () => {
+  it('an XRPL selection with ONLY XRPL_TREASURY_ADDRESS set (no MCP_FACILITATOR_PRIVATE_KEY/PAY_TO_ADDRESS) resolves to the REAL rail, not mock', async () => {
+    delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
+    delete process.env.PAY_TO_ADDRESS;
+    // beforeEach() already sets a valid XRPL_TREASURY_ADDRESS.
+    const { selectRail } = await import('../src/lib/mcp/payment-router');
+    const rail = selectRail({ chain: 'xrpl-testnet', rail: 'x402', asset: 'RLUSD' });
+    expect(rail.isMock).toBe(false);
+  });
+
+  it('an XRPL selection with NEITHER XRPL_TREASURY_ADDRESS NOR the EVM vars set resolves to the mock rail (fails closed, not open)', async () => {
+    delete process.env.XRPL_TREASURY_ADDRESS;
+    delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
+    delete process.env.PAY_TO_ADDRESS;
+    const { selectRail } = await import('../src/lib/mcp/payment-router');
+    const rail = selectRail({ chain: 'xrpl-testnet', rail: 'x402', asset: 'RLUSD' });
+    expect(rail.isMock).toBe(true);
+  });
+
+  it('an EVM selection still requires MCP_FACILITATOR_PRIVATE_KEY + PAY_TO_ADDRESS (unchanged pre-fix behavior) — XRPL_TREASURY_ADDRESS alone is not enough', async () => {
+    delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
+    delete process.env.PAY_TO_ADDRESS;
+    // beforeEach() already sets XRPL_TREASURY_ADDRESS — must NOT leak into the EVM check.
+    const { selectRail } = await import('../src/lib/mcp/payment-router');
+    const rail = selectRail({ chain: 'base-sepolia', rail: 'x402', asset: 'USDC' });
+    expect(rail.isMock).toBe(true);
+  });
+
+  it('an EVM selection with both EVM vars set resolves to the real rail, independent of XRPL_TREASURY_ADDRESS', async () => {
+    process.env.MCP_FACILITATOR_PRIVATE_KEY = '0x0000000000000000000000000000000000000000000000000000000000000001';
+    process.env.PAY_TO_ADDRESS = '0x000000000000000000000000000000000000dEaD';
+    const { selectRail } = await import('../src/lib/mcp/payment-router');
+    const rail = selectRail({ chain: 'base-sepolia', rail: 'x402', asset: 'USDC' });
+    expect(rail.isMock).toBe(false);
   });
 });
 

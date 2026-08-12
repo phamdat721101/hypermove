@@ -38,8 +38,30 @@ const USDC: Record<string, `0x${string}`> = {
   'goat-mainnet': '0x0000000000000000000000000000000000000000', // sentinel: USDC-not-deployed
 };
 
-/** Settlement credentials present → use the real rail; otherwise mock. */
-export function isRealPaymentsConfigured(): boolean {
+/**
+ * Settlement credentials present → use the real rail; otherwise mock.
+ *
+ * Chain-aware (fixed — previously this was a single EVM-shaped check applied
+ * to every chain, including XRPL, which never uses MCP_FACILITATOR_PRIVATE_KEY
+ * /PAY_TO_ADDRESS at all — settleXrplRlusd() below only ever reads
+ * XRPL_TREASURY_ADDRESS, per this project's own README ("the buyer signs
+ * everything client-side... T54 never touches the buyer's keys"). The old
+ * check meant an XRPL selection with a correctly-configured
+ * XRPL_TREASURY_ADDRESS still silently fell back to the mock rail — and in
+ * production, selectSelection()'s own `NODE_ENV==='production' && rail.isMock`
+ * guard then refused the mock rail too, surfacing as `payment_rail_not_live`
+ * with a hint naming the wrong two variables. See lessons-learned.md,
+ * 2026-08-12 entry.
+ *
+ * `chain` is optional so every existing no-arg caller (e.g. the health
+ * route's summary boolean) keeps working unchanged — omitting it checks the
+ * EVM credentials only, matching the pre-fix default behavior for anyone not
+ * yet passing a chain.
+ */
+export function isRealPaymentsConfigured(chain?: string): boolean {
+  if (chain?.startsWith('xrpl')) {
+    return !!process.env.XRPL_TREASURY_ADDRESS;
+  }
   return !!(process.env.MCP_FACILITATOR_PRIVATE_KEY && process.env.PAY_TO_ADDRESS);
 }
 

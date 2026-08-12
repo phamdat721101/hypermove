@@ -141,7 +141,15 @@ export async function settleSelection(
   const rail = selectRail(sel);
 
   if (process.env.NODE_ENV === 'production' && rail.isMock) {
-    return { ok: false, error: 'payment_rail_not_live', hint: 'configure n-payment (MCP_FACILITATOR_PRIVATE_KEY + PAY_TO_ADDRESS) to enable real settlement' };
+    // Chain-specific hint (fixed 2026-08-12 — see npayment-rails.ts's
+    // isRealPaymentsConfigured() doc comment): XRPL/RLUSD settlement never
+    // uses MCP_FACILITATOR_PRIVATE_KEY/PAY_TO_ADDRESS, so naming those two
+    // for an XRPL selection actively misled operators into configuring the
+    // wrong variables. See lessons-learned.md's 2026-08-12 entry.
+    const hint = sel.chain.startsWith('xrpl')
+      ? 'configure n-payment for XRPL settlement (set XRPL_TREASURY_ADDRESS) to enable real settlement'
+      : 'configure n-payment (MCP_FACILITATOR_PRIVATE_KEY + PAY_TO_ADDRESS) to enable real settlement';
+    return { ok: false, error: 'payment_rail_not_live', hint };
   }
 
   const settled = await rail.settle({ selection: sel, amount, userId, tier, proof });

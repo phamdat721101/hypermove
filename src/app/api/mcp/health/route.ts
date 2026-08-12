@@ -41,7 +41,24 @@ export async function GET() {
     // shell access to this deployment) to check its state without either
     // live server/env access or attempting a real payment and inferring
     // from whether the response looked mock- or real-shaped.
+    // PRD 05 (2026-08-11 dream-cycle-fcc-rlusd-status-review), corrected
+    // 2026-08-12: isRealPaymentsConfigured() is now chain-aware (see its doc
+    // comment in npayment-rails.ts) — EVM x402 and XRPL/RLUSD settlement have
+    // DIFFERENT credential requirements and can be configured independently,
+    // so a single collapsed boolean actively hid that distinction (the exact
+    // gap this fix closes; see lessons-learned.md's 2026-08-12 entry).
+    // `real_payments_configured` is kept for backward compatibility — it
+    // reports the EVM/x402 check only (its pre-fix meaning, unchanged) — and
+    // `real_payments_configured_by_chain_family` is the new, accurate,
+    // additive detail. Both are read-only booleans reflecting live env-var
+    // PRESENCE only; never the underlying MCP_FACILITATOR_PRIVATE_KEY/
+    // PAY_TO_ADDRESS/XRPL_TREASURY_ADDRESS values themselves — no
+    // secret-disclosure risk.
     real_payments_configured: isRealPaymentsConfigured(),
+    real_payments_configured_by_chain_family: {
+      evm_x402: isRealPaymentsConfigured(),
+      xrpl_rlusd: isRealPaymentsConfigured('xrpl-mainnet'),
+    },
     time: new Date().toISOString(),
   });
 }

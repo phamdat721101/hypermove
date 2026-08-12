@@ -314,3 +314,81 @@ specific parse step anywhere in `fccutils`. This means:
 ## Cross-reference
 
 Full PRD: `biz-team/bd-team/research/hypermove/2026-07-20-tee-proxy-fcc-extension-token-profile/06-prd-sub-tee-extension-service.md`
+
+## 2026-08-11 redeploy investigation — `FlareTeeManager` diamond redeploy wiped registration; blocked on a NEW, different issue
+
+A community troubleshooting message (independently corroborated against Flare's own official
+`dev.flare.network/fcc/troubleshooting` doc, fetched and read in full during this
+investigation) reported that Coston2's `FlareTeeManager` diamond proxy had been redeployed,
+stranding existing extension registrations. Verified this affected us for real:
+
+**Diagnosis (read-only, via the scaffold's own `tools/cmd/query-tee`):**
+```
+go run ./cmd/query-tee -ext 66020   # our EXTENSION_ID (0x101e4) at the time
+=== Active TEEs for extensionId=66020 ===
+  (none)
+```
+Sanity-checked against `-ext 0` (Flare's own FTDC/system extension), which correctly returned
+3 real active machines with real `flare.rocks` URLs — proving the query tool and its registry
+address were genuinely working, so our own empty result was a real finding, not a client-side
+tool/config bug. `FlareTeeManager`'s address
+(`0x1a9C4A0f9D76c0b1D91d22E24E573a9b377618aE`) was already correct in both the local repo's
+and the VPS's `config/coston2/deployed-addresses.json`, dated 2026-07-20 — predating the
+community message — so the address itself was never the problem; the redeploy genuinely wiped
+our on-chain registration against a contract we already had the right address for.
+
+**Fix applied so far (real, on-chain):**
+1. `./scripts/pre-build.sh` re-run on the VPS (needed `forge`'s actual install path,
+   `~/.foundry/bin`, added to `PATH` explicitly — not on `PATH` in a non-interactive SSH
+   shell by default). Result: a genuinely new `InstructionSender` contract deployed at
+   `0xc6069073DA915917eb34f85a4e6CcD01987ABa37`, and a fresh `EXTENSION_ID =
+   0x10260` (decimal `66144`) registered on-chain, replacing the old, wiped `0x101e4`.
+2. Updated the VPS's live `extension-tee` PM2 process with the new `EXTENSION_ID`/
+   `INSTRUCTION_SENDER` — required explicitly sourcing the updated `run/extension.env` into
+   the shell BEFORE calling `pm2 restart extension-tee --update-env`, because PM2 caches its
+   own env snapshot from whenever a process was originally started and does **not** re-read
+   an on-disk `.env` file on a plain restart, even with `--update-env` (that flag only
+   refreshes from the *calling shell's* current env, not from the file). Confirmed via
+   `pm2 env <id>` before/after — this is the same class of gap this repo's own
+   `docs/dream-cycle-fcc-rlusd-status-review` corpus already documented for `llm-service`.
+
+**New blocker hit — NOT the same one this file documented on 2026-08-08, and NOT fixed:**
+Confirming the new `EXTENSION_ID` actually took effect end-to-end requires `tee-proxy`'s
+public `/info` (it relays `extension-tee`'s live `TEE_INFO` response). While diagnosing why
+`/info` still showed the OLD extension ID immediately after the `extension-tee` restart, a
+`tee-proxy` restart was tried (to rule out a caching theory) — this triggered `tee-proxy`'s
+own startup health check, which found the indexer database genuinely **~51 hours out of
+sync** and entered a designed 10-minute-interval backoff loop (`Sleeping for 10m0s`, cycling
+through up to 31 retries). `fcc-indexer` itself is confirmed still running and making real
+forward progress (`Continuous progress: block=...` increasing across log checks), just slower
+than the chain's real pace — this was very likely already true before the `tee-proxy`
+restart; the restart exposed a pre-existing gap rather than caused a new one, but restarting
+a service that was otherwise working was the wrong troubleshooting step and cost real
+recovery time.
+
+**Where this leaves things, honestly:**
+- `extension-tee`'s PM2 env now genuinely holds the new `EXTENSION_ID`
+  (`0x10260`) — confirmed via `pm2 env`, not just inferred from the restart succeeding.
+- Whether that new ID has actually propagated into `extension-tee`'s live, in-process
+  `TEE_INFO` response is **unconfirmed** — `/info` was unreachable through `tee-proxy` for
+  the remainder of this session due to the indexer-sync backoff above.
+- `register-tee` (the next required step — actually registering a TEE *machine* against the
+  new extension ID) was **not run**: its very first real step
+  (`fccutils.TeeInfo(proxyURL)`) hard-depends on a live `tee-proxy` `/info` response, so it
+  could not proceed. `post-build.sh` and `test.sh` are blocked transitively for the same
+  reason.
+- This is a genuinely different, earlier-stage blocker than the "real GCP Confidential Space
+  hardware" boundary this file already documented above (2026-08-08) — that boundary is about
+  `register-tee`'s attestation-JWT parsing step specifically, several steps past where this
+  session got stuck. Both are real; they are not the same issue, and fixing today's indexer-
+  sync gap will NOT bypass the hardware boundary documented above — the hardware boundary is
+  still real and still applies once (if) registration itself becomes reachable again.
+
+**What would unblock this**: either the indexer genuinely catches up (fixed 10-minute retry
+cadence, up to 31 attempts observed — at the lag rate seen this session, this could take
+hours, and the lag appeared to be growing rather than shrinking between checks, which is worth
+someone with deeper indexer-throughput visibility investigating separately) or someone
+restarts/fixes `fcc-indexer` with the actual ability to diagnose *why* it's lagging (not
+attempted here — this session's own visibility into that binary's expected throughput was not
+sufficient to safely intervene further without risking making it worse).
+

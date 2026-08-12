@@ -156,7 +156,7 @@ export class MockPaymentRail implements PaymentRail {
  * mock (dev / zero-config). Same PaymentRail interface — no caller change.
  */
 export function selectRail(sel: PaymentSelection): PaymentRail {
-  if (isRealPaymentsConfigured()) return createNPaymentRail(sel.rail);
+  if (isRealPaymentsConfigured(sel.chain)) return createNPaymentRail(sel.rail);
   return new MockPaymentRail(sel.rail);
 }
 
