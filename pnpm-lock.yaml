@@ -4,6 +4,9 @@ settings:
   autoInstallPeers: true
   excludeLinksFromLockfile: false
 
+overrides:
+  '@xrplf/isomorphic>@noble/hashes': 1.8.0
+
 importers:
 
   .:
@@ -3852,7 +3855,7 @@ snapshots:
 
   '@xrplf/isomorphic@1.0.2':
     dependencies:
-      '@noble/hashes': 2.2.0
+      '@noble/hashes': 1.8.0
       eventemitter3: 5.0.1
       ws: 8.21.0
     transitivePeerDependencies:

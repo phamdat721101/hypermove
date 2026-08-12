@@ -69,5 +69,13 @@
   },
   "engines": {
     "node": ">=20.0.0"
+  },
+  "pnpm": {
+    "overrides": {
+      "@xrplf/isomorphic>@noble/hashes": "1.8.0"
+    }
+  },
+  "_pnpm_overrides_justifications": {
+    "@xrplf/isomorphic>@noble/hashes": "2026-08-12, docs/prd/2026-08-12-fix-rlusd-payment-rail-esm-crash.md. @xrplf/isomorphic@1.0.2 (a real dependency of xrpl@5.0.0, which n-payment's XRPL settlement path lazy-imports at runtime — see settleXrplRlusd()/settleXrplAlreadySubmitted() in src/lib/mcp/npayment-rails.ts) declares @noble/hashes: ^2.0.1, which always resolved to the newest 2.x line (2.2.0). @noble/hashes@2.x is published type:module with zero CJS build, and @xrplf/isomorphic's own bundled CJS output does a plain require() of it — a real Node module-resolution crash confirmed live against every XRPL settlement attempt regardless of proof correctness. SCOPED to only @xrplf/isomorphic's resolution (not a blanket override) because @scure/bip39@2.2.0 (used by n-payment's own wallet-signing path, transitively) pins @noble/hashes to an EXACT '2.2.0' and imports the '@noble/hashes/webcrypto.js' subpath, which only exists in 2.x's exports map — a blanket 1.8.0 override was tried first and broke that path with a DIFFERENT ERR_PACKAGE_PATH_NOT_EXPORTED crash, confirmed live via the RUN_LIVE_XRPL_TESTS=true Tier 2 test in tests/mcp-xrpl-settlement.test.ts. The scoped `pkg>dep` override syntax pins @noble/hashes only where @xrplf/isomorphic itself resolves it, leaving @scure/bip39's exact 2.2.0 pin (and everything else in the tree) untouched. Remove this override only once @xrplf/isomorphic ships a release that either re-pins to a compatible @noble/hashes range or fixes its own require()->import() call — verify via the same live Tier 2 test before removing."
   }
 }
