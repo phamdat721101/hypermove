@@ -6,7 +6,7 @@
  * (extraction stage is mocked at the HTTP boundary per task).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { isMcpDreamCycleEnabled, isMcpDreamConfidentialEnabled } from '../src/lib/platform-flag';
+import { isMcpDreamCycleEnabled } from '../src/lib/platform-flag';
 
 const ENV_KEYS = ['FEATURE_HYPERMOVE_MCP_GATEWAY_V1', 'FEATURE_MCP_DREAM_CYCLE', 'FEATURE_MCP_DREAM_CONFIDENTIAL'] as const;
 let saved: Record<string, string | undefined> = {};
@@ -49,37 +49,8 @@ describe('Task 1 · isMcpDreamCycleEnabled — v3Flag cascade', () => {
   });
 });
 
-// ─── Task 6 · isMcpDreamConfidentialEnabled — deliberately default OFF ─────
-
-describe('Task 6 · isMcpDreamConfidentialEnabled — the one opt-IN v3.0+ sub-flag exception', () => {
-  it('defaults OFF with no env vars set, unlike every default-ON v3.0+ sub-flag', () => {
-    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
-    delete process.env.FEATURE_MCP_DREAM_CYCLE;
-    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL;
-    expect(isMcpDreamConfidentialEnabled()).toBe(false);
-  });
-
-  it('opts in via FEATURE_MCP_DREAM_CONFIDENTIAL=true when Dream Cycle itself is enabled', () => {
-    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
-    delete process.env.FEATURE_MCP_DREAM_CYCLE; // Dream Cycle itself defaults ON
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    expect(isMcpDreamConfidentialEnabled()).toBe(true);
-  });
-
-  it('stays OFF even with its own flag =true if Dream Cycle itself is disabled', () => {
-    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
-    process.env.FEATURE_MCP_DREAM_CYCLE = 'false';
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    expect(isMcpDreamConfidentialEnabled()).toBe(false);
-  });
-
-  it('stays OFF even with its own flag =true if the gateway master flag is off', () => {
-    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'false';
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    expect(isMcpDreamConfidentialEnabled()).toBe(false);
-  });
-});
-
+// (Task 6 · isMcpDreamConfidentialEnabled tests removed 2026-08-14, FCC
+// removal. See docs/fcc-removal-proposal-2026-08-14.md.)
 
 describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
   interface OwnershipRow { agent_id: string; owner_user_id: string; }
@@ -667,25 +638,17 @@ describe('Task 4 · startDream / getDreamConfig', () => {
               const row = ownerRows.find((r) => r.agent_id === (params[0] as string));
               return { rows: row ? [{ owner_user_id: row.owner_user_id }] : [] };
             }
-            if (sql.includes('SELECT confidential_default FROM dream_configs')) {
-              const row = configRows.find((r) => r.agent_id === (params[0] as string));
-              return { rows: row ? [{ confidential_default: (row as { confidential_default?: boolean }).confidential_default === true }] : [] };
-            }
             if (sql.includes('INSERT INTO dream_configs')) {
-              const [agentId, budgetUsd, preset, triggerCriteria, , confidential, confidentialDefault] = params as [string, number, string, string | null, string, boolean, boolean | null];
+              const [agentId, budgetUsd, preset, triggerCriteria] = params as [string, number, string, string | null, string];
               const idx = configRows.findIndex((r) => r.agent_id === agentId);
-              const existing = idx >= 0 ? (configRows[idx] as { confidential_default?: boolean }) : undefined;
               const row = {
                 agent_id: agentId, budget_usd: budgetUsd, preset, trigger_criteria: triggerCriteria ? JSON.parse(triggerCriteria) : null,
-                confidential: confidential === true,
-                confidential_default: confidentialDefault === null ? (existing?.confidential_default ?? false) : confidentialDefault === true,
-                preferred_settlement: 'xrpl-rlusd',
                 updated_at: new Date().toISOString(),
               };
               if (idx >= 0) configRows[idx] = row; else configRows.push(row);
               return { rows: [], rowCount: 1 };
             }
-            if (sql.includes('SELECT budget_usd, preset, trigger_criteria, confidential, confidential_default, preferred_settlement, updated_at::text FROM dream_configs')) {
+            if (sql.includes('SELECT budget_usd, preset, trigger_criteria, updated_at::text FROM dream_configs')) {
               const row = configRows.find((r) => r.agent_id === (params[0] as string));
               return { rows: row ? [row] : [] };
             }
@@ -734,185 +697,9 @@ describe('Task 4 · startDream / getDreamConfig', () => {
     expect(cfg.config?.preset).toBe('frugal');
   });
 
-  it('start_dream defaults confidential to false when omitted (regression guard)', async () => {
-    installFakePipelineDb();
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced' });
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential).toBe(false);
-  });
-
-  it('start_dream with confidential:true and NO settled payment is rejected before any DB row is created (Task 3)', async () => {
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    const state = installFakePipelineDb(); // no paid sessions seeded
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    expect(result.status).toBe('error');
-    expect(result.message).toMatch(/payment required/i);
-    expect(result.payment_challenge).toBeTruthy();
-    expect(result.run_id).toBeUndefined();
-    expect(state.runRows).toHaveLength(0);
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config).toBeNull(); // nothing persisted either
-  });
-
-  it('start_dream with confidential:true and a settled "confidential"-tier session succeeds and persists it (Task 3)', async () => {
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    installFakePipelineDb([
-      { session_id: 'sess-1', user_id: 'user-a', tier: 'confidential', chain: 'xrpl-mainnet', quota_limit: 100, quota_used: 0, expires_at: new Date(Date.now() + 3_600_000).toISOString() },
-    ]);
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    expect(result.status).toBe('started');
-    expect(result.run_id).toBeTruthy();
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential).toBe(true);
-  });
-
-  it('start_dream with confidential:true consumes exactly one unit of the paid session quota, not more', async () => {
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    const session = { session_id: 'sess-1', user_id: 'user-a', tier: 'confidential', chain: 'xrpl-mainnet', quota_limit: 100, quota_used: 0, expires_at: new Date(Date.now() + 3_600_000).toISOString() };
-    installFakePipelineDb([session]);
-    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    expect(session.quota_used).toBe(1);
-  });
-
-  it('Task 6: with isMcpDreamConfidentialEnabled() OFF (default), confidential:true is silently ignored — no payment required, no rejection', async () => {
-    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL; // explicit default-off, not inherited from a prior test
-    const state = installFakePipelineDb(); // no paid sessions seeded — if the gate fired, this would fail
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    expect(result.status).toBe('started'); // NOT 'error' — no payment gate fires
-    expect(state.runRows).toHaveLength(1);
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential).toBe(false); // never persisted as true when the flag is off
-  });
-
-  // ─── Task 2 fix (2026-08-10, PRD 03 — dream-cycle-fcc-live-session-feedback,
-  // Finding B). The run above (flag OFF) still starts in plaintext exactly as
-  // before this fix — but its OWN response must now say so, rather than only
-  // discoverable via a separate get_dream_config call (the exact gap the live
-  // session found).
-
-  it('Finding B: confidential:true with the FEATURE_MCP_DREAM_CONFIDENTIAL flag OFF reports the downgrade in start_dream\'s own response', async () => {
-    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL;
-    installFakePipelineDb();
-    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    expect(result.status).toBe('started'); // still runs in plaintext — "report the downgrade," not a hard refusal
-    expect(result.confidential_requested).toBe(true);
-    expect(result.confidential_actual).toBe(false);
-    expect(result.confidential_fallback_reason).toBe('feature_disabled');
-  });
-
-  it('Finding B: confidential:true with the flag ON but NO settled payment reports the downgrade with reason no_settled_payment', async () => {
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    installFakePipelineDb(); // no paid sessions seeded
-    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    // This path already correctly errors out (Task 3's pre-existing payment
-    // gate) — Finding B's fix adds the SAME 3 fields to that existing error
-    // response too, so a caller inspecting either outcome shape sees a
-    // consistent signal rather than only the plaintext-fallback case being
-    // instrumented.
-    expect(result.status).toBe('error');
-    expect(result.confidential_requested).toBe(true);
-    expect(result.confidential_actual).toBe(false);
-    expect(result.confidential_fallback_reason).toBe('no_settled_payment');
-  });
-
-  it('Finding B: a settled payment + flag ON reports confidential_actual:true, no fallback_reason', async () => {
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    installFakePipelineDb([
-      { session_id: 'sess-1', user_id: 'user-a', tier: 'confidential', chain: 'xrpl-mainnet', quota_limit: 100, quota_used: 0, expires_at: new Date(Date.now() + 3_600_000).toISOString() },
-    ]);
-    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-    expect(result.status).toBe('started');
-    expect(result.confidential_requested).toBe(true);
-    expect(result.confidential_actual).toBe(true);
-    expect(result.confidential_fallback_reason).toBeUndefined();
-  });
-
-  it('Finding B: a plain call that never touches confidential omits all 3 new fields entirely (byte-identical response)', async () => {
-    installFakePipelineDb();
-    const { startDream } = await import('../src/lib/mcp/dream/pipeline');
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced' });
-    expect(result.status).toBe('started');
-    expect(result.confidential_requested).toBeUndefined();
-    expect(result.confidential_actual).toBeUndefined();
-    expect(result.confidential_fallback_reason).toBeUndefined();
-  });
-
-  it('Task 6: flag OFF is byte-identical to never having passed confidential at all', async () => {
-    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL;
-    installFakePipelineDb();
-    const { startDream: startDreamA } = await import('../src/lib/mcp/dream/pipeline');
-    const withConfidential = await startDreamA('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: true });
-
-    vi.resetModules();
-    installFakePipelineDb();
-    const { startDream: startDreamB } = await import('../src/lib/mcp/dream/pipeline');
-    const withoutConfidential = await startDreamB('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced' });
-
-    expect(withConfidential.status).toBe(withoutConfidential.status);
-    expect(withConfidential.payment_challenge).toBeUndefined();
-    expect(withoutConfidential.payment_challenge).toBeUndefined();
-  });
-
-  it('Task 9: confidential_default persists and round-trips via get_dream_config, alongside preferred_settlement', async () => {
-    installFakePipelineDb();
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential_default: true });
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential_default).toBe(true);
-    expect(cfg.preferred_settlement).toBe('xrpl-rlusd');
-  });
-
-  it('Task 9: a plain start_dream call that OMITS confidential inherits a previously-stored confidential_default', async () => {
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-    const session = { session_id: 'sess-1', user_id: 'user-a', tier: 'confidential', chain: 'xrpl-mainnet', quota_limit: 100, quota_used: 0, expires_at: new Date(Date.now() + 3_600_000).toISOString() };
-    installFakePipelineDb([session]);
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    // First call sets the sticky default (and, since confidential is also
-    // omitted here, inherits nothing yet — defaults to false — so no
-    // payment is required for THIS call).
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential_default: true });
-    expect(session.quota_used).toBe(0); // first call never went confidential
-
-    // Second call omits `confidential` entirely — must inherit the stored
-    // default (true) and therefore require/consume the paid session.
-    const result = await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced' });
-    expect(result.status).toBe('started');
-    expect(session.quota_used).toBe(1);
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential).toBe(true);
-  });
-
-  it('Task 9: an explicit confidential value always overrides the stored confidential_default', async () => {
-    delete process.env.FEATURE_MCP_DREAM_CONFIDENTIAL; // flag off -> confidential:true would be ignored regardless, isolating the override check to persistence only
-    installFakePipelineDb();
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential_default: true });
-    // Explicit confidential:false on this call must win over the stored
-    // default of true — persisted confidential reflects THIS call, not the
-    // sticky default.
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential: false });
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential).toBe(false);
-    expect(cfg.config?.confidential_default).toBe(true); // the sticky default itself is untouched
-  });
-
-  it('Task 9: omitting confidential_default on a later call never resets a previously-stored default', async () => {
-    installFakePipelineDb();
-    const { startDream, getDreamConfig } = await import('../src/lib/mcp/dream/pipeline');
-    await startDream('robot-42', 'user-a', { budget_usd: 0.05, preset: 'balanced', confidential_default: true });
-    await startDream('robot-42', 'user-a', { budget_usd: 0.08, preset: 'thorough' }); // confidential_default omitted entirely
-    const cfg = await getDreamConfig('robot-42');
-    expect(cfg.config?.confidential_default).toBe(true); // still true, not reset to false
-    expect(cfg.config?.budget_usd).toBe(0.08); // other fields still update normally
-  });
+  // (Confidential Dream Cycle test suite removed 2026-08-14, FCC removal —
+  // startDream() no longer has a confidential path. See
+  // docs/fcc-removal-proposal-2026-08-14.md.)
 
   it('start_dream creates a dream_cycle_runs row with status=started', async () => {
     const state = installFakePipelineDb();
@@ -1755,7 +1542,7 @@ describe('Task 10 · end-to-end pipeline (submit_episode_log -> start_dream -> q
 
     const stats = await getDreamStats('robot-e2e');
     expect(['completed', 'partial']).toContain(stats.status);
-    expect(stats.stages_completed).toEqual(['preprocessing', 'clustering', 'extraction', 'consolidation', 'pruning']);
+    expect(stats.stages_completed).toEqual(['preprocessing', 'clustering', 'extraction', 'consolidation', 'pruning', 'morning_brief']);
     // PRD 03 Track 1 acceptance criterion: stage_summaries must reflect
     // reality (nonzero candidates_extracted here, since this run's fetch
     // mock returns genuine insights) rather than re-hiding the gap under a

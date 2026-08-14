@@ -161,24 +161,16 @@ export function isMcpResourcesEnabled(): boolean {
 // rollback). Each sub-flag off never causes another sub-flag's tool to
 // misbehave — every tool checks its own flag first.
 
-/** Master flag for the confidential tool tier. Default ON, opt-out via `=false`. */
-export function isMcpConfidentialEnabled(): boolean {
-  return v3Flag('FEATURE_MCP_CONFIDENTIAL_V1');
-}
-
-/** confidential.attest + withAttestationGate(). Master-gated. */
-export function isMcpAttestationEnabled(): boolean {
-  return isMcpConfidentialEnabled() && process.env.FEATURE_MCP_ATTESTATION !== 'false';
-}
-
-/** flare.confidential.swap / flare.confidential.status (FCC-aware). Master-gated. */
-export function isMcpFccEnabled(): boolean {
-  return isMcpConfidentialEnabled() && process.env.FEATURE_MCP_FCC_V1 !== 'false';
-}
+// FCC removal (2026-08-14): isMcpConfidentialEnabled/isMcpAttestationEnabled/
+// isMcpFccEnabled/isMcpDreamConfidentialEnabled removed along with the FCC
+// integration (services/tee-extension, confidential.ts, extract.ts's
+// extractOneClusterConfidential(), providers/flare.ts's FCC methods). See
+// docs/fcc-removal-proposal-2026-08-14.md. isMcpConfidentialXrplSettlementEnabled
+// stays (unrelated general XRPL settlement flag).
 
 /** XRPL-only settlement for the `confidential` price tier. Master-gated. */
 export function isMcpConfidentialXrplSettlementEnabled(): boolean {
-  return isMcpConfidentialEnabled() && process.env.FEATURE_MCP_CONFIDENTIAL_XRPL_SETTLEMENT !== 'false';
+  return process.env.FEATURE_MCP_CONFIDENTIAL_XRPL_SETTLEMENT !== 'false';
 }
 
 // ─── TEE-Proxy Instruction Dispatch + Token Profile (2026-07-20) ────────────
@@ -253,28 +245,9 @@ export function isMcpDreamSchedulerEnabled(): boolean {
   return isMcpDreamCycleEnabled() && process.env.FEATURE_MCP_DREAM_SCHEDULER === 'true';
 }
 
-// ─── Dream Cycle Confidential Extraction on Flare FCC (Task 6) ─────────────
-//
-// Gates start_dream's confidential:true path (Tasks 2-5: payment-gated
-// extraction via Flare's Confidential Compute TEE instead of the plain
-// services/llm call) and the dream/run_confidential MCP prompt (Task 8).
-//
-// Deliberately DEFAULT OFF, breaking from every other v3.0+ sub-flag's
-// default-ON convention — the SAME deviation isMcpDreamSchedulerEnabled()
-// above already makes, for an analogous reason: this path depends on
-// external infrastructure (Flare FCC's PMW third-party signing interface)
-// that is not yet published as of this writing (FCC itself only reached
-// Songbird canary via a July 2026 governance vote — see providers/flare.ts's
-// isFccLiveOnNetwork()). Every code path already fails closed/honestly
-// (fcc_not_live, zero fabricated cost — see extract.ts's Task 4/5 discipline)
-// so flipping this ON today carries no correctness risk, but it also unlocks
-// a new $0.50 XRPL/RLUSD-settled price tier for a capability that currently
-// always degrades to "not live yet" — an operator should opt in knowing
-// that, not discover a new paid tier that can't yet deliver its advertised
-// value. Opt in with FEATURE_MCP_DREAM_CONFIDENTIAL=true.
-export function isMcpDreamConfidentialEnabled(): boolean {
-  return isMcpDreamCycleEnabled() && process.env.FEATURE_MCP_DREAM_CONFIDENTIAL === 'true';
-}
+// isMcpDreamConfidentialEnabled removed (2026-08-14, FCC removal) — Dream
+// Cycle's confidential:true path and its FCC gate no longer exist. See
+// docs/fcc-removal-proposal-2026-08-14.md.
 
 // ─── Gateway Guardians — sentinel + output-enforcer wiring (2026-08-01) ────
 //

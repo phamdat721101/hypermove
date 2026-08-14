@@ -76,12 +76,11 @@ describe('flare.instruct.dispatch: getTools() flag-off diff', () => {
     expect(withFlag.filter((n) => n !== 'flare.instruct.dispatch')).toEqual(withoutFlag);
   });
 
-  it('flare.instruct.dispatch being off never disables confidential.attest or flare.token.* (independent masters)', async () => {
+  it('flare.instruct.dispatch being off never disables flare.token.* (independent masters)', async () => {
     const { getTools, _resetTools } = await import('../src/lib/mcp/tools');
     process.env.FEATURE_MCP_INSTRUCT_V1 = 'false';
     _resetTools();
     const names = getTools().map((t) => t.name);
-    expect(names).toContain('confidential.attest');
     expect(names).toContain('flare.token.save');
     expect(names).toContain('flare.token.profile');
   });

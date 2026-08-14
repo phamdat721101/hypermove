@@ -21,7 +21,7 @@
  *    getPrompts() — no caller (server.ts) changes.
  */
 
-import { isMcpDreamCycleEnabled, isMcpDreamConfidentialEnabled } from '../platform-flag';
+import { isMcpDreamCycleEnabled } from '../platform-flag';
 
 export interface PromptArgument {
   name: string;
@@ -116,56 +116,8 @@ const dreamCompareBeforeAfterPrompt: PromptDef = {
   },
 };
 
-/**
- * Dream Cycle Confidential Extraction on Flare FCC, Task 8. Pre-fills a
- * start_dream({confidential:true}) call for the given agent_id, using
- * whatever budget/preset default is already stored for that agent (Task 9's
- * confidential_default/preferred_settlement, or the plain dream_configs
- * default from Task 2 if no confidential-specific default exists yet),
- * falling back to the 'balanced' preset / global default budget if no
- * config is stored at all — same fallback discipline startDream() itself
- * already uses (see pipeline.ts's `DREAM_PRESETS[config.preset] ?
- * config.preset : 'balanced'`).
- *
- * Gated behind isMcpDreamConfidentialEnabled() (Task 6) — getPrompts() below
- * omits this prompt entirely from prompts/list when the flag is off, rather
- * than registering it and erroring on invoke. A disabled capability should
- * not even be discoverable, matching how getTools() omits every flag-gated
- * tool the same way (see tools.ts's `if (isMcpXEnabled()) tools.push(...)`
- * pattern) rather than registering-then-rejecting.
- */
-const dreamRunConfidentialPrompt: PromptDef = {
-  name: 'dream/run_confidential',
-  description: 'Start a confidential Dream Cycle run for an agent — extraction routes through Flare Confidential Compute (TEE) instead of the plaintext path, settled via XRPL/RLUSD. Pre-fills start_dream with confidential:true and the agent\'s stored defaults.',
-  arguments: [
-    { name: 'agent_id', description: 'Unique identifier of the agent to run confidential Dream Cycle for.', required: true },
-  ],
-  async resolve(args) {
-    const agentId = args.agent_id ?? '';
-    const { getDreamConfig } = await import('./dream/pipeline');
-    const stored = agentId ? await getDreamConfig(agentId) : { config: null };
-    const budgetUsd = stored.config?.budget_usd ?? (Number(process.env.DREAM_MAX_BUDGET_USD_PER_CYCLE) || 0.1);
-    const preset = stored.config?.preset ?? 'balanced';
-
-    const callText = JSON.stringify({
-      tool: 'start_dream',
-      arguments: {
-        agent_id: agentId,
-        config: { budget_usd: budgetUsd, preset, confidential: true },
-      },
-    });
-
-    return [
-      {
-        role: 'user',
-        content: {
-          type: 'text',
-          text: `Run a confidential Dream Cycle for agent "${agentId}". Extraction will execute inside Flare's Confidential Compute TEE (falls back to an honest fcc_not_live result if Flare hasn't shipped live compute yet) and settles via XRPL/RLUSD. Call the start_dream tool with this exact input: ${callText}`,
-        },
-      },
-    ];
-  },
-};
+// (dream/run_confidential prompt removed 2026-08-14, FCC removal. See
+// docs/fcc-removal-proposal-2026-08-14.md.)
 
 /**
  * The full prompt registry. Mirrors getTools()'s exact shape (flag-gated
@@ -178,7 +130,6 @@ export function getPrompts(): PromptDef[] {
   if (isMcpDreamCycleEnabled()) {
     prompts.push(dreamSummarizeTodayPrompt, dreamSuggestPolicyUpdatesPrompt, dreamCompareBeforeAfterPrompt);
   }
-  if (isMcpDreamConfidentialEnabled()) prompts.push(dreamRunConfidentialPrompt);
   return prompts;
 }
 

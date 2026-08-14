@@ -33,9 +33,17 @@ export interface ExistingMemory {
   embedding: number[];
 }
 
+export interface ContradictionRecord {
+  existing_sop: string;
+  conflicting_trace: string;
+  reason: string;
+}
+
 export interface ConsolidationResult {
   memories_added: number;
   memories_merged: number;
+  librarian_neutralized_count: number;
+  flagged_contradictions: ContradictionRecord[];
 }
 
 const MERGE_SIMILARITY_THRESHOLD = 0.85;
@@ -66,21 +74,61 @@ export function dedupeInsights(insights: FlatInsight[]): FlatInsight[] {
   return out;
 }
 
+const NEGATION_PATTERNS = [/not\s+/i, /never\s+/i, /don't\s+/i, /do not\s+/i, /avoid\s+/i, /instead of\s+/i, /no longer\s+/i, /deprecated\s+/i];
+
+/**
+ * Phase 3 Librarian Hygiene pass: scan new insights against existing SOPs/memories.
+ * Detects contradictory instructions and records them in dream_contradictions.
+ */
+export async function librarianScan(
+  agentId: string,
+  insights: FlatInsight[],
+  existingMemories: ExistingMemory[],
+): Promise<ContradictionRecord[]> {
+  const contradictions: ContradictionRecord[] = [];
+  const rules = existingMemories.filter((m) => m.type === 'rule');
+
+  for (const insight of insights) {
+    if (insight.type !== 'rule') continue;
+    const hasNegation = NEGATION_PATTERNS.some((pat) => pat.test(insight.content));
+
+    for (const rule of rules) {
+      // Check if both rules touch similar keywords but one is negative and one is affirmative
+      const ruleHasNegation = NEGATION_PATTERNS.some((pat) => pat.test(rule.content));
+      if (hasNegation !== ruleHasNegation) {
+        // Compare overlap of words (excluding stop words and negations)
+        const wordsA = new Set(insight.content.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+        const wordsB = new Set(rule.content.toLowerCase().split(/\W+/).filter((w) => w.length > 3));
+        const overlap = Array.from(wordsA).filter((w) => wordsB.has(w));
+
+        if (overlap.length >= 2) {
+          const rec: ContradictionRecord = {
+            existing_sop: rule.content,
+            conflicting_trace: insight.content,
+            reason: `Logical contradiction detected on keywords: ${overlap.join(', ')}`,
+          };
+          contradictions.push(rec);
+
+          await withClient(async (client) => {
+            await client.query(
+              `INSERT INTO dream_contradictions (agent_id, existing_sop, conflicting_trace, reason, status)
+               VALUES ($1, $2, $3, $4, 'flagged')`,
+              [agentId, rule.content, insight.content, rec.reason],
+            );
+            return true;
+          });
+        }
+      }
+    }
+  }
+
+  return contradictions;
+}
+
 /**
  * Consolidate deduplicated insights for ONE agent against its existing
  * memories. Merges into an existing row when cosine similarity > 0.85
  * (same type only — a rule never merges into a fact), else inserts new.
- *
- * PRD-C note (2026-07-27 dream-cycle-practical-readiness-feedback): on a
- * fresh agent's very first start_dream call, `existingMemories` is empty, so
- * this loop's first iteration has zero merge candidates — every insight in
- * that first batch inserts as new until items start accumulating in the
- * local `memories` array mid-loop. This is intentional and already correct
- * (the local copy lets later insights in the SAME batch merge into ones
- * inserted earlier in that same call — no self-merge, no missed merges) —
- * flagged here only so a future reader doesn't mistake "first batch always
- * inserts every insight as new" for a bug. There is no minimum batch size
- * or warm-up period required before merging starts working.
  */
 export async function consolidateInsights(
   agentId: string,
@@ -90,6 +138,9 @@ export async function consolidateInsights(
   const embedder = getEmbedder();
   let added = 0;
   let merged = 0;
+
+  // Run Phase 3 Librarian Hygiene scan before consolidation
+  const flaggedContradictions = await librarianScan(agentId, insights, existingMemories);
 
   // Work on a local mutable copy so multiple insights in the same batch can
   // merge into a memory created earlier in this same call (no self-merge).
@@ -141,5 +192,10 @@ export async function consolidateInsights(
     }
   }
 
-  return { memories_added: added, memories_merged: merged };
+  return {
+    memories_added: added,
+    memories_merged: merged,
+    librarian_neutralized_count: flaggedContradictions.length,
+    flagged_contradictions: flaggedContradictions,
+  };
 }

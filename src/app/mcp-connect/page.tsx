@@ -109,8 +109,6 @@ export default function McpConnectPage() {
         any MCP-compatible agent. 10 free queries / 24h, then metered x402/MPP.
       </p>
 
-      {state?.confidentialDreamCycleAvailable && <ConfidentialDreamCycleCallout />}
-
       {token ? (
         <TokenPanel token={token} origin={origin} />
       ) : state === null ? (
@@ -124,39 +122,9 @@ export default function McpConnectPage() {
   );
 }
 
-/**
- * Dream Cycle Confidential Extraction on Flare FCC, Task 10. Shown only when
- * /api/mcp/health's `prompts` field includes dream/run_confidential — i.e.
- * only when an operator has actually enabled FEATURE_MCP_DREAM_CONFIDENTIAL
- * (default OFF) AND FEATURE_MCP_RESOURCES. Purely informational: after
- * connecting (above/below), an operator's MCP client can select the
- * "dream/run_confidential" prompt to pre-fill a payment-gated start_dream
- * call — no client-config field can pre-fill this itself, since agent_id and
- * confidential are start_dream TOOL ARGUMENTS (passed per-call), not
- * connection-level config (mcpServers only carries url/headers/command/args
- * — there is no MCP-spec mechanism for a client config to pre-fill a tool
- * call's arguments). Setting a sticky default once via start_dream's
- * confidential_default (Task 9) is the actual "set up once" mechanism.
- */
-function ConfidentialDreamCycleCallout() {
-  return (
-    <div className="mt-6 rounded-xl border border-sky-500/30 bg-sky-500/5 p-5">
-      <p className="text-sm font-medium text-sky-300">Confidential Dream Cycle is enabled on this gateway</p>
-      <p className="mt-1 text-xs text-neutral-400">
-        Once connected, select the <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">dream/run_confidential</code> prompt
-        in your MCP client to run a Dream Cycle whose extraction stage executes inside Flare&apos;s Confidential Compute (TEE) instead of the
-        plaintext path — settled via XRPL/RLUSD. Requires a settled <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">confidential</code>-tier
-        payment (call <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">payments.settle</code> with{' '}
-        <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">tier: &quot;confidential&quot;</code> first).
-      </p>
-      <p className="mt-2 text-xs text-neutral-500">
-        Prefer it to run automatically? Call <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">start_dream</code> once with{' '}
-        <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">confidential_default: true</code> in your agent&apos;s config — every
-        future call that omits <code className="rounded bg-neutral-800 px-1.5 py-0.5 font-mono text-xs">confidential</code> will inherit it.
-      </p>
-    </div>
-  );
-}
+// (ConfidentialDreamCycleCallout removed 2026-08-14, FCC removal. See
+// docs/fcc-removal-proposal-2026-08-14.md.)
+
 
 function useTokenFromQuery(): string | null {
   const [token] = useState<string | null>(() => {

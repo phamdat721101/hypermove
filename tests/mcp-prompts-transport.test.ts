@@ -88,16 +88,8 @@ describe('Task 7 · MCP Prompts primitive — real SDK protocol round-trip', () 
     expect(names).toContain('dream/compare_before_after');
   });
 
-  it('prompts/list includes dream/run_confidential only when FEATURE_MCP_DREAM_CONFIDENTIAL is also on', async () => {
-    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
-    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
-    process.env.FEATURE_MCP_RESOURCES = 'true';
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-
-    const client = await connectedClient();
-    const { prompts } = await client.listPrompts();
-    expect(prompts.map((p) => p.name)).toContain('dream/run_confidential');
-  });
+  // (dream/run_confidential prompt tests removed 2026-08-14, FCC removal.
+  // See docs/fcc-removal-proposal-2026-08-14.md.)
 
   it('prompts/list has no handler at all when isMcpResourcesEnabled() is off — the flag this task closes the promise on', async () => {
     process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
@@ -111,20 +103,5 @@ describe('Task 7 · MCP Prompts primitive — real SDK protocol round-trip', () 
     // (this file's module doc, and prompts.ts's own doc comment) means in
     // practice at the protocol level.
     await expect(client.listPrompts()).rejects.toMatchObject({ code: -32601 });
-  });
-
-  it('prompts/get on dream/run_confidential returns a real, resolved message referencing start_dream', async () => {
-    process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
-    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
-    process.env.FEATURE_MCP_RESOURCES = 'true';
-    process.env.FEATURE_MCP_DREAM_CONFIDENTIAL = 'true';
-
-    const client = await connectedClient();
-    const result = await client.getPrompt({ name: 'dream/run_confidential', arguments: { agent_id: 'robot-42' } });
-    expect(result.messages).toHaveLength(1);
-    const text = (result.messages[0].content as { text?: string }).text ?? '';
-    expect(text).toContain('robot-42');
-    expect(text).toContain('start_dream');
-    expect(text).toContain('confidential');
   });
 });

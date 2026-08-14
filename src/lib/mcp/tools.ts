@@ -15,7 +15,7 @@ import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
 import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
-import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpAttestationEnabled, isMcpFccEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled, isMcpDreamCycleEnabled } from '../platform-flag';
+import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled, isMcpDreamCycleEnabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 import type { OutputEnforceConfig } from '../harness/types';
@@ -528,71 +528,14 @@ const flareBridgeStatusTool: ToolDef = {
   },
 };
 
-// ─── Confidential MCP tool tier (Sub-PRD A: attestation; Sub-PRD B: FCC) ────
-//
-// confidential.attest is the trust primitive; flare.confidential.* tools wrap
-// themselves in withAttestationGate() from confidential.ts rather than
-// re-deriving the check. Priced via the new `confidential` tier (Sub-PRD C) —
-// only the actual gated execution (flareConfidentialSwapTool) uses it; the
-// cheap pre-checks stay at t2_realtime/t1_read.
-
-const confidentialAttestTool: ToolDef = {
-  name: 'confidential.attest',
-  description: 'Verify a TEE remote-attestation quote before calling any confidential.* or flare.confidential.* tool. Returns a real verification result — never a mocked quote.',
-  tier: 't2_realtime',
-  inputSchema: {
-    type: 'object',
-    properties: { quote: { type: 'string', description: 'base64 TEE attestation quote from the calling enclave' } },
-    required: [],
-  },
-  handler: async (args) => {
-    const { verifyAttestation } = await import('./confidential');
-    return verifyAttestation({ quote: args.quote as string | undefined });
-  },
-};
-
-const flareConfidentialSwapTool: ToolDef = {
-  name: 'flare.confidential.swap',
-  description: 'Execute a confidential swap on Flare via FCC/PMW (XRPL-only PMW scope at launch). Requires a valid confidential.attest quote. Returns a structured fcc_not_live refusal until FCC is deployed on Songbird.',
-  tier: 'confidential',
-  inputSchema: {
-    type: 'object',
-    properties: {
-      quote: { type: 'string', description: 'attestation quote from confidential.attest' },
-      chain: { type: 'string', description: 'default songbird (FCC canary network)' },
-      amount: { type: 'string' },
-    },
-    required: ['quote'],
-  },
-  handler: async (args) => {
-    const { withAttestationGate } = await import('./confidential');
-    return withAttestationGate(args.quote as string, async () => {
-      const { buildRouter } = await import('./providers');
-      return buildRouter().dispatch({
-        chain: String(args.chain ?? 'songbird'),
-        method: 'flareConfidentialSwap',
-        params: { amount: args.amount },
-      });
-    });
-  },
-};
-
-const flareConfidentialStatusTool: ToolDef = {
-  name: 'flare.confidential.status',
-  description: 'Check whether Flare Confidential Compute (FCC) is live on a given network — the honest pre-check before attempting a confidential swap.',
-  tier: 't1_read',
-  inputSchema: { type: 'object', properties: { chain: { type: 'string' } } },
-  handler: async (args) => {
-    const { buildRouter } = await import('./providers');
-    return buildRouter().dispatch({ chain: String(args.chain ?? 'songbird'), method: 'flareConfidentialStatus', params: {} });
-  },
-};
-
 // ─── flare.token.save / flare.token.profile (2026-07-20) ───────────────────
 //
-// Implements the user-supplied Token Profile schema. Independent of both the
-// confidential.* tools and flare.instruct.dispatch — see platform-flag.ts's
-// isMcpTokenProfileEnabled() doc comment.
+// Implements the user-supplied Token Profile schema. Independent of
+// flare.instruct.dispatch — see platform-flag.ts's isMcpTokenProfileEnabled()
+// doc comment.
+// (Confidential MCP tool tier — confidential.attest, flare.confidential.swap/
+// status — removed 2026-08-14, FCC removal. See
+// docs/fcc-removal-proposal-2026-08-14.md.)
 
 const flareTokenSaveTool: ToolDef = {
   name: 'flare.token.save',
@@ -733,19 +676,8 @@ const submitEpisodeLogTool: ToolDef = {
 
 const startDreamTool: ToolDef = {
   name: 'start_dream',
-  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default). When config.confidential is true and FEATURE_MCP_DREAM_CONFIDENTIAL is enabled, requires a settled "confidential" price-tier (XRPL/RLUSD, $0.50) payment — see dream/pipeline.ts\'s startDream() for the self-contained payment gate. If confidential was requested but the gate (feature flag or payment) is not satisfied, the run still proceeds in plaintext, but the response includes confidential_requested/confidential_actual/confidential_fallback_reason so the caller is never silently downgraded without knowing it.',
+  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default).',
   tier: 't1_read',
-  // Dream Cycle Confidential Extraction on Flare FCC, Task 6: stays
-  // unmetered:true even for a confidential:true call. This is intentional,
-  // not an oversight — startDream() (dream/pipeline.ts) is its OWN complete
-  // payment gate for the confidential path, reusing the EXISTING 'confidential'
-  // PriceTier ($0.50, XRPL/RLUSD-only — see catalog.ts/paywall.ts, unchanged
-  // by this feature) via findActiveSession/consumeSession. If this tool were
-  // metered at the gateway level too, a confidential call would be charged
-  // twice under two different tiers for one call. `tier: 't1_read'` above is
-  // therefore purely informational here (gateway.ts's callTool() never reads
-  // it, since unmetered:true skips that whole branch) — no new tool tier was
-  // introduced; the confidential tier already existed and Task 3 wired to it.
   unmetered: true,
   inputSchema: {
     type: 'object',
@@ -785,30 +717,6 @@ const startDreamTool: ToolDef = {
               min_raw_tokens: { type: 'number' },
             },
           },
-          // Dream Cycle Confidential Extraction on Flare FCC, Task 2. Opt-in,
-          // default false — byte-identical behavior for every existing
-          // caller. When true, extraction routes through Flare's
-          // Confidential Compute (FCC) TEE path (see dream/extract.ts's
-          // extractOneClusterConfidential(), gated by
-          // providers/flare.ts's isFccLiveOnNetwork()) instead of the plain
-          // services/llm HTTP call, and requires a settled XRPL/RLUSD
-          // payment before the pipeline runs (see payment-router.ts's
-          // validateConfidentialSelection()). Whole surface stays inert
-          // until isMcpDreamConfidentialEnabled() is on (default OFF).
-          confidential: {
-            type: 'boolean',
-            default: false,
-            description: 'Route extraction through Flare Confidential Compute (TEE) instead of the default plaintext path. Requires a settled XRPL/RLUSD payment. Gated by isMcpDreamConfidentialEnabled() (default OFF). Omit this field entirely to inherit the agent\'s stored confidential_default, if any.',
-          },
-          // Dream Cycle Confidential Extraction on Flare FCC, Task 9. A
-          // STICKY per-agent default distinct from `confidential` above —
-          // set this once to make every FUTURE start_dream call that omits
-          // `confidential` inherit it. Omit this field to leave any existing
-          // stored default untouched.
-          confidential_default: {
-            type: 'boolean',
-            description: 'Set a sticky per-agent default for confidential Dream Cycle. Future start_dream calls that omit `confidential` inherit this value. Omit this field to leave any existing stored default unchanged.',
-          },
         },
         required: ['budget_usd'],
       },
@@ -822,12 +730,6 @@ const startDreamTool: ToolDef = {
       budget_usd: Number(cfg.budget_usd),
       preset: (cfg.preset as string) ?? 'balanced',
       trigger_criteria: cfg.trigger_criteria as Record<string, unknown> | undefined,
-      // Task 9: preserve `undefined` when the caller omitted `confidential`
-      // entirely — coercing to `false` here would defeat startDream()'s
-      // stored-default inheritance (it only looks up the default when
-      // config.confidential is exactly undefined, not false).
-      confidential: cfg.confidential === undefined ? undefined : cfg.confidential === true,
-      confidential_default: cfg.confidential_default === undefined ? undefined : cfg.confidential_default === true,
     });
   },
 };
@@ -913,6 +815,40 @@ const reclaimAgentOwnershipTool: ToolDef = {
   },
 };
 
+const getDreamSkillsTool: ToolDef = {
+  name: 'get_dream_skills',
+  description: 'Retrieve auto-generated, type-safe SOP SKILL.md specifications (Matt-Pocock Standard) compiled during Phase 4 Dream-Cycle compaction.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args) => {
+    const { getAgentSkills } = await import('./dream/skillify-insights');
+    return { skills: await getAgentSkills(String(args.agent_id ?? '')) };
+  },
+};
+
+const getMorningBriefTool: ToolDef = {
+  name: 'get_morning_brief',
+  description: 'Retrieve the Sovereign Morning Brief markdown update (Phase 5: Executed, Neutralized, Proposed action plan) for an agent.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args) => {
+    const { getDreamStats } = await import('./dream/pipeline');
+    const { formatMorningBriefMarkdown } = await import('./dream/morning-brief');
+    const stats = await getDreamStats(String(args.agent_id ?? ''));
+    const briefMarkdown = formatMorningBriefMarkdown({
+      agentId: String(args.agent_id ?? ''),
+      runId: stats.last_run_at ?? 'latest',
+      executed: (stats.stages_completed ?? []).includes('skillification') ? ['Distilled high-confidence insights into Matt-Pocock SKILL SOPs'] : [],
+      neutralized: (stats.stage_summaries?.pruning_summary?.candidates_removed ?? 0) > 0 ? [`Pruned ${stats.stage_summaries?.pruning_summary?.candidates_removed} redundant or below-threshold memory candidates`] : [],
+      proposed: [],
+      tokensReducedPercent: 95,
+    });
+    return { agent_id: String(args.agent_id ?? ''), brief: briefMarkdown, stats };
+  },
+};
+
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
@@ -925,11 +861,9 @@ export function getTools(): ToolDef[] {
   if (isMcpBuilderBriefEnabled()) tools.push(flareBriefTool, xrplBriefTool, goatBriefTool);
   if (isMcpXrplV3Enabled()) tools.push(xrplSettlementQuoteTool, xrplX402StatusTool, xrplVaultInfoTool, xrplLendingStatusTool, xrplYieldCompareTool, xrplHubTrendingTool);
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
-  if (isMcpAttestationEnabled()) tools.push(confidentialAttestTool);
-  if (isMcpFccEnabled()) tools.push(flareConfidentialSwapTool, flareConfidentialStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, reclaimAgentOwnershipTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, reclaimAgentOwnershipTool, getDreamSkillsTool, getMorningBriefTool);
   return tools;
 }
 
