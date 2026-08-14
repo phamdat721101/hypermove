@@ -409,6 +409,34 @@ ALTER TABLE dream_configs ADD COLUMN IF NOT EXISTS confidential BOOLEAN NOT NULL
 -- payment-router.ts's CONFIDENTIAL_TIER_CHAINS being XRPL-only by design.
 ALTER TABLE dream_configs ADD COLUMN IF NOT EXISTS confidential_default BOOLEAN NOT NULL DEFAULT false;
 ALTER TABLE dream_configs ADD COLUMN IF NOT EXISTS preferred_settlement TEXT NOT NULL DEFAULT 'xrpl-rlusd';
+
+-- Additive (Dream Cycle Playbook Phase 1 Telemetry): reasoning_path, tool_call_payload, token_usage
+ALTER TABLE dream_episode_logs ADD COLUMN IF NOT EXISTS reasoning_path TEXT;
+ALTER TABLE dream_episode_logs ADD COLUMN IF NOT EXISTS tool_call_payload JSONB;
+ALTER TABLE dream_episode_logs ADD COLUMN IF NOT EXISTS token_usage JSONB;
+
+-- Additive (Dream Cycle Playbook Phase 4 Skillification): Matt-Pocock Standard type-safe SOPs
+CREATE TABLE IF NOT EXISTS dream_skills (
+  skill_id       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id       TEXT NOT NULL,
+  name           TEXT NOT NULL,
+  description    TEXT NOT NULL,
+  type_safe_sop  TEXT NOT NULL,
+  created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dream_skills_agent ON dream_skills(agent_id);
+
+-- Additive (Dream Cycle Playbook Phase 3 Librarian Hygiene): Flagged SOP contradictions
+CREATE TABLE IF NOT EXISTS dream_contradictions (
+  id                UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  agent_id          TEXT NOT NULL,
+  existing_sop      TEXT NOT NULL,
+  conflicting_trace TEXT NOT NULL,
+  reason            TEXT NOT NULL,
+  status            TEXT NOT NULL DEFAULT 'flagged', -- flagged | resolved
+  created_at        TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_dream_contradictions_agent ON dream_contradictions(agent_id, status);
 `;
 
 let pool: Pool | null = null;
