@@ -365,19 +365,29 @@ const xrplX402StatusTool: ToolDef = {
   },
   handler: async (args) => {
     // T54 facilitator status (best-effort; no network if unavailable)
-    const facilitatorUrl = process.env.XRPL_FACILITATOR_URL ?? 'https://xrpl-x402.t54.ai';
+    // Keep diagnostics aligned with the real settlement rail: testnet is the
+    // safe default unless an explicit mainnet network has been configured.
+    const configuredNetwork = process.env.XRPL_NETWORK?.toLowerCase();
+    const network = configuredNetwork === 'mainnet' || configuredNetwork === 'xrpl-mainnet'
+      ? 'mainnet'
+      : 'testnet';
+    const facilitatorUrl = process.env.XRPL_FACILITATOR_URL
+      ?? `https://xrpl-facilitator-${network}.t54.ai`;
+    const treasury = String(args.treasury ?? process.env.XRPL_TREASURY_ADDRESS ?? '').trim();
     let facilitatorHealth = 'unknown';
     try {
       const res = await fetch(`${facilitatorUrl}/health`, { method: 'GET', signal: AbortSignal.timeout(2000) });
-      facilitatorHealth = res.ok ? 'healthy' : 'degraded';
+      // T54 testnet currently does not expose `/health` (404). That is an
+      // unsupported probe, not evidence that settlement itself is down.
+      facilitatorHealth = res.ok ? 'healthy' : res.status === 404 ? 'unknown' : 'degraded';
     } catch {
       facilitatorHealth = 'unreachable';
     }
     return {
       facilitator: { url: facilitatorUrl, health: facilitatorHealth },
       supportedAssets: ['XRP', 'RLUSD'],
-      treasury: args.treasury ? { account: String(args.treasury), trustlineCheck: 'not_implemented' } : null,
-      hint: 'HyperMove integrates T54 for XRPL x402 settlement. Set XRPL_FACILITATOR_URL to override.',
+      treasury: treasury ? { account: treasury, trustlineCheck: 'not_implemented' } : null,
+      hint: 'HyperMove integrates T54 for XRPL x402 settlement. Set XRPL_FACILITATOR_URL to override; XRPL_NETWORK selects mainnet or testnet.',
     };
   },
 };
