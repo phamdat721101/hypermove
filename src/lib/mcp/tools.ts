@@ -654,7 +654,20 @@ const submitEpisodeLogTool: ToolDef = {
             agent_id: { type: 'string' },
             timestamp: { type: 'string', description: 'ISO 8601 timestamp' },
             task_type: { type: 'string' },
-            steps: { type: 'array' },
+            steps: {
+              type: 'array',
+              items: {
+                type: 'object',
+                properties: {
+                  action: { type: 'string' },
+                  observation_summary: { type: 'string' },
+                  result: { type: 'string', description: 'Deprecated one-release alias for observation_summary.' },
+                  error: { type: 'string' },
+                  duration_ms: { type: 'number' },
+                },
+                required: ['action'],
+              },
+            },
             // PRD 02 fix (2026-07-26 live-session feedback): the valid
             // outcome values were previously only discoverable by
             // submitting an invalid one and reading the rejection reason.
@@ -815,6 +828,40 @@ const getDreamEpisodeDiagnosticsTool: ToolDef = {
   },
 };
 
+const previewDreamRepairTool: ToolDef = {
+  name: 'preview_dream_repair',
+  description: 'Read-only preview of generic consolidated memories suggested for quarantine against one retained Dream run. No data is changed.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' }, source_run_id: { type: 'string' } }, required: ['agent_id', 'source_run_id'] },
+  handler: async (args, ctx) => {
+    const { previewDreamRepair } = await import('./dream/repair');
+    return previewDreamRepair(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous', String(args.source_run_id ?? ''));
+  },
+};
+
+const applyDreamRepairTool: ToolDef = {
+  name: 'apply_dream_repair',
+  description: 'Quarantine explicitly selected generic memories and replay exactly one retained Dream run. Requires confirm=true after preview.',
+  tier: 'dream',
+  requiresPayment: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string' }, source_run_id: { type: 'string' },
+      memory_ids: { type: 'array', items: { type: 'string' } }, confirm: { type: 'boolean' },
+    },
+    required: ['agent_id', 'source_run_id', 'memory_ids', 'confirm'],
+  },
+  handler: async (args, ctx) => {
+    const { applyDreamRepair } = await import('./dream/repair');
+    return applyDreamRepair(
+      String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous', String(args.source_run_id ?? ''),
+      Array.isArray(args.memory_ids) ? args.memory_ids.map(String) : [], args.confirm === true,
+    );
+  },
+};
+
 const reclaimAgentOwnershipTool: ToolDef = {
   name: 'reclaim_agent_ownership',
   description: 'Reclaim an agent_id currently owned by a DIFFERENT device-auth (anonymous, terminal-only) session, so a new device-code sign-in can continue using the same agent_id instead of fragmenting memory across a fresh one every session. Only works when the CURRENT owner is itself a device-auth session — an agent_id owned by a wallet- or account-authenticated session is never reclaimable this way (re-authenticate with that same wallet/account instead). Calling this on an agent_id you already own, or one with no owner yet, is a harmless no-op.',
@@ -912,7 +959,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, reclaimAgentOwnershipTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 

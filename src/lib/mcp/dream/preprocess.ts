@@ -65,6 +65,21 @@ export interface PreprocessResult {
 
 const DEFAULT_MAX_CHARS = 200;
 
+/** The single canonical field-selection rule for Dream semantic text. */
+export function formatEpisodeSemanticText(episode: Pick<PreprocessedEpisode, 'task_type' | 'outcome' | 'tags' | 'steps'>): string {
+  const parts = [
+    episode.task_type ? `Task: ${episode.task_type}` : '',
+    `Outcome: ${episode.outcome}`,
+    ...episode.steps.flatMap((step) => [
+      `Action: ${step.action}`,
+      step.observation_summary ? `Observation: ${step.observation_summary}` : '',
+      step.error ? `Error: ${step.error}` : '',
+    ]),
+    episode.tags?.length ? `Tags: ${episode.tags.join(', ')}` : '',
+  ];
+  return parts.filter(Boolean).join('\n');
+}
+
 function truncate(text: string | undefined, maxChars: number): string | undefined {
   if (text === undefined) return undefined;
   return text.length > maxChars ? text.slice(0, maxChars) : text;

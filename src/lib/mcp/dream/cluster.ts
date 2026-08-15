@@ -11,7 +11,7 @@
 
 import { getEmbedder } from '../embeddings';
 import { cosine } from '../vector-store';
-import type { PreprocessedEpisode } from './preprocess';
+import { formatEpisodeSemanticText, type PreprocessedEpisode } from './preprocess';
 
 export interface EpisodeCluster {
   cluster_id: string;
@@ -23,14 +23,25 @@ export interface EpisodeCluster {
   centroid_embedding: number[];
   /** Cheap summary text (<=200 chars) fed to the extraction stage — not a raw dump. */
   summary: string;
+  semantic_source_chars?: number;
+  truncated_episode_ids?: string[];
 }
 
 const SIMILARITY_THRESHOLD = 0.75;
 
-function summarize(episodes: PreprocessedEpisode[]): string {
-  const parts = episodes.map((e) => `${e.outcome}:${e.task_type ?? 'unknown'}:${e.steps.map((s) => s.action).join(',')}`);
-  const joined = parts.join(' | ');
-  return joined.length > 200 ? joined.slice(0, 200) : joined;
+const MAX_CLUSTER_SUMMARY_CHARS = 2400;
+
+function summarize(episodes: PreprocessedEpisode[]): { summary: string; sourceChars: number; truncatedEpisodeIds: string[] } {
+  const source = episodes.map((episode) => ({ id: episode.episode_id, text: formatEpisodeSemanticText(episode) }));
+  const sourceChars = source.reduce((sum, item) => sum + item.text.length, 0);
+  const fairShare = Math.max(1, Math.floor(MAX_CLUSTER_SUMMARY_CHARS / Math.max(1, source.length)));
+  const truncatedEpisodeIds: string[] = [];
+  const parts = source.map(({ id, text }) => {
+    if (text.length <= fairShare) return text;
+    truncatedEpisodeIds.push(id);
+    return text.slice(0, fairShare);
+  });
+  return { summary: parts.join('\n---\n').slice(0, MAX_CLUSTER_SUMMARY_CHARS), sourceChars, truncatedEpisodeIds };
 }
 
 function dominantTags(episodes: PreprocessedEpisode[]): string[] {
@@ -66,7 +77,7 @@ export async function clusterEpisodes(
 
   const embedder = getEmbedder();
   const embeddings = await Promise.all(
-    episodes.map((e) => embedder.embed(`${e.task_type ?? ''} ${e.outcome} ${e.steps.map((s) => s.action).join(' ')}`)),
+    episodes.map((e) => embedder.embed(formatEpisodeSemanticText(e))),
   );
 
   // Greedy threshold clustering: for each episode, join the first existing
@@ -97,6 +108,7 @@ export async function clusterEpisodes(
   return groups.map((g, idx) => {
     const groupEpisodes = g.indices.map((i) => episodes[i]);
     const times = groupEpisodes.map((e) => e.episode_id); // no timestamp on PreprocessedEpisode; time_range left best-effort
+    const summary = summarize(groupEpisodes);
     return {
       cluster_id: `${agentId}-cluster-${idx}`,
       agent_id: agentId,
@@ -105,7 +117,9 @@ export async function clusterEpisodes(
       time_range: { start: times[0], end: times[times.length - 1] },
       dominant_tags: dominantTags(groupEpisodes),
       centroid_embedding: g.centroidVec,
-      summary: summarize(groupEpisodes),
+      summary: summary.summary,
+      semantic_source_chars: summary.sourceChars,
+      truncated_episode_ids: summary.truncatedEpisodeIds,
     };
   });
 }

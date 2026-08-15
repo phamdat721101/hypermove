@@ -52,7 +52,7 @@ export async function getAgentIndex(agentId: string): Promise<MemoryVectorStore<
       memory_id: string; type: string; content: string; confidence: number; importance: number; source_count: number; embedding: number[] | null;
     }>(
       `SELECT memory_id, type, content, confidence, importance, source_count, embedding
-       FROM dream_consolidated_memories WHERE agent_id = $1`,
+       FROM dream_consolidated_memories WHERE agent_id = $1 AND quarantined_at IS NULL`,
       [agentId],
     );
     return rows;

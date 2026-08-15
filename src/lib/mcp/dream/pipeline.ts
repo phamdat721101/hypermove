@@ -29,6 +29,8 @@ import { flattenInsights, dedupeInsights, consolidateInsights, type ExistingMemo
 import { pruneMemories, type PrunableMemory } from './prune';
 import { _resetDreamIndexCache } from './index';
 import type { EpisodeLog } from './ingest';
+import { formatEpisodeSemanticText } from './preprocess';
+import { isMcpDreamSemanticPreservationEnabled } from '../../platform-flag';
 
 export interface DreamPreset {
   max_clusters: number;
@@ -79,6 +81,10 @@ export interface StartDreamResult {
    * deliberately distinct from every other (intentionally public) field here.
    */
   _cost?: { tokensUsed: number; costUsd: number };
+}
+
+export interface ReplayDreamResult extends StartDreamResult {
+  source_run_id?: string;
 }
 
 export interface GetDreamConfigResult {
@@ -191,6 +197,37 @@ export async function startDream(
   }
 }
 
+/** Re-run exactly one retained source run; used only after explicit repair confirmation. */
+export async function replayDreamRun(agentId: string, userId: string, sourceRunId: string): Promise<ReplayDreamResult> {
+  const ownership = await claimOrCheckOwnership(agentId, userId);
+  if (!ownership.ok) return { status: 'error', message: ownership.reason ?? 'ownership check failed' };
+  const source = await withClient(async (client) => {
+    const { rows } = await client.query<{ config_snapshot: DreamConfig }>(
+      `SELECT config_snapshot FROM dream_cycle_runs WHERE run_id = $1 AND agent_id = $2 LIMIT 1`, [sourceRunId, agentId],
+    );
+    return rows[0] ?? null;
+  });
+  if (!source) return { status: 'error', message: 'source run was not found for this agent' };
+  const config = source.config_snapshot ?? { budget_usd: 0.1, preset: 'balanced' };
+  const presetName = DREAM_PRESETS[config.preset] ? config.preset : 'balanced';
+  const runId = randomUUID();
+  if (!await acquireRunLock(agentId, runId)) return { status: 'error', message: 'a Dream Cycle run is already active for this agent' };
+  try {
+    await withClient(async (client) => {
+      await client.query(
+        `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot, triggered_by, replay_of_run_id)
+         VALUES ($1,$2,'started',$3,'repair',$4)`,
+        [runId, agentId, JSON.stringify(config), sourceRunId],
+      );
+      return true;
+    });
+    const cost = await runPipeline(runId, agentId, config.budget_usd, DREAM_PRESETS[presetName], sourceRunId);
+    return { run_id: runId, status: 'started', source_run_id: sourceRunId, _cost: cost };
+  } finally {
+    await releaseRunLock(agentId, runId);
+  }
+}
+
 /**
  * Additive (2026-07-27 root-cause fix — PRD 03 Track 1). Coarse,
  * non-content-leaking observability surfaced by get_dream_stats so an
@@ -226,6 +263,8 @@ export interface StageSummaries {
      * tool aimed at that bug's leading hypothesis).
      */
     live_unconsumed_count: number;
+    semantic_source_chars?: number;
+    episodes_summary_truncated?: number;
   };
   extraction: {
     clusters_total: number;
@@ -255,7 +294,25 @@ export interface StageSummaries {
     candidates_promoted: number;
     candidates_removed: number;
     top_rejection_reason: string | null;
+    quality_rejections?: number;
+    candidates_promoted_after_quality_gate?: number;
   };
+}
+
+const GENERIC_TOKENS = new Set(['action', 'observation', 'outcome', 'success', 'failure', 'timeout', 'error', 'task', 'tags', 'agent', 'episode', 'completed']);
+
+/** Deterministic filler detector: candidates need a meaningful source term. */
+export function filterGenericInsights(insights: FlatInsight[], sourceText: string): { accepted: FlatInsight[]; rejected: FlatInsight[] } {
+  const sourceTokens = new Set(
+    sourceText.toLowerCase().match(/[a-z0-9][a-z0-9_-]*/g)?.filter((token) => token.length >= 3 && !GENERIC_TOKENS.has(token)) ?? [],
+  );
+  const accepted: FlatInsight[] = [];
+  const rejected: FlatInsight[] = [];
+  for (const insight of insights) {
+    const tokens = insight.content.toLowerCase().match(/[a-z0-9][a-z0-9_-]*/g) ?? [];
+    (tokens.some((token) => sourceTokens.has(token)) ? accepted : rejected).push(insight);
+  }
+  return { accepted, rejected };
 }
 
 /**
@@ -275,6 +332,9 @@ function buildStageSummaries(
   candidatesExtracted: number,
   memoriesAdded: number,
   memoriesRemoved: number,
+  semanticSourceChars = 0,
+  truncatedEpisodes = 0,
+  qualityRejections = 0,
 ): StageSummaries {
   return {
     preprocessing: {
@@ -290,6 +350,8 @@ function buildStageSummaries(
       // doc comment) — the persisted value is never the one a caller
       // actually reads for this field.
       live_unconsumed_count: 0,
+      semantic_source_chars: semanticSourceChars,
+      episodes_summary_truncated: truncatedEpisodes,
     },
     extraction: {
       clusters_total: extraction.extracted.length + extraction.clusters_skipped.length + extraction.clusters_failed_extraction.length,
@@ -304,6 +366,8 @@ function buildStageSummaries(
       candidates_promoted: memoriesAdded,
       candidates_removed: memoriesRemoved,
       top_rejection_reason: memoriesRemoved > 0 ? 'below_threshold_or_duplicate' : null,
+      quality_rejections: qualityRejections,
+      candidates_promoted_after_quality_gate: memoriesAdded,
     },
   };
 }
@@ -317,7 +381,7 @@ function buildStageSummaries(
  * to the mcp_calls ledger via the SAME recordCall() invocation the gateway
  * already makes for this tool call — no second ledger write.
  */
-async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset): Promise<{ tokensUsed: number; costUsd: number }> {
+async function runPipeline(runId: string, agentId: string, budgetUsd: number, preset: DreamPreset, sourceRunId?: string): Promise<{ tokensUsed: number; costUsd: number }> {
   const startedAt = Date.now();
   const cost = new CostTracker(budgetUsd);
   const stagesCompleted: string[] = [];
@@ -335,9 +399,12 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
         episode_id: string; agent_id: string; occurred_at: string; task_type: string | null;
         steps: EpisodeLog['steps']; outcome: EpisodeLog['outcome']; tags: string[] | null;
       }>(
-        `SELECT episode_id, agent_id, occurred_at::text, task_type, steps, outcome, tags
-         FROM dream_episode_logs WHERE agent_id = $1 AND consumed_by_run IS NULL`,
-        [agentId],
+        sourceRunId
+          ? `SELECT episode_id, agent_id, occurred_at::text, task_type, steps, outcome, tags
+             FROM dream_episode_logs WHERE agent_id = $1 AND consumed_by_run = $2`
+          : `SELECT episode_id, agent_id, occurred_at::text, task_type, steps, outcome, tags
+             FROM dream_episode_logs WHERE agent_id = $1 AND consumed_by_run IS NULL`,
+        sourceRunId ? [agentId, sourceRunId] : [agentId],
       );
       return rows;
     });
@@ -371,7 +438,12 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     stagesCompleted.push('extraction');
     if (extraction.status === 'partial') finalStatus = 'partial';
 
-    const flat = dedupeInsights(flattenInsights(extraction.extracted));
+    const extractedFlat = dedupeInsights(flattenInsights(extraction.extracted));
+    const semanticSource = preprocessed.map((episode) => formatEpisodeSemanticText(episode)).join('\n');
+    const quality = isMcpDreamSemanticPreservationEnabled()
+      ? filterGenericInsights(extractedFlat, semanticSource)
+      : { accepted: extractedFlat, rejected: [] as FlatInsight[] };
+    const flat = quality.accepted;
     const existing = await loadExistingMemories(agentId);
     const consolidation = await consolidateInsights(agentId, flat, existing);
     stagesCompleted.push('consolidation');
@@ -416,13 +488,24 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
     });
     stagesCompleted.push('morning_brief');
 
-    stageSummaries = buildStageSummaries(preprocessingSummary, extraction, flat.length, memoriesAdded, memoriesRemoved);
+    stageSummaries = buildStageSummaries(
+      preprocessingSummary,
+      extraction,
+      extractedFlat.length,
+      memoriesAdded,
+      memoriesRemoved,
+      clusters.reduce((sum, cluster) => sum + (cluster.semantic_source_chars ?? cluster.summary.length), 0),
+      clusters.reduce((sum, cluster) => sum + (cluster.truncated_episode_ids?.length ?? 0), 0),
+      quality.rejected.length,
+    );
 
     // Mark all previously-unconsumed episodes as consumed by this run.
-    await withClient(async (client) => {
-      await client.query(`UPDATE dream_episode_logs SET consumed_by_run = $1 WHERE agent_id = $2 AND consumed_by_run IS NULL`, [runId, agentId]);
-      return true;
-    });
+    if (!sourceRunId) {
+      await withClient(async (client) => {
+        await client.query(`UPDATE dream_episode_logs SET consumed_by_run = $1 WHERE agent_id = $2 AND consumed_by_run IS NULL`, [runId, agentId]);
+        return true;
+      });
+    }
 
     // Invalidate this agent's cached index so the next read rebuilds fresh
     // from the just-updated Postgres rows (still within THIS process; a
@@ -458,7 +541,7 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
 async function loadExistingMemories(agentId: string): Promise<ExistingMemory[]> {
   const rows = await withClient(async (client) => {
     const { rows } = await client.query<{ memory_id: string; type: ExistingMemory['type']; content: string; confidence: number; source_count: number; embedding: number[] | null }>(
-      `SELECT memory_id, type, content, confidence, source_count, embedding FROM dream_consolidated_memories WHERE agent_id = $1`,
+      `SELECT memory_id, type, content, confidence, source_count, embedding FROM dream_consolidated_memories WHERE agent_id = $1 AND quarantined_at IS NULL`,
       [agentId],
     );
     return rows;
@@ -562,7 +645,7 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
   });
 
   const memoriesCountRow = await withClient(async (client) => {
-    const { rows } = await client.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM dream_consolidated_memories WHERE agent_id = $1`, [agentId]);
+    const { rows } = await client.query<{ count: string }>(`SELECT COUNT(*)::text AS count FROM dream_consolidated_memories WHERE agent_id = $1 AND quarantined_at IS NULL`, [agentId]);
     return rows[0] ?? null;
   });
 

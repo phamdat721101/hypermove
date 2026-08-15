@@ -355,12 +355,12 @@ const DREAM_EXTRACT_SYSTEM_PROMPT = `You are extracting reusable lessons from a 
 You will be given a short summary of several related episodes (what the agent tried, what happened, whether it succeeded/failed/timed out). Extract concise, general insights the agent can read back BEFORE its next similar task, so it doesn't repeat the same mistake or re-learn the same thing.
 
 Return ONLY a JSON object with exactly these 4 keys, each an array of short strings (max ~20 words each):
-- "rules": concrete behavioral rules to follow going forward (e.g. "wait 200ms after grip before retrying")
-- "preferences": softer stylistic/strategic preferences learned (e.g. "prefer smaller batch sizes for this task type")
-- "error_patterns": recurring failure modes worth flagging (e.g. "gripper times out on second retry without cooldown")
-- "facts": neutral facts about the environment/task learned from these episodes (e.g. "task_type X takes ~3 steps on average")
+- "rules": concrete behavioral rules to follow going forward (e.g. "verify the payment network before settlement")
+- "preferences": softer stylistic/strategic preferences learned (e.g. "prefer the documented API contract")
+- "error_patterns": recurring failure modes worth flagging (e.g. "retry only after a timeout is classified")
+- "facts": neutral facts about the environment/task learned from these episodes (e.g. "the service exposes a health endpoint")
 
-Any category with nothing worth extracting should be an empty array — do not pad with generic filler. Do not fabricate details not supported by the summary. Return raw JSON only, no markdown fences, no commentary.`;
+Any category with nothing worth extracting should be an empty array — do not pad with generic filler. Do not infer a domain from these examples; use only facts in the supplied summary. Do not fabricate details not supported by the summary. Return raw JSON only, no markdown fences, no commentary.`;
 
 interface DreamExtractResponse {
   rules: string[];

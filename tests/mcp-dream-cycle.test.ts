@@ -247,6 +247,22 @@ describe('Task 3 · ingestEpisodes — zero-token cold storage', () => {
     expect(result.rejected).toEqual([]);
   });
 
+  it('normalizes the one-release result alias and reports the conversion', async () => {
+    installFakeIngestDb();
+    const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
+    const result = await ingestEpisodes('robot-42', 'user-a', [{ ...validEpisode('ep-result'), steps: [{ action: 'verify', result: 'n-payment exported T54 XRPL x402' }] }]);
+    expect(result.ingested_count).toBe(1);
+    expect(result.normalized_fields?.[0].fields).toContain('steps[0].result→observation_summary');
+  });
+
+  it('rejects unknown step fields instead of silently dropping them', async () => {
+    installFakeIngestDb();
+    const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
+    const result = await ingestEpisodes('robot-42', 'user-a', [{ ...validEpisode('ep-unknown'), steps: [{ action: 'verify', ignored_result: 'lost' }] }]);
+    expect(result.ingested_count).toBe(0);
+    expect(result.rejected[0].reason).toMatch(/unsupported step field/i);
+  });
+
   it('is idempotent — submitting the same episode_id twice ingests it only once', async () => {
     installFakeIngestDb();
     const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
@@ -825,6 +841,17 @@ describe('Task 5 · preprocessEpisodes', () => {
     const result = preprocessEpisodes(episodes, { max_chars: 200 });
     expect(result.episodes[0].raw_input_tokens_estimate).toBeLessThan(originalTokens);
   });
+
+  it('formats observations, errors, task type, and tags as semantic source text', async () => {
+    const { preprocessEpisodes, formatEpisodeSemanticText } = await import('../src/lib/mcp/dream/preprocess');
+    const [episode] = preprocessEpisodes([baseEpisode({
+      task_type: 'payment-settlement', tags: ['xrpl', 'n-payment'],
+      steps: [{ action: 'verify release', observation_summary: 'n-payment v0.30.1 exported T54 XRPL x402', error: 'none' }],
+    })]).episodes;
+    const text = formatEpisodeSemanticText(episode);
+    expect(text).toContain('n-payment v0.30.1 exported T54 XRPL x402');
+    expect(text).toContain('Tags: xrpl, n-payment');
+  });
 });
 
 // ─── Task 6 · Clustering stage (embeddings + MemoryVectorStore, non-LLM) ──
@@ -882,6 +909,17 @@ describe('Task 6 · clusterEpisodes', () => {
     expect(clusters[0].episode_ids).toEqual(['ep-1', 'ep-2']);
   });
 
+  it('carries software observations into the extractor summary', async () => {
+    const { clusterEpisodes } = await import('../src/lib/mcp/dream/cluster');
+    const clusters = await clusterEpisodes([{
+      ...fixtureEpisode('ep-semantic', 'robot-42', 'payment-settlement', 'verify release'),
+      tags: ['xrpl', 'n-payment'],
+      steps: [{ action: 'verify release', observation_summary: 'n-payment v0.30.1 exported T54 XRPL x402' }],
+    }], { maxClusters: 10 });
+    expect(clusters[0].summary).toContain('n-payment v0.30.1 exported T54 XRPL x402');
+    expect(clusters[0].semantic_source_chars).toBeGreaterThan(0);
+  });
+
   it('makes zero outbound LLM calls — only calls the local embedder', async () => {
     vi.doMock('../src/lib/mcp/embeddings', async () => {
       const actual = await vi.importActual<typeof import('../src/lib/mcp/embeddings')>('../src/lib/mcp/embeddings');
@@ -898,6 +936,18 @@ describe('Task 6 · clusterEpisodes', () => {
   it('returns an empty array for an empty episode batch', async () => {
     const { clusterEpisodes } = await import('../src/lib/mcp/dream/cluster');
     expect(await clusterEpisodes([], { maxClusters: 10 })).toEqual([]);
+  });
+});
+
+describe('Dream semantic quality gate', () => {
+  it('rejects unrelated robot filler while retaining source-supported payment facts', async () => {
+    const { filterGenericInsights } = await import('../src/lib/mcp/dream/pipeline');
+    const result = filterGenericInsights([
+      { type: 'fact', content: 'n-payment exports T54 XRPL x402 support' },
+      { type: 'fact', content: 'physical manipulation requires pre-grip behavior' },
+    ], 'Task: payment settlement\nObservation: n-payment v0.30.1 exported T54 XRPL x402\nTags: xrpl, payment');
+    expect(result.accepted.map((item) => item.content)).toEqual(['n-payment exports T54 XRPL x402 support']);
+    expect(result.rejected.map((item) => item.content)).toEqual(['physical manipulation requires pre-grip behavior']);
   });
 });
 

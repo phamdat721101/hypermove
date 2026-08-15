@@ -31,6 +31,18 @@ next session:        query_dream(agent_id, "gripper timeout")  →  "retry after
 That's the whole surface. Everything else (resources, prompts, presets, stats) is optional
 sugar on top of those three calls.
 
+## Semantic-preservation canary
+
+Set `FEATURE_MCP_DREAM_SEMANTIC_PRESERVATION=true` to enable the quality gate.
+It preserves observations, errors, and tags in clustering/extraction, rejects generic
+memories with no meaningful source overlap, and adds semantic/truncation counters to
+`get_dream_stats`. It is off by default during canary rollout. `steps[].result` is accepted
+as a one-release alias for `observation_summary` and is reported in `normalized_fields`.
+
+For an affected completed run, call `preview_dream_repair` first. It proposes generic
+memory IDs without changing data. `apply_dream_repair` requires those exact IDs and
+`confirm: true`; it quarantines them and replays only the retained source run.
+
 ## For humans — what you get and what it costs
 
 - **No new infra.** Same endpoint, same auth, same bearer token. Dream Cycle just adds

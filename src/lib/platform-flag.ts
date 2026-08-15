@@ -225,6 +225,15 @@ export function isMcpDreamCycleEnabled(): boolean {
   return v3Flag('FEATURE_MCP_DREAM_CYCLE');
 }
 
+/**
+ * Semantic preservation is deliberately opt-in during its canary period.
+ * Keeping it off preserves the legacy Dream pipeline byte-for-byte until an
+ * operator explicitly enables the new quality gate.
+ */
+export function isMcpDreamSemanticPreservationEnabled(): boolean {
+  return isMcpDreamCycleEnabled() && process.env.FEATURE_MCP_DREAM_SEMANTIC_PRESERVATION === 'true';
+}
+
 // ─── Dream Cycle server-side scheduler (2026-07-27, PRD-D) ─────────────────
 //
 // Enforces `trigger_criteria` server-side: an in-process hourly tick calls

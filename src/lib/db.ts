@@ -310,6 +310,10 @@ CREATE TABLE IF NOT EXISTS dream_consolidated_memories (
 );
 CREATE INDEX IF NOT EXISTS idx_dream_memories_agent ON dream_consolidated_memories(agent_id);
 CREATE INDEX IF NOT EXISTS idx_dream_memories_agent_confidence ON dream_consolidated_memories(agent_id, confidence DESC);
+-- Non-destructive safety quarantine for memories found by semantic repair.
+ALTER TABLE dream_consolidated_memories ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMPTZ;
+ALTER TABLE dream_consolidated_memories ADD COLUMN IF NOT EXISTS quarantine_reason TEXT;
+CREATE INDEX IF NOT EXISTS idx_dream_memories_active ON dream_consolidated_memories(agent_id) WHERE quarantined_at IS NULL;
 
 -- One row per start_dream invocation (run lifecycle + cost/observability).
 CREATE TABLE IF NOT EXISTS dream_cycle_runs (
@@ -353,6 +357,7 @@ ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS stage_summaries JSONB;
 -- behalf. Manual start_dream calls default to 'manual' — byte-identical
 -- behavior for any caller who never touches the scheduler feature.
 ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'manual';
+ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS replay_of_run_id UUID;
 
 -- Additive (Dream Cycle Confidential Extraction on Flare FCC, Task 1). Marks
 -- whether a run's extraction stage was requested to run through Flare's
