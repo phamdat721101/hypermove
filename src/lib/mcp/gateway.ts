@@ -70,22 +70,32 @@ export async function callTool(input: {
   }
 
   // ── Metering (skipped for admin + unmetered tools like payments.settle) ──
-  if (!tool.unmetered && session.kind !== 'admin' && session.tier === 'free') {
+  if (!tool.unmetered && session.kind !== 'admin' && (session.tier === 'free' || tool.requiresPayment)) {
     if (isMcpPaywallEnabled()) {
       const active = await findActiveSession(session.userId, tool.tier);
       const usedActive = active ? await consumeSession(active.sessionId) : false;
       if (usedActive && active) {
         sessionId = active.sessionId;
       } else {
-        const rate = isMcpRateLimitEnabled() ? await checkAndConsume(session.userId) : { allowed: true, resetInHours: 0 };
-        if (!rate.allowed) {
+        if (tool.requiresPayment) {
           const proof = headers?.get('x-payment');
           if (!proof) {
-            return { error: { code: -32402, message: `Payment required — free tier exceeded (${FREE_TIER_LIMIT} / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };
+            return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
           }
           const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
           if (!settled.ok) return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
           sessionId = settled.session?.sessionId;
+        } else {
+          const rate = isMcpRateLimitEnabled() ? await checkAndConsume(session.userId) : { allowed: true, resetInHours: 0 };
+          if (!rate.allowed) {
+            const proof = headers?.get('x-payment');
+            if (!proof) {
+              return { error: { code: -32402, message: `Payment required — free tier exceeded (${FREE_TIER_LIMIT} / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };
+            }
+            const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
+            if (!settled.ok) return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
+            sessionId = settled.session?.sessionId;
+          }
         }
       }
     } else if (isMcpRateLimitEnabled()) {

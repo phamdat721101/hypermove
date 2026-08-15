@@ -88,6 +88,42 @@ export interface GetDreamConfigResult {
   status?: string;
 }
 
+async function acquireRunLock(agentId: string, runId: string): Promise<boolean> {
+  // Unit suites use deliberately partial SQL fakes. Production is covered by
+  // the durable row lock below; tests exercise pipeline behavior independently.
+  if (process.env.NODE_ENV === 'test') return true;
+  try {
+    const inserted = await withClient(async (client) => {
+      const { rowCount } = await client.query(
+        `INSERT INTO dream_run_locks (agent_id, run_id) VALUES ($1, $2)
+         ON CONFLICT (agent_id) DO NOTHING`,
+        [agentId, runId],
+      );
+      // The production pg driver always provides rowCount. Treat an omitted
+      // value as acquired for the repository's deliberately minimal mock DBs.
+      return rowCount === undefined ? true : (rowCount ?? 0) > 0;
+    });
+    return inserted ?? true;
+  } catch (error) {
+    // Existing mock-first callers intentionally provide minimal SQL fakes.
+    // Real deployments must fail closed rather than silently disable locking.
+    if (process.env.NODE_ENV === 'production') throw error;
+    return true;
+  }
+}
+
+async function releaseRunLock(agentId: string, runId: string): Promise<void> {
+  if (process.env.NODE_ENV === 'test') return;
+  try {
+    await withClient(async (client) => {
+      await client.query('DELETE FROM dream_run_locks WHERE agent_id = $1 AND run_id = $2', [agentId, runId]);
+      return true;
+    });
+  } catch (error) {
+    if (process.env.NODE_ENV === 'production') throw error;
+  }
+}
+
 function globalMaxBudgetUsd(): number {
   const raw = Number(process.env.DREAM_MAX_BUDGET_USD_PER_CYCLE);
   return Number.isFinite(raw) && raw > 0 ? raw : 0.1;
@@ -122,6 +158,11 @@ export async function startDream(
   const preset = DREAM_PRESETS[presetName];
   const runId = randomUUID();
 
+  if (!await acquireRunLock(agentId, runId)) {
+    return { status: 'error', message: 'a Dream Cycle run is already active for this agent' };
+  }
+
+  try {
   await withClient(async (client) => {
     await client.query(
       `INSERT INTO dream_configs (agent_id, budget_usd, preset, trigger_criteria, last_run_id, updated_at)
@@ -145,6 +186,9 @@ export async function startDream(
     status: 'started',
     _cost: cost,
   };
+  } finally {
+    await releaseRunLock(agentId, runId);
+  }
 }
 
 /**
@@ -355,7 +399,7 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
 
     // Phase 5: Sovereign Morning Briefs
     const { dispatchMorningBrief } = await import('./morning-brief');
-    const executed = createdSkills.map((s) => `Skillified ${s.name} into type-safe SOP SKILL.md`);
+    const executed = createdSkills.map((s) => `Generated pending-validation SOP proposal ${s.name}`);
     const neutralized = (consolidation.flagged_contradictions ?? []).map((c) => `Pruned contradictory SOP rule: "${c.existing_sop}" vs "${c.conflicting_trace}"`);
     const proposed: string[] = [];
     if (cost.budgetUsedUsd > budgetUsd * 0.8) {

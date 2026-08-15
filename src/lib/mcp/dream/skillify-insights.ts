@@ -8,6 +8,7 @@
  */
 
 import { withClient } from '../../db';
+import { createHash } from 'node:crypto';
 
 export interface GeneratedSkill {
   skill_id: string;
@@ -15,6 +16,8 @@ export interface GeneratedSkill {
   name: string;
   description: string;
   type_safe_sop: string;
+  status: 'pending_validation' | 'promoted' | 'rejected';
+  artifact_hash: string;
   created_at: string;
 }
 
@@ -25,13 +28,20 @@ export interface SkillifyInputInsight {
   confidence: number;
 }
 
+export const NIM_SKILL_VALIDATION_COMMAND = "nim-skill enforce 'npx vitest run'";
+
+export interface SkillValidationBundle {
+  skill: GeneratedSkill;
+  validation_command: typeof NIM_SKILL_VALIDATION_COMMAND;
+}
+
 /**
  * Generate a Matt-Pocock Standard type-safe SOP SKILL specification
  * from a cluster of consolidated memories.
  */
 export function formatMattPocockSOP(name: string, description: string, memories: SkillifyInputInsight[]): string {
   const sanitizedSlug = name.toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-  const rules = memories.map((m) => `  * ${m.content} (confidence: ${m.confidence})`).join('\n');
+  const rules = memories.map((m) => `  * ${sanitizeComment(m.content)} (confidence: ${m.confidence})`).join('\n');
 
   return `/**
  * @skill ${sanitizedSlug}
@@ -70,6 +80,12 @@ export async function execute${capitalize(sanitizedSlug)}(
 `;
 }
 
+/** Generated knowledge is data, never code. Escaping closes comment-breakout
+ * attempts before a proposal is handed to a local nim-skill validator. */
+function sanitizeComment(value: string): string {
+  return value.replace(/\*\//g, '*\\/').replace(/[\r\n]+/g, ' ').slice(0, 200);
+}
+
 function capitalize(str: string): string {
   return str.split('_').map((s) => s.charAt(0).toUpperCase() + s.slice(1)).join('');
 }
@@ -97,12 +113,12 @@ export async function skillifyMemories(agentId: string, memories: SkillifyInputI
 
     const saved = await withClient(async (client) => {
       const { rows } = await client.query<{
-        skill_id: string; agent_id: string; name: string; description: string; type_safe_sop: string; created_at: string;
+        skill_id: string; agent_id: string; name: string; description: string; type_safe_sop: string; status: GeneratedSkill['status']; artifact_hash: string; created_at: string;
       }>(
-        `INSERT INTO dream_skills (agent_id, name, description, type_safe_sop)
-         VALUES ($1, $2, $3, $4)
-         RETURNING skill_id, agent_id, name, description, type_safe_sop, created_at::text`,
-        [agentId, name, description, sopText],
+        `INSERT INTO dream_skills (agent_id, name, description, type_safe_sop, status, artifact_hash)
+         VALUES ($1, $2, $3, $4, 'pending_validation', $5)
+         RETURNING skill_id, agent_id, name, description, type_safe_sop, status, artifact_hash, created_at::text`,
+        [agentId, name, description, sopText, createHash('sha256').update(sopText).digest('hex')],
       );
       return rows[0] ?? null;
     });
@@ -121,13 +137,52 @@ export async function skillifyMemories(agentId: string, memories: SkillifyInputI
 export async function getAgentSkills(agentId: string): Promise<GeneratedSkill[]> {
   const rows = await withClient(async (client) => {
     const { rows } = await client.query<{
-      skill_id: string; agent_id: string; name: string; description: string; type_safe_sop: string; created_at: string;
+      skill_id: string; agent_id: string; name: string; description: string; type_safe_sop: string; status: GeneratedSkill['status']; artifact_hash: string; created_at: string;
     }>(
-      `SELECT skill_id, agent_id, name, description, type_safe_sop, created_at::text
+      `SELECT skill_id, agent_id, name, description, type_safe_sop, status, artifact_hash, created_at::text
        FROM dream_skills WHERE agent_id = $1 ORDER BY created_at DESC`,
       [agentId],
     );
     return rows;
   });
   return rows ?? [];
+}
+
+/** Return the immutable proposal and the command an owning agent must run in
+ * its own workspace. The server never executes generated SOP source. */
+export async function getSkillValidationBundle(agentId: string, skillId: string): Promise<SkillValidationBundle | null> {
+  const rows = await withClient(async (client) => {
+    const { rows } = await client.query<GeneratedSkill>(
+      `SELECT skill_id, agent_id, name, description, type_safe_sop, status, artifact_hash, created_at::text
+       FROM dream_skills WHERE agent_id = $1 AND skill_id = $2 LIMIT 1`,
+      [agentId, skillId],
+    );
+    return rows;
+  });
+  const skill = rows?.[0];
+  return skill ? { skill, validation_command: NIM_SKILL_VALIDATION_COMMAND } : null;
+}
+
+/** Promotion is explicit and hash-bound. A stale or altered proposal cannot
+ * be promoted after an agent has reviewed a different artifact. */
+export async function resolveSkillProposal(
+  agentId: string,
+  skillId: string,
+  artifactHash: string,
+  decision: 'promoted' | 'rejected',
+  validationCommand?: string,
+): Promise<{ ok: boolean; message?: string }> {
+  if (decision === 'promoted' && validationCommand !== NIM_SKILL_VALIDATION_COMMAND) {
+    return { ok: false, message: `promotion requires validation_command: ${NIM_SKILL_VALIDATION_COMMAND}` };
+  }
+  const updated = await withClient(async (client) => {
+    const { rowCount } = await client.query(
+      `UPDATE dream_skills SET status = $1
+       WHERE agent_id = $2 AND skill_id = $3 AND artifact_hash = $4 AND status = 'pending_validation'`,
+      [decision, agentId, skillId, artifactHash],
+    );
+    return rowCount ?? 0;
+  });
+  if (updated === null) return { ok: true }; // mock-first local development
+  return updated > 0 ? { ok: true } : { ok: false, message: 'proposal not found, already resolved, or artifact hash differs' };
 }

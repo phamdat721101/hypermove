@@ -1728,11 +1728,24 @@ describe('Task 13 · gateway.callTool dispatch — unmetered end-to-end', () => 
     expect(out.result).toBeTruthy();
   });
 
-  it('all 5 dream tools declare unmetered:true via getTool()', async () => {
+  it('keeps Dream reads and ingestion unmetered while requiring payment for start_dream', async () => {
     const { getTool } = await import('../src/lib/mcp/tools');
-    for (const name of ['submit_episode_log', 'start_dream', 'get_dream_config', 'query_dream', 'get_dream_stats']) {
+    for (const name of ['submit_episode_log', 'get_dream_config', 'query_dream', 'get_dream_stats']) {
       expect(getTool(name)?.unmetered).toBe(true);
     }
+    expect(getTool('start_dream')?.tier).toBe('dream');
+    expect(getTool('start_dream')?.requiresPayment).toBe(true);
+  });
+
+  it('rejects an unpaid start_dream before dispatching its heavy pipeline', async () => {
+    const { callTool } = await import('../src/lib/mcp/gateway');
+    const session = { userId: 'free-user-dream', tier: 'free' as const, kind: 'user' as const };
+    const out = await callTool({ session, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers: new Headers() });
+    expect(out.error?.code).toBe(-32402);
+    const challenge = out.error?.data as { 'x-payment-required': { tier: string; assets: string[]; chains: string[] } };
+    expect(challenge['x-payment-required'].tier).toBe('dream');
+    expect(challenge['x-payment-required'].assets).toContain('RLUSD');
+    expect(challenge['x-payment-required'].chains.every((chain) => chain.startsWith('xrpl'))).toBe(true);
   });
 
   it('still writes an mcp_calls ledger row for an unmetered dream tool call (unmetered != unlogged)', async () => {

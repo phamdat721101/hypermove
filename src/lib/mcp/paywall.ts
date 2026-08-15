@@ -20,6 +20,7 @@ import {
   supportedNetworks,
   validateSelection,
   validateConfidentialSelection,
+  validateDreamSelection,
   type PaymentReceipt,
   type PaymentSelection,
 } from './payment-router';
@@ -29,6 +30,7 @@ export const TIER_PRICE_USD: Record<PriceTier, string> = {
   t2_realtime: '0.01',
   t3_vector: '0.10',
   confidential: '0.50', // attestation-gated Flare confidential execution, XRPL-settled only
+  dream: '0.05', // XRPL RLUSD-paid memory consolidation pass
 };
 
 const SESSION_QUOTA = 100;
@@ -40,7 +42,7 @@ export function buildChallenge(tier: PriceTier, resetInHours: number) {
   // the advertised chains so a well-behaved agent client sees the right
   // options up front instead of discovering the restriction only after a
   // failed attempt. Every other tier's challenge is unchanged.
-  const nets = tier === 'confidential'
+  const nets = tier === 'confidential' || tier === 'dream'
     ? supportedNetworks().filter((n) => n.chain.startsWith('xrpl'))
     : supportedNetworks();
   return {
@@ -131,9 +133,9 @@ export async function settleSelection(
   selection: Partial<PaymentSelection>,
   proof?: string,
 ): Promise<SettleResult> {
-  const validated = tier === 'confidential'
-    ? validateConfidentialSelection(selection)
-    : validateSelection(selection);
+  const validated = tier === 'dream'
+    ? validateDreamSelection(selection)
+    : tier === 'confidential' ? validateConfidentialSelection(selection) : validateSelection(selection);
   if (!validated.ok) return { ok: false, error: validated.error.message, hint: validated.error.hint };
 
   const sel: PaymentSelection = validated.data;

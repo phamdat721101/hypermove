@@ -139,6 +139,21 @@ export function validateConfidentialSelection(sel: Partial<PaymentSelection>): S
   return validateSelection(sel); // delegate to the existing general validator for asset/rail checks
 }
 
+/** Dream consolidation has one deliberately narrow v2 settlement contract:
+ * validated XRPL payment over x402 in RLUSD. Keeping this separate from the
+ * legacy confidential tier avoids widening either product accidentally. */
+export function validateDreamSelection(sel: Partial<PaymentSelection>): ServiceResult<PaymentSelection> {
+  if (!sel.chain || !CONFIDENTIAL_TIER_CHAINS.has(sel.chain)) {
+    return fail('payment', 'dream tier settles exclusively via XRPL RLUSD', {
+      code: 'bad_network', hint: `valid networks: ${Array.from(CONFIDENTIAL_TIER_CHAINS).join(', ')}`,
+    });
+  }
+  if (sel.asset !== undefined && sel.asset !== 'RLUSD') {
+    return fail('payment', 'dream tier requires RLUSD', { code: 'bad_asset', hint: 'asset must be RLUSD' });
+  }
+  return validateSelection({ ...sel, rail: sel.rail ?? 'x402', asset: 'RLUSD' });
+}
+
 /** Deterministic mock rail — verifies any proof and returns a stable receipt. */
 export class MockPaymentRail implements PaymentRail {
   readonly isMock = true;

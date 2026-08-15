@@ -62,7 +62,12 @@ describe('Dream Cycle cost threading into mcp_calls (Task 6)', () => {
       session,
       name: 'start_dream',
       args: { agent_id: 'robot-42', config: { budget_usd: 0.05, preset: 'balanced' } },
-      headers: new Headers(),
+      headers: new Headers({
+        'x-payment': 'test-proof',
+        'x-payment-chain': 'xrpl-testnet',
+        'x-payment-rail': 'x402',
+        'x-payment-asset': 'RLUSD',
+      }),
     });
 
     expect(out.error).toBeUndefined();

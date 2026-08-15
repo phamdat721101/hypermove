@@ -33,6 +33,8 @@ export interface ToolDef {
   handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<unknown>;
   /** Skip free-tier metering (e.g. payments.* — metering them would deadlock). */
   unmetered?: boolean;
+  /** Require payment before dispatch; bypasses the ordinary free-call allowance. */
+  requiresPayment?: boolean;
   /**
    * Opt-in output-enforcer contract (harness/output-enforcer.ts's
    * verifyOrHeal()). Undeclared (the default for every tool) means the
@@ -676,9 +678,9 @@ const submitEpisodeLogTool: ToolDef = {
 
 const startDreamTool: ToolDef = {
   name: 'start_dream',
-  description: 'Start a Dream Cycle run for an agent — validates config against global budget limits and returns run_id and status. Runs immediately when called; trigger_criteria is always persisted and additionally enforced server-side on an hourly schedule if the operator has opted into FEATURE_MCP_DREAM_SCHEDULER (off by default).',
-  tier: 't1_read',
-  unmetered: true,
+  description: 'Start a paid Dream Cycle run. Settle the XRPL RLUSD dream tier through payments.settle first; its paid session authorizes one consolidation run. The scheduler remains operator opt-in.',
+  tier: 'dream',
+  requiresPayment: true,
   inputSchema: {
     type: 'object',
     properties: {
@@ -827,6 +829,43 @@ const getDreamSkillsTool: ToolDef = {
   },
 };
 
+const getDreamSkillValidationTool: ToolDef = {
+  name: 'get_dream_skill_validation',
+  description: 'Read a pending Dream SOP proposal and its required local nim-skill validation command. This does not execute or install the generated SOP.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' }, skill_id: { type: 'string' } }, required: ['agent_id', 'skill_id'] },
+  handler: async (args) => {
+    const { getSkillValidationBundle } = await import('./dream/skillify-insights');
+    return getSkillValidationBundle(String(args.agent_id ?? ''), String(args.skill_id ?? ''));
+  },
+};
+
+const resolveDreamSkillProposalTool: ToolDef = {
+  name: 'resolve_dream_skill_proposal',
+  description: 'Explicitly promote or reject a hash-bound pending Dream SOP proposal after local nim-skill validation. Promotion never writes to application source code.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: {
+      agent_id: { type: 'string' }, skill_id: { type: 'string' }, artifact_hash: { type: 'string' },
+      decision: { type: 'string', enum: ['promoted', 'rejected'] }, validation_command: { type: 'string' },
+    },
+    required: ['agent_id', 'skill_id', 'artifact_hash', 'decision'],
+  },
+  handler: async (args, ctx) => {
+    const { claimOrCheckOwnership } = await import('./dream/ownership');
+    const ownership = await claimOrCheckOwnership(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
+    if (!ownership.ok) return { ok: false, message: ownership.reason };
+    const { resolveSkillProposal } = await import('./dream/skillify-insights');
+    return resolveSkillProposal(
+      String(args.agent_id ?? ''), String(args.skill_id ?? ''), String(args.artifact_hash ?? ''),
+      args.decision as 'promoted' | 'rejected', args.validation_command ? String(args.validation_command) : undefined,
+    );
+  },
+};
+
 const getMorningBriefTool: ToolDef = {
   name: 'get_morning_brief',
   description: 'Retrieve the Sovereign Morning Brief markdown update (Phase 5: Executed, Neutralized, Proposed action plan) for an agent.',
@@ -840,7 +879,7 @@ const getMorningBriefTool: ToolDef = {
     const briefMarkdown = formatMorningBriefMarkdown({
       agentId: String(args.agent_id ?? ''),
       runId: stats.last_run_at ?? 'latest',
-      executed: (stats.stages_completed ?? []).includes('skillification') ? ['Distilled high-confidence insights into Matt-Pocock SKILL SOPs'] : [],
+      executed: (stats.stages_completed ?? []).includes('skillification') ? ['Generated high-confidence SOP proposals pending local nim-skill validation'] : [],
       neutralized: (stats.stage_summaries?.pruning_summary?.candidates_removed ?? 0) > 0 ? [`Pruned ${stats.stage_summaries?.pruning_summary?.candidates_removed} redundant or below-threshold memory candidates`] : [],
       proposed: [],
       tokensReducedPercent: 95,
@@ -863,7 +902,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, reclaimAgentOwnershipTool, getDreamSkillsTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, reclaimAgentOwnershipTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 

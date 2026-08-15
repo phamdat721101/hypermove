@@ -329,6 +329,15 @@ CREATE TABLE IF NOT EXISTS dream_cycle_runs (
 );
 CREATE INDEX IF NOT EXISTS idx_dream_cycle_runs_agent ON dream_cycle_runs(agent_id, started_at DESC);
 
+-- A durable per-agent mutex. A Dream run may span several DB clients while
+-- calling the extraction service, so transaction-scoped advisory locks are
+-- insufficient. The row is released in pipeline.ts's finally block.
+CREATE TABLE IF NOT EXISTS dream_run_locks (
+  agent_id    TEXT PRIMARY KEY,
+  run_id      TEXT NOT NULL,
+  acquired_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
 -- Additive (2026-07-27 root-cause fix): per-stage observability summaries
 -- (preprocessing discard counts, extraction failure counts, pruning
 -- candidate/promotion counts) so get_dream_stats can surface WHY a run
@@ -422,9 +431,13 @@ CREATE TABLE IF NOT EXISTS dream_skills (
   name           TEXT NOT NULL,
   description    TEXT NOT NULL,
   type_safe_sop  TEXT NOT NULL,
+  status         TEXT NOT NULL DEFAULT 'pending_validation',
+  artifact_hash  TEXT NOT NULL DEFAULT '',
   created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_dream_skills_agent ON dream_skills(agent_id);
+ALTER TABLE dream_skills ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'pending_validation';
+ALTER TABLE dream_skills ADD COLUMN IF NOT EXISTS artifact_hash TEXT NOT NULL DEFAULT '';
 
 -- Additive (Dream Cycle Playbook Phase 3 Librarian Hygiene): Flagged SOP contradictions
 CREATE TABLE IF NOT EXISTS dream_contradictions (
