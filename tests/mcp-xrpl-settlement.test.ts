@@ -55,7 +55,7 @@ afterEach(() => {
 });
 
 const TREASURY = 'rTreasuryAddr11111111111111111111';
-const RLUSD_HEX = '524C555344000000000000000000000000000000';
+const RLUSD_160 = '524C555344000000000000000000000000000000';
 
 /** Minimal in-memory fake for withClient — mirrors every other dream/*
  *  test file's convention (mcp-dream-cycle.test.ts etc.). */
@@ -102,13 +102,13 @@ function mockXrplTxLookup(result: {
       Account: result.Account ?? 'rPayerAddr222222222222222222222222',
       meta: {
         TransactionResult: result.engineResult ?? 'tesSUCCESS',
-        delivered_amount: { currency: result.deliveredCurrency ?? RLUSD_HEX, value: result.deliveredValue ?? '0.50' },
+        delivered_amount: { currency: result.deliveredCurrency ?? RLUSD_160, value: result.deliveredValue ?? '0.50' },
       },
     },
   }));
   vi.doMock('n-payment', () => ({
-    RLUSD_HEX,
-    RLUSD_CURRENCY: RLUSD_HEX,
+    RLUSD_HEX: 'RLUSD',
+    RLUSD_CURRENCY: 'RLUSD',
     defaultFacilitatorUrl: (network: string) => `https://xrpl-facilitator-${network}.t54.ai`,
     decodePaymentSignatureHeader: vi.fn((raw: string) => {
       const parsed = JSON.parse(Buffer.from(raw, 'base64').toString('utf8'));
@@ -131,7 +131,7 @@ function mockXrplTxLookup(result: {
 
 function validEnvelopeProof(overrides: Partial<{ payTo: string; asset: string; amount: string }> = {}): string {
   const envelope = {
-    accepted: { payTo: overrides.payTo ?? TREASURY, asset: overrides.asset ?? RLUSD_HEX, amount: overrides.amount ?? '0.50' },
+    accepted: { payTo: overrides.payTo ?? TREASURY, asset: overrides.asset ?? 'RLUSD', amount: overrides.amount ?? '0.50' },
   };
   return Buffer.from(JSON.stringify(envelope)).toString('base64');
 }
@@ -362,6 +362,11 @@ describe('Tier 1c · settleXrplAlreadySubmitted — independent on-ledger verifi
       expect(res.data.txHash).toBe(TX_HASH);
       expect(res.data.payer).toBe('rPayerAddr222222222222222222222222');
     }
+  });
+
+  it('accepts XRPL’s canonical 160-bit RLUSD currency code even when the SDK exposes the literal ticker', async () => {
+    const { res } = await settleWithTxHash({ deliveredCurrency: RLUSD_160 });
+    expect(res.ok).toBe(true);
   });
 
   it('a mocked non-validated transaction fails', async () => {

@@ -183,6 +183,19 @@ export function createNPaymentRail(id: RailId): PaymentRail {
  */
 const TXHASH_SHAPE = /^[A-Fa-f0-9]{64}$/;
 
+/** Normalize issued-currency codes from XRPL's 160-bit wire representation. */
+function normalizeXrplCurrency(currency: unknown): string {
+  const value = String(currency ?? '').trim().toUpperCase();
+  if (!/^[0-9A-F]{40}$/.test(value)) return value;
+  return Buffer.from(value, 'hex').toString('ascii').replace(/\0+$/g, '') || value;
+}
+
+function isRlusdCurrency(currency: unknown, np: { RLUSD_HEX?: unknown; RLUSD_CURRENCY?: unknown }): boolean {
+  return normalizeXrplCurrency(currency) === 'RLUSD'
+    || normalizeXrplCurrency(currency) === normalizeXrplCurrency(np.RLUSD_HEX)
+    || normalizeXrplCurrency(currency) === normalizeXrplCurrency(np.RLUSD_CURRENCY);
+}
+
 async function settleXrplRlusd(
   id: RailId,
   selection: PaymentSelection,
@@ -254,7 +267,7 @@ async function settleXrplRlusd(
     const acc = env.accepted;
 
     // Bind the buyer-echoed requirements to the merchant's terms.
-    const assetOk = acc.asset === np.RLUSD_HEX || acc.asset === 'RLUSD';
+    const assetOk = isRlusdCurrency(acc.asset, np);
     const acceptedText = JSON.stringify(acc);
     if (acc.payTo !== (paymentTerms?.merchant ?? treasury) || !assetOk || Number(acc.amount) < Number(amount) - 0.01 || (paymentTerms && (!acceptedText.includes(paymentTerms.issuer) || !acceptedText.includes(paymentTerms.nonce)))) {
       return fail('npayment', 'payment requirements mismatch', {
@@ -398,7 +411,7 @@ async function settleXrplAlreadySubmitted(
     const memoData = (result.tx_json?.Memos ?? []).map((memo) => memo.Memo?.MemoData ?? '').map((hex) => {
       try { return Buffer.from(hex, 'hex').toString('utf8'); } catch { return ''; }
     });
-    const assetOk = deliveredCurrency === np.RLUSD_HEX || deliveredCurrency === 'RLUSD' || deliveredCurrency === np.RLUSD_CURRENCY;
+    const assetOk = isRlusdCurrency(deliveredCurrency, np);
     const quoteBound = !paymentTerms || ((deliveredIssuer ?? rawIssuer) === paymentTerms.issuer && memoData.includes(paymentTerms.nonce));
     if (!assetOk || !deliveredValue || Number(deliveredValue) < Number(amount) - 0.01 || !quoteBound) {
       return fail('npayment', 'delivered payment does not meet the required RLUSD amount', {
