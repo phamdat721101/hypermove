@@ -138,4 +138,15 @@ describe('PRD 05 · GET /api/mcp/health reports real_payments_configured', () =>
     const after = (await (await GET()).json()) as Record<string, unknown>;
     expect(after.real_payments_configured).toBe(true);
   });
+
+  it('reports XRPL/RLUSD as unready until both its treasury and issuer are configured', async () => {
+    process.env.XRPL_TREASURY_ADDRESS = 'rTreasury';
+    delete process.env.XRPL_RLUSD_ISSUER;
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const before = (await (await GET()).json()) as { real_payments_configured_by_chain_family: { xrpl_rlusd: boolean } };
+    expect(before.real_payments_configured_by_chain_family.xrpl_rlusd).toBe(false);
+    process.env.XRPL_RLUSD_ISSUER = 'rIssuer';
+    const after = (await (await GET()).json()) as { real_payments_configured_by_chain_family: { xrpl_rlusd: boolean } };
+    expect(after.real_payments_configured_by_chain_family.xrpl_rlusd).toBe(true);
+  });
 });

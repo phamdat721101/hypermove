@@ -14,6 +14,7 @@ import { isMcpPaywallEnabled, isMcpRateLimitEnabled, isMcpGuardiansEnabled, isMc
 import { getTool, getTools } from './tools';
 import { checkAndConsume, FREE_TIER_LIMIT } from './rate-limit';
 import { buildChallenge, findActiveSession, consumeSession, settlePayment, issuePaymentQuote } from './paywall';
+import { configuredXrplChain } from './npayment-rails';
 import { createSentinel, type Sentinel } from '../sentinel/sentinel';
 import { verifyOrHeal } from '../harness/output-enforcer';
 import type { McpSession } from './auth';
@@ -80,7 +81,7 @@ export async function callTool(input: {
       } else {
         if (tool.requiresPayment) {
           if (name === 'start_dream' && isMcpDreamPaymentBindingEnabled()) {
-            const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: 'xrpl-testnet', asset: 'RLUSD', agentId: agentId ?? '' });
+            const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
             return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote, ...buildChallenge(tool.tier, 0) } : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) } } };
           }
           const proof = headers?.get('x-payment');
@@ -94,7 +95,7 @@ export async function callTool(input: {
             const proof = headers?.get('x-payment');
           if (!proof) {
             if (name === 'start_dream' && agentId) {
-              const quote = await issuePaymentQuote(session.userId, { tier: 'dream', chain: 'xrpl-testnet', asset: 'RLUSD', agentId });
+              const quote = await issuePaymentQuote(session.userId, { tier: 'dream', chain: configuredXrplChain(), asset: 'RLUSD', agentId });
               return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote } : { code: 'payment_required', error: quote.error, hint: quote.hint } } };
             }
             return { error: { code: -32402, message: `Payment required — free tier exceeded (${FREE_TIER_LIMIT} / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };

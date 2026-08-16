@@ -33,13 +33,14 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
-const ENV_KEYS = ['XRPL_TREASURY_ADDRESS', 'XRPL_FACILITATOR_URL', 'DATABASE_URL', 'MCP_FACILITATOR_PRIVATE_KEY', 'PAY_TO_ADDRESS'] as const;
+const ENV_KEYS = ['XRPL_NETWORK', 'XRPL_TREASURY_ADDRESS', 'XRPL_RLUSD_ISSUER', 'XRPL_FACILITATOR_URL', 'DATABASE_URL', 'MCP_FACILITATOR_PRIVATE_KEY', 'PAY_TO_ADDRESS'] as const;
 let saved: Record<string, string | undefined> = {};
 
 beforeEach(() => {
   saved = {};
   for (const k of ENV_KEYS) saved[k] = process.env[k];
   process.env.XRPL_TREASURY_ADDRESS = 'rTreasuryAddr11111111111111111111';
+  process.env.XRPL_RLUSD_ISSUER = 'rRlusdIssuer111111111111111111111';
   vi.resetModules();
   vi.restoreAllMocks();
 });
@@ -285,13 +286,28 @@ describe('Tier 1b · settleXrplRlusd — PRD 02 proof shape disambiguation', () 
 // lessons-learned.md's 2026-08-12 entry for the live incident this
 // regenerates.
 describe('Tier 1b.5 · selectRail() chain-awareness (2026-08-12 regression)', () => {
-  it('an XRPL selection with ONLY XRPL_TREASURY_ADDRESS set (no MCP_FACILITATOR_PRIVATE_KEY/PAY_TO_ADDRESS) resolves to the REAL rail, not mock', async () => {
+  it('an XRPL selection with treasury and issuer set (no MCP_FACILITATOR_PRIVATE_KEY/PAY_TO_ADDRESS) resolves to the REAL rail, not mock', async () => {
     delete process.env.MCP_FACILITATOR_PRIVATE_KEY;
     delete process.env.PAY_TO_ADDRESS;
     // beforeEach() already sets a valid XRPL_TREASURY_ADDRESS.
     const { selectRail } = await import('../src/lib/mcp/payment-router');
     const rail = selectRail({ chain: 'xrpl-testnet', rail: 'x402', asset: 'RLUSD' });
     expect(rail.isMock).toBe(false);
+  });
+
+  it('an XRPL selection missing its RLUSD issuer resolves to the mock rail instead of claiming settlement readiness', async () => {
+    delete process.env.XRPL_RLUSD_ISSUER;
+    const { selectRail } = await import('../src/lib/mcp/payment-router');
+    const rail = selectRail({ chain: 'xrpl-testnet', rail: 'x402', asset: 'RLUSD' });
+    expect(rail.isMock).toBe(true);
+  });
+
+  it('uses XRPL_NETWORK for quote-first settlement and defaults safely to testnet', async () => {
+    const { configuredXrplChain } = await import('../src/lib/mcp/npayment-rails');
+    delete process.env.XRPL_NETWORK;
+    expect(configuredXrplChain()).toBe('xrpl-testnet');
+    process.env.XRPL_NETWORK = 'mainnet';
+    expect(configuredXrplChain()).toBe('xrpl-mainnet');
   });
 
   it('an XRPL selection with NEITHER XRPL_TREASURY_ADDRESS NOR the EVM vars set resolves to the mock rail (fails closed, not open)', async () => {

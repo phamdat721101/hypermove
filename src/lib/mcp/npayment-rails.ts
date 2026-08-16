@@ -60,9 +60,16 @@ const USDC: Record<string, `0x${string}`> = {
  */
 export function isRealPaymentsConfigured(chain?: string): boolean {
   if (chain?.startsWith('xrpl')) {
-    return !!process.env.XRPL_TREASURY_ADDRESS;
+    return !!(process.env.XRPL_TREASURY_ADDRESS && process.env.XRPL_RLUSD_ISSUER);
   }
   return !!(process.env.MCP_FACILITATOR_PRIVATE_KEY && process.env.PAY_TO_ADDRESS);
+}
+
+/** XRPL settlement network configured for quote-first MCP flows. */
+export function configuredXrplChain(): 'xrpl-mainnet' | 'xrpl-testnet' {
+  return process.env.XRPL_NETWORK?.trim().toLowerCase() === 'mainnet'
+    ? 'xrpl-mainnet'
+    : 'xrpl-testnet';
 }
 
 /** Resolve the viem chain object for a supported EVM x402 network, or null. */
