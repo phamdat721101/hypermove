@@ -14,6 +14,7 @@
 
 import { randomUUID } from 'node:crypto';
 import { withClient } from '../db';
+import { isMcpDreamPaymentBindingEnabled } from '../platform-flag';
 import type { PriceTier } from './catalog';
 import {
   parseSelection,
@@ -269,7 +270,22 @@ export async function settleQuote(userId: string, quoteId: string, proof?: strin
   if (!quote) return { ok: false, error: 'payment quote was not found' };
   if (quote.settledAt || quote.sessionId) return { ok: false, error: 'payment quote has already been settled' };
   if (Date.parse(quote.expiresAt) <= Date.now()) return { ok: false, error: 'payment quote has expired', hint: 'request a new payments.quote before signing' };
-  const result = await settleSelection(userId, quote.tier, { chain: quote.chain, rail: quote.rail, asset: quote.asset }, proof, { agentId: quote.agentId, quoteId: quote.quoteId, merchant: quote.merchant, issuer: quote.issuer, nonce: quote.nonce });
+  // Quote metadata is always retained for auditing, but the on-ledger memo
+  // requirement is deliberately opt-in. The binding flag exists to make the
+  // rollout reversible for existing XRPL clients that submit a valid payment
+  // without a Memo field. When enabled, only Dream quotes require the nonce.
+  const requireQuoteMemo = quote.tier === 'dream' && isMcpDreamPaymentBindingEnabled();
+  const result = await settleSelection(
+    userId,
+    quote.tier,
+    { chain: quote.chain, rail: quote.rail, asset: quote.asset },
+    proof,
+    {
+      agentId: quote.agentId,
+      quoteId: quote.quoteId,
+      ...(requireQuoteMemo ? { merchant: quote.merchant, issuer: quote.issuer, nonce: quote.nonce } : {}),
+    },
+  );
   if (!result.ok) return result;
   if (!result.receipt?.payer) return { ok: false, error: 'settlement receipt is missing the XRPL payer address' };
   if (result.receipt.payer === quote.merchant) return { ok: false, error: 'self-payment is not a valid XRPL settlement' };

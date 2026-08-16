@@ -94,15 +94,23 @@ function mockXrplTxLookup(result: {
   engineResult?: string;
   deliveredCurrency?: string;
   deliveredValue?: string;
+  deliveredIssuer?: string;
+  memoData?: string[];
 }) {
   const requestMock = vi.fn(async () => ({
     result: {
       validated: result.validated ?? true,
       Destination: result.Destination ?? TREASURY,
       Account: result.Account ?? 'rPayerAddr222222222222222222222222',
+      tx_json: {
+        Destination: result.Destination ?? TREASURY,
+        Account: result.Account ?? 'rPayerAddr222222222222222222222222',
+        Amount: { currency: result.deliveredCurrency ?? RLUSD_160, issuer: result.deliveredIssuer ?? process.env.XRPL_RLUSD_ISSUER, value: result.deliveredValue ?? '0.50' },
+        Memos: result.memoData?.map((memo) => ({ Memo: { MemoData: Buffer.from(memo).toString('hex') } })),
+      },
       meta: {
         TransactionResult: result.engineResult ?? 'tesSUCCESS',
-        delivered_amount: { currency: result.deliveredCurrency ?? RLUSD_160, value: result.deliveredValue ?? '0.50' },
+        delivered_amount: { currency: result.deliveredCurrency ?? RLUSD_160, issuer: result.deliveredIssuer ?? process.env.XRPL_RLUSD_ISSUER, value: result.deliveredValue ?? '0.50' },
       },
     },
   }));
@@ -342,7 +350,10 @@ describe('Tier 1b.5 · selectRail() chain-awareness (2026-08-12 regression)', ()
 describe('Tier 1c · settleXrplAlreadySubmitted — independent on-ledger verification + replay protection', () => {
   const TX_HASH = 'C9C74C7B59B02F99556D3E0EF0DB5B4AA4ECE9A1672F899BD66281A918C00B3B';
 
-  async function settleWithTxHash(overrides: Parameters<typeof mockXrplTxLookup>[0] = {}) {
+  async function settleWithTxHash(
+    overrides: Parameters<typeof mockXrplTxLookup>[0] = {},
+    paymentTerms?: { merchant: string; issuer: string; nonce: string },
+  ) {
     installFakeSettledTxsDb();
     const requestMock = mockXrplTxLookup(overrides);
     const { createNPaymentRail } = await import('../src/lib/mcp/npayment-rails');
@@ -351,6 +362,7 @@ describe('Tier 1c · settleXrplAlreadySubmitted — independent on-ledger verifi
       selection: { chain: 'xrpl-testnet', rail: 'x402', asset: 'RLUSD' },
       amount: '0.50', userId: 'u1', tier: 'confidential',
       proof: JSON.stringify({ txHash: TX_HASH }),
+      paymentTerms,
     });
     return { res, requestMock };
   }
@@ -366,6 +378,25 @@ describe('Tier 1c · settleXrplAlreadySubmitted — independent on-ledger verifi
 
   it('accepts XRPL’s canonical 160-bit RLUSD currency code even when the SDK exposes the literal ticker', async () => {
     const { res } = await settleWithTxHash({ deliveredCurrency: RLUSD_160 });
+    expect(res.ok).toBe(true);
+  });
+
+  it('reports a missing quoted nonce memo precisely instead of blaming the valid hex RLUSD code', async () => {
+    const { res } = await settleWithTxHash({}, {
+      merchant: TREASURY,
+      issuer: String(process.env.XRPL_RLUSD_ISSUER),
+      nonce: 'quote-nonce',
+    });
+    expect(res.ok).toBe(false);
+    if (!res.ok) expect(res.error.hint).toMatch(/missing the required quoted nonce memo/i);
+  });
+
+  it('accepts a quoted transaction when its hex memo and issued-currency issuer match', async () => {
+    const { res } = await settleWithTxHash({ memoData: ['quote-nonce'] }, {
+      merchant: TREASURY,
+      issuer: String(process.env.XRPL_RLUSD_ISSUER),
+      nonce: 'quote-nonce',
+    });
     expect(res.ok).toBe(true);
   });
 

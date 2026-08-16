@@ -412,11 +412,19 @@ async function settleXrplAlreadySubmitted(
       try { return Buffer.from(hex, 'hex').toString('utf8'); } catch { return ''; }
     });
     const assetOk = isRlusdCurrency(deliveredCurrency, np);
-    const quoteBound = !paymentTerms || ((deliveredIssuer ?? rawIssuer) === paymentTerms.issuer && memoData.includes(paymentTerms.nonce));
+    const issuerMatches = !paymentTerms || (deliveredIssuer ?? rawIssuer) === paymentTerms.issuer;
+    const nonceMatches = !paymentTerms || memoData.includes(paymentTerms.nonce);
+    const quoteBound = issuerMatches && nonceMatches;
     if (!assetOk || !deliveredValue || Number(deliveredValue) < Number(amount) - 0.01 || !quoteBound) {
+      const failures = [
+        !assetOk ? `currency ${String(deliveredCurrency ?? 'missing')} is not RLUSD` : null,
+        !deliveredValue || Number(deliveredValue) < Number(amount) - 0.01 ? `delivered amount ${String(deliveredValue ?? 'missing')} is below ${amount} RLUSD` : null,
+        !issuerMatches ? 'issued-currency issuer does not match the quoted issuer' : null,
+        !nonceMatches ? 'transaction is missing the required quoted nonce memo' : null,
+      ].filter(Boolean);
       return fail('npayment', 'delivered payment does not meet the required RLUSD amount', {
         code: 'settle_failed',
-        hint: `transaction must deliver >= ${amount} RLUSD to ${treasury}`,
+        hint: `${failures.join('; ')}. Transaction must deliver >= ${amount} RLUSD to ${treasury}`,
       });
     }
 
