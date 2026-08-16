@@ -146,6 +146,30 @@ CREATE TABLE IF NOT EXISTS mcp_paid_sessions (
   expires_at  TIMESTAMPTZ NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_sessions_user ON mcp_paid_sessions(user_id, expires_at);
+ALTER TABLE mcp_paid_sessions ADD COLUMN IF NOT EXISTS agent_id TEXT;
+ALTER TABLE mcp_paid_sessions ADD COLUMN IF NOT EXISTS quote_id UUID;
+ALTER TABLE mcp_paid_sessions ADD COLUMN IF NOT EXISTS payer TEXT;
+ALTER TABLE mcp_paid_sessions ADD COLUMN IF NOT EXISTS receipt JSONB;
+
+CREATE TABLE IF NOT EXISTS mcp_payment_quotes (
+  quote_id UUID PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  agent_id TEXT NOT NULL,
+  tier TEXT NOT NULL,
+  chain TEXT NOT NULL,
+  rail TEXT NOT NULL,
+  asset TEXT NOT NULL,
+  merchant TEXT NOT NULL,
+  amount TEXT NOT NULL,
+  currency TEXT NOT NULL,
+  issuer TEXT NOT NULL,
+  nonce TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  settled_at TIMESTAMPTZ,
+  session_id UUID,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_payment_quotes_user_agent ON mcp_payment_quotes(user_id, agent_id, expires_at DESC);
 
 -- Replay protection for the "already-submitted XRPL transaction hash" settle
 -- path (2026-08-10, xrpl-rlusd-settlement-gap-feedback PRD 03). A caller who
@@ -358,6 +382,7 @@ ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS stage_summaries JSONB;
 -- behavior for any caller who never touches the scheduler feature.
 ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS triggered_by TEXT NOT NULL DEFAULT 'manual';
 ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS replay_of_run_id UUID;
+ALTER TABLE dream_cycle_runs ADD COLUMN IF NOT EXISTS payment_session_id UUID;
 
 -- Additive (Dream Cycle Confidential Extraction on Flare FCC, Task 1). Marks
 -- whether a run's extraction stage was requested to run through Flare's

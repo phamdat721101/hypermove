@@ -35,6 +35,7 @@ import { ok, fail, type ServiceResult } from './envelope';
 import { isMcpInstructEnabled } from '../platform-flag';
 import { FLARE_RPC, FLARE_CHAIN_IDS } from './providers/chain-constants';
 import { runHarnessed, type SkillDef } from 'nim-skill';
+import { mcpNimHarness } from './nim-harness';
 
 export type InstructOpType = 'FINANCIAL_ACTION' | 'GENERIC_AGENT_TASK';
 export type FinancialActionCommand = 'SWAP' | 'SETTLE';
@@ -283,18 +284,19 @@ export async function dispatchInstruction(input: InstructDispatchInput): Promise
   const skill: SkillDef<Record<string, unknown>, DispatchExecuteResult> = {
     name: 'flare.instruct.dispatch',
     version: '1.0.0',
-    harness: {
+    harness: mcpNimHarness({
       enforcer: {
         strategies: [{ kind: 'schema', required: ['instructionId', 'status'] }],
         maxHeals: 0, // a submit-and-poll result is never "healed" — either the chain/proxy answered or it didn't
         mode: 'strict',
       },
-    },
-    async execute(execInput) {
+    }),
+    async execute(execInput, ctx) {
       try {
         return await submitAndPoll(execInput as unknown as InstructDispatchInput, extProxyUrl, instructionSenderAddr);
       } catch (err) {
-        return { instructionId: 'unknown', status: 'error' as const, log: err instanceof Error ? err.message : String(err) };
+        const log = err instanceof Error ? err.message : String(err);
+        return { instructionId: 'unknown', status: 'error' as const, log: ctx.logCompact?.compact(log).text ?? log };
       }
     },
   };

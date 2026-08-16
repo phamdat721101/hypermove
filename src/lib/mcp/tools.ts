@@ -14,7 +14,7 @@ import { MemoryVectorStore } from './vector-store';
 import { newsSearch, newsDigest, newsInsight } from './news';
 import { insightRoadmap, ideasGenerate, skillify } from './agentic';
 import { supportedNetworks } from './payment-router';
-import { settleSelection, findActiveSession, TIER_PRICE_USD } from './paywall';
+import { settleSelection, TIER_PRICE_USD, issuePaymentQuote, settleQuote, getPaymentStatus } from './paywall';
 import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpSkillsEnabled, isMcpBuilderBriefEnabled, isMcpXrplV3Enabled, isMcpFlareEnabled, isMcpInstructEnabled, isMcpTokenProfileEnabled, isMcpDreamCycleEnabled } from '../platform-flag';
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
@@ -23,6 +23,7 @@ import type { OutputEnforceConfig } from '../harness/types';
 /** Per-call context injected by the gateway (never from client args). */
 export interface ToolContext {
   session: McpSession;
+  paymentSessionId?: string;
 }
 
 export interface ToolDef {
@@ -194,46 +195,62 @@ const newsInsightTool: ToolDef = {
 
 // ─── Payment settlement over MCP (n-payment) ───────────────────────────────
 
+const paymentsQuoteTool: ToolDef = {
+  name: 'payments.quote',
+  description: 'Create the complete XRPL RLUSD payment terms before signing: merchant, amount, issuer, nonce, and expiry.',
+  tier: 't1_read', unmetered: true,
+  inputSchema: { type: 'object', properties: { tier: { type: 'string' }, chain: { type: 'string' }, asset: { type: 'string', enum: ['RLUSD'] }, agent_id: { type: 'string' } }, required: ['tier', 'chain', 'agent_id'] },
+  handler: async (args, ctx) => issuePaymentQuote(ctx?.session.userId ?? 'anonymous', { tier: String(args.tier ?? '') as PriceTier, chain: String(args.chain ?? ''), asset: args.asset ? String(args.asset) : undefined, agentId: String(args.agent_id ?? '') }),
+};
+
 const paymentsSettleTool: ToolDef = {
   name: 'payments.settle',
-  description: 'Settle a payment via n-payment to unlock a paid session (100 queries) for a price tier. Submit the proof + network selection. Call codemode.payments.networks first to choose chain/rail/asset. Proof format depends on chain: EVM chains use the base64 EIP-3009 authorization+signature; XRPL chains (xrpl-mainnet/xrpl-testnet) accept EITHER a base64 PAYMENT-SIGNATURE facilitator-relay envelope OR, for a payment you already signed and submitted directly to the ledger yourself, a JSON string {"txHash":"..."} — the settlement independently re-verifies that transaction on-chain (validated + tesSUCCESS + correct destination/asset/amount) before granting the session. A txHash can only be redeemed once.',
+  description: 'Settle a previously issued XRPL RLUSD quote. The proof is verified against the disclosed merchant and payment terms before a session is opened.',
   tier: 't1_read',
   unmetered: true,
   inputSchema: {
     type: 'object',
     properties: {
-      tier: { type: 'string', description: 't1_read | t2_realtime | t3_vector' },
+      quoteId: { type: 'string' },
+      tier: { type: 'string', description: 'Deprecated legacy settlement field.' },
       chain: { type: 'string' }, rail: { type: 'string' }, asset: { type: 'string' },
       proof: {
         type: 'string',
         description: 'EVM chains: base64 EIP-3009 x402 authorization+signature. XRPL chains: EITHER a base64 PAYMENT-SIGNATURE facilitator-relay envelope, OR JSON.stringify({txHash}) for a transaction you already submitted directly — independently re-verified on-ledger, redeemable only once.',
       },
     },
-    required: ['tier', 'chain'],
+    anyOf: [{ required: ['quoteId', 'proof'] }, { required: ['tier', 'chain'] }],
   },
   handler: async (args, ctx) => {
+    if (args.quoteId) return settleQuote(ctx?.session.userId ?? 'anonymous', String(args.quoteId), args.proof ? String(args.proof) : undefined);
     const tier = String(args.tier ?? '') as PriceTier;
     if (!(tier in TIER_PRICE_USD)) return { ok: false, error: `unknown tier "${tier}"`, hint: `tiers: ${Object.keys(TIER_PRICE_USD).join(', ')}` };
-    return settleSelection(
-      ctx?.session.userId ?? 'anonymous',
-      tier,
-      { chain: String(args.chain ?? ''), rail: args.rail as 'x402' | 'mpp' | undefined, asset: args.asset ? String(args.asset) : undefined },
-      args.proof ? String(args.proof) : undefined,
-    );
+    return settleSelection(ctx?.session.userId ?? 'anonymous', tier, { chain: String(args.chain ?? ''), rail: args.rail as 'x402' | 'mpp' | undefined, asset: args.asset ? String(args.asset) : undefined }, args.proof ? String(args.proof) : undefined);
   },
 };
 
 const paymentsStatusTool: ToolDef = {
   name: 'payments.status',
-  description: 'Report the active paid-session quota remaining for a tier.',
+  description: 'Report a caller-owned paid session by sessionId or agent_id.',
   tier: 't1_read',
   unmetered: true,
-  inputSchema: { type: 'object', properties: { tier: { type: 'string' } }, required: ['tier'] },
+  inputSchema: { type: 'object', properties: { sessionId: { type: 'string' }, agent_id: { type: 'string' } }, anyOf: [{ required: ['sessionId'] }, { required: ['agent_id'] }] },
   handler: async (args, ctx) => {
-    const tier = String(args.tier ?? 't1_read') as PriceTier;
-    const active = await findActiveSession(ctx?.session.userId ?? 'anonymous', tier);
-    return active ?? { active: false, tier, hint: 'no active paid session — call payments.settle' };
+    const active = await getPaymentStatus(ctx?.session.userId ?? 'anonymous', { sessionId: args.sessionId ? String(args.sessionId) : undefined, agentId: args.agent_id ? String(args.agent_id) : undefined });
+    return active ?? { active: false, hint: 'no matching paid session — call payments.quote before signing' };
   },
+};
+
+const xrplReadinessTool: ToolDef = {
+  name: 'wallet.xrpl.readiness', description: 'Check a public XRPL address for funding, reserve, RLUSD trust line, and balance. Never accepts secrets.', tier: 't1_read', unmetered: true,
+  inputSchema: { type: 'object', properties: { address: { type: 'string' }, network: { type: 'string', enum: ['xrpl-testnet', 'xrpl-mainnet'] }, asset: { type: 'string', enum: ['RLUSD'] } }, required: ['address'] },
+  handler: async (args) => (await import('./xrpl-readiness')).getXrplReadiness(String(args.address ?? ''), String(args.network ?? 'xrpl-testnet'), String(args.asset ?? 'RLUSD')),
+};
+
+const xrplBootstrapTool: ToolDef = {
+  name: 'wallet.xrpl.bootstrap', description: 'Return a local-signer-only XRPL setup plan. It never creates, imports, or returns a wallet secret.', tier: 't1_read', unmetered: true,
+  inputSchema: { type: 'object', properties: { network: { type: 'string', enum: ['xrpl-testnet', 'xrpl-mainnet'] }, asset: { type: 'string', enum: ['RLUSD'] } } },
+  handler: async (args) => (await import('./xrpl-readiness')).buildXrplBootstrap(String(args.network ?? 'xrpl-testnet'), String(args.asset ?? 'RLUSD')),
 };
 
 // ─── Live cross-chain data (routes through the provider AdapterRouter) ──────
@@ -660,12 +677,12 @@ const submitEpisodeLogTool: ToolDef = {
                 type: 'object',
                 properties: {
                   action: { type: 'string' },
-                  observation_summary: { type: 'string' },
-                  result: { type: 'string', description: 'Deprecated one-release alias for observation_summary.' },
+                  observation_summary: { type: 'string', description: 'Optional compatibility alias for result.' },
+                  result: { type: 'string', minLength: 1, description: 'Non-empty outcome of this action.' },
                   error: { type: 'string' },
                   duration_ms: { type: 'number' },
                 },
-                required: ['action'],
+                required: ['action', 'result'],
               },
             },
             // PRD 02 fix (2026-07-26 live-session feedback): the valid
@@ -755,7 +772,7 @@ const startDreamTool: ToolDef = {
       budget_usd: Number(cfg.budget_usd),
       preset: (cfg.preset as string) ?? 'balanced',
       trigger_criteria: cfg.trigger_criteria as Record<string, unknown> | undefined,
-    });
+    }, 'manual', ctx?.paymentSessionId);
   },
 };
 
@@ -874,6 +891,17 @@ const reclaimAgentOwnershipTool: ToolDef = {
   },
 };
 
+const dreamSessionTool: ToolDef = {
+  name: 'dream.session',
+  description: 'Safely inspect Dream ownership and the current agent-bound paid session after a restart.',
+  tier: 't1_read', unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args, ctx) => {
+    const { getDreamSession } = await import('./dream/ownership');
+    return getDreamSession(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
+  },
+};
+
 const getDreamSkillsTool: ToolDef = {
   name: 'get_dream_skills',
   description: 'Retrieve auto-generated, type-safe SOP SKILL.md specifications (Matt-Pocock Standard) compiled during Phase 4 Dream-Cycle compaction.',
@@ -948,7 +976,7 @@ const getMorningBriefTool: ToolDef = {
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
-    paymentsSettleTool, paymentsStatusTool, dataCallTool,
+    paymentsQuoteTool, paymentsSettleTool, paymentsStatusTool, xrplReadinessTool, xrplBootstrapTool, dataCallTool,
     xrplToolkitListTool, // N3 — canonical toolkit directory, always available (pure reference data)
   ];
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
@@ -959,7 +987,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, dreamSessionTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 

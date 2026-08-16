@@ -27,6 +27,7 @@
 
 import { withClient } from '../../db';
 import { startDream, type DreamConfig, type TriggerCriteria } from './pipeline';
+import { isMcpDreamPaymentBindingEnabled } from '../../platform-flag';
 
 export interface SchedulerTickDetail {
   agent_id: string;
@@ -177,11 +178,15 @@ export async function runSchedulerTick(): Promise<SchedulerTickResult> {
         details.push({ agent_id: config.agent_id, decision: 'skipped_error', reason: 'no ownership row found for this agent_id — cannot fire without a real owning session' });
         continue;
       }
-      const dreamConfig: DreamConfig = { budget_usd: agentBudget, preset: config.preset };
-      await startDream(config.agent_id, ownerUserId, dreamConfig, 'scheduler');
-      details.push({ agent_id: config.agent_id, decision: 'fired' });
-      agentsFired++;
-      totalBudgetUsd += agentBudget;
+      if (isMcpDreamPaymentBindingEnabled()) {
+        details.push({ agent_id: config.agent_id, decision: 'skipped_error', reason: 'payment_required: scheduled paid Dream runs require an explicit agent-bound payment session' });
+      } else {
+        const dreamConfig: DreamConfig = { budget_usd: agentBudget, preset: config.preset };
+        await startDream(config.agent_id, ownerUserId, dreamConfig, 'scheduler');
+        details.push({ agent_id: config.agent_id, decision: 'fired' });
+        agentsFired++;
+        totalBudgetUsd += agentBudget;
+      }
     } catch (err) {
       details.push({ agent_id: config.agent_id, decision: 'skipped_error', reason: err instanceof Error ? err.message : String(err) });
     }

@@ -17,4 +17,4 @@
 packages:
   - '.'
 onlyBuiltDependencies:
-  - nim-skill
+  - nim-skill@https://codeload.github.com/phamdat721101/nim-skill/tar.gz/2ac5129716046d658908d1b6eff4bf0115c9866c

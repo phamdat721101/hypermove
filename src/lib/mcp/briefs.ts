@@ -24,6 +24,7 @@ import { XRPL_CORPUS } from './xrpl-sources';
 import { GOAT_CORPUS } from './goat-sources';
 import { isMcpBuilderBriefEnabled, isMcpFlareEnabled, isMcpXrplV3Enabled, isMcpGoatEnabled } from '../platform-flag';
 import { runHarnessed, type SkillDef } from 'nim-skill';
+import { mcpNimHarness } from './nim-harness';
 
 /** Corpus entry shape shared across chains. */
 interface CorpusEntry {
@@ -113,9 +114,9 @@ export async function buildBrief(chain: string): Promise<ServiceResult<Brief>> {
   const skill: SkillDef = {
     name: `${chain}.builder.brief`,
     version: '1.0.0',
-    harness: {
+    harness: mcpNimHarness({
       enforcer: { strategies: [{ kind: 'schema', required: ['chain', 'generatedAt', 'capabilities'] }], maxHeals: 2, mode: 'strict' },
-    },
+    }),
     async execute(_input: unknown, ctx) {
       const base = composeBrief(chain);
       if (!base.ok) return base;

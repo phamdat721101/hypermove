@@ -10,10 +10,10 @@
 
 import { createHash } from 'node:crypto';
 import { withClient } from '../db';
-import { isMcpPaywallEnabled, isMcpRateLimitEnabled, isMcpGuardiansEnabled } from '../platform-flag';
+import { isMcpPaywallEnabled, isMcpRateLimitEnabled, isMcpGuardiansEnabled, isMcpDreamPaymentBindingEnabled } from '../platform-flag';
 import { getTool, getTools } from './tools';
 import { checkAndConsume, FREE_TIER_LIMIT } from './rate-limit';
-import { buildChallenge, findActiveSession, consumeSession, settlePayment } from './paywall';
+import { buildChallenge, findActiveSession, consumeSession, settlePayment, issuePaymentQuote } from './paywall';
 import { createSentinel, type Sentinel } from '../sentinel/sentinel';
 import { verifyOrHeal } from '../harness/output-enforcer';
 import type { McpSession } from './auth';
@@ -72,16 +72,19 @@ export async function callTool(input: {
   // ── Metering (skipped for admin + unmetered tools like payments.settle) ──
   if (!tool.unmetered && session.kind !== 'admin' && (session.tier === 'free' || tool.requiresPayment)) {
     if (isMcpPaywallEnabled()) {
-      const active = await findActiveSession(session.userId, tool.tier);
+      const agentId = name === 'start_dream' ? String(args.agent_id ?? '') : undefined;
+      const active = await findActiveSession(session.userId, tool.tier, agentId);
       const usedActive = active ? await consumeSession(active.sessionId) : false;
       if (usedActive && active) {
         sessionId = active.sessionId;
       } else {
         if (tool.requiresPayment) {
-          const proof = headers?.get('x-payment');
-          if (!proof) {
-            return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
+          if (name === 'start_dream' && isMcpDreamPaymentBindingEnabled()) {
+            const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: 'xrpl-testnet', asset: 'RLUSD', agentId: agentId ?? '' });
+            return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote, ...buildChallenge(tool.tier, 0) } : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) } } };
           }
+          const proof = headers?.get('x-payment');
+          if (!proof) return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
           const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
           if (!settled.ok) return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
           sessionId = settled.session?.sessionId;
@@ -89,8 +92,12 @@ export async function callTool(input: {
           const rate = isMcpRateLimitEnabled() ? await checkAndConsume(session.userId) : { allowed: true, resetInHours: 0 };
           if (!rate.allowed) {
             const proof = headers?.get('x-payment');
-            if (!proof) {
-              return { error: { code: -32402, message: `Payment required — free tier exceeded (${FREE_TIER_LIMIT} / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };
+          if (!proof) {
+            if (name === 'start_dream' && agentId) {
+              const quote = await issuePaymentQuote(session.userId, { tier: 'dream', chain: 'xrpl-testnet', asset: 'RLUSD', agentId });
+              return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote } : { code: 'payment_required', error: quote.error, hint: quote.hint } } };
+            }
+            return { error: { code: -32402, message: `Payment required — free tier exceeded (${FREE_TIER_LIMIT} / 24h). Call payments.settle to unlock the ${tool.tier} tier.`, data: buildChallenge(tool.tier, rate.resetInHours) } };
             }
             const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
             if (!settled.ok) return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
@@ -108,7 +115,7 @@ export async function callTool(input: {
 
   // ── Dispatch ───────────────────────────────────────────────────────────────
   try {
-    const result = await tool.handler(args, { session });
+    const result = await tool.handler(args, { session, ...(sessionId ? { paymentSessionId: sessionId } : {}) });
 
     // ── Output-enforcer (opt-in via ToolDef.verify) ─────────────────────────
     // No reExecute wired yet — a tool declaring onFail:'self-heal' without a

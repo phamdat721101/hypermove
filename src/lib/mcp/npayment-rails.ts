@@ -22,7 +22,7 @@
  */
 
 import { ok, fail, type ServiceResult } from './envelope';
-import type { PaymentRail, PaymentReceipt, PaymentSelection, RailId } from './payment-router';
+import type { PaymentRail, PaymentReceipt, PaymentSelection, PaymentTerms, RailId } from './payment-router';
 
 /** Canonical native-USDC token per EVM chain (Circle FiatTokenV2). */
 const USDC: Record<string, `0x${string}`> = {
@@ -95,10 +95,10 @@ export function createNPaymentRail(id: RailId): PaymentRail {
   return {
     id,
     isMock: false,
-    async settle({ selection, amount, tier, proof }): Promise<ServiceResult<PaymentReceipt>> {
+    async settle({ selection, amount, tier, proof, paymentTerms }): Promise<ServiceResult<PaymentReceipt>> {
       // XRPL/RLUSD settles through the T54 x402 facilitator, not EIP-3009.
       if (selection.chain.startsWith('xrpl')) {
-        return settleXrplRlusd(id, selection, amount, tier, proof);
+        return settleXrplRlusd(id, selection, amount, tier, proof, paymentTerms);
       }
 
       const pk = process.env.MCP_FACILITATOR_PRIVATE_KEY as `0x${string}` | undefined;
@@ -182,6 +182,7 @@ async function settleXrplRlusd(
   amount: string,
   tier: string,
   proof?: string,
+  paymentTerms?: PaymentTerms,
 ): Promise<ServiceResult<PaymentReceipt>> {
   if (!proof) {
     return fail('npayment', 'missing XRPL x402 payment signature', {
@@ -212,7 +213,7 @@ async function settleXrplRlusd(
     }
   }
   if (txHash) {
-    return settleXrplAlreadySubmitted(id, selection, amount, tier, txHash);
+    return settleXrplAlreadySubmitted(id, selection, amount, tier, txHash, paymentTerms);
   }
 
   const treasury = process.env.XRPL_TREASURY_ADDRESS;
@@ -247,7 +248,8 @@ async function settleXrplRlusd(
 
     // Bind the buyer-echoed requirements to the merchant's terms.
     const assetOk = acc.asset === np.RLUSD_HEX || acc.asset === 'RLUSD';
-    if (acc.payTo !== treasury || !assetOk || Number(acc.amount) < Number(amount) - 0.01) {
+    const acceptedText = JSON.stringify(acc);
+    if (acc.payTo !== (paymentTerms?.merchant ?? treasury) || !assetOk || Number(acc.amount) < Number(amount) - 0.01 || (paymentTerms && (!acceptedText.includes(paymentTerms.issuer) || !acceptedText.includes(paymentTerms.nonce)))) {
       return fail('npayment', 'payment requirements mismatch', {
         code: 'settle_failed',
         hint: `payment must deliver ≥ ${amount} RLUSD to ${treasury}`,
@@ -292,6 +294,7 @@ async function settleXrplAlreadySubmitted(
   amount: string,
   tier: string,
   txHash: string,
+  paymentTerms?: PaymentTerms,
 ): Promise<ServiceResult<PaymentReceipt>> {
   const treasury = process.env.XRPL_TREASURY_ADDRESS;
   if (!treasury) {
@@ -348,11 +351,12 @@ async function settleXrplAlreadySubmitted(
         Destination?: string;
         Account?: string;
         Amount?: { currency?: string; issuer?: string; value?: string } | string;
-        meta?: { TransactionResult?: string; delivered_amount?: { currency?: string; value?: string } | string };
+        meta?: { TransactionResult?: string; delivered_amount?: { currency?: string; issuer?: string; value?: string } | string };
         tx_json?: {
           Destination?: string;
           Account?: string;
           Amount?: { currency?: string; issuer?: string; value?: string } | string;
+          Memos?: Array<{ Memo?: { MemoData?: string } }>;
         };
       };
     };
@@ -369,7 +373,7 @@ async function settleXrplAlreadySubmitted(
         hint: 'the referenced transaction must be validated with engine result tesSUCCESS',
       });
     }
-    if (destination !== treasury) {
+    if (destination !== (paymentTerms?.merchant ?? treasury)) {
       return fail('npayment', 'payment destination does not match merchant treasury', {
         code: 'settle_failed',
         hint: `transaction must pay ${treasury}, not ${destination}`,
@@ -382,8 +386,14 @@ async function settleXrplAlreadySubmitted(
     const delivered = result.meta?.delivered_amount ?? rawAmount;
     const deliveredValue = typeof delivered === 'object' ? delivered?.value : undefined;
     const deliveredCurrency = typeof delivered === 'object' ? delivered?.currency : undefined;
+    const deliveredIssuer = typeof delivered === 'object' ? delivered?.issuer : undefined;
+    const rawIssuer = typeof rawAmount === 'object' ? rawAmount?.issuer : undefined;
+    const memoData = (result.tx_json?.Memos ?? []).map((memo) => memo.Memo?.MemoData ?? '').map((hex) => {
+      try { return Buffer.from(hex, 'hex').toString('utf8'); } catch { return ''; }
+    });
     const assetOk = deliveredCurrency === np.RLUSD_HEX || deliveredCurrency === 'RLUSD' || deliveredCurrency === np.RLUSD_CURRENCY;
-    if (!assetOk || !deliveredValue || Number(deliveredValue) < Number(amount) - 0.01) {
+    const quoteBound = !paymentTerms || ((deliveredIssuer ?? rawIssuer) === paymentTerms.issuer && memoData.includes(paymentTerms.nonce));
+    if (!assetOk || !deliveredValue || Number(deliveredValue) < Number(amount) - 0.01 || !quoteBound) {
       return fail('npayment', 'delivered payment does not meet the required RLUSD amount', {
         code: 'settle_failed',
         hint: `transaction must deliver >= ${amount} RLUSD to ${treasury}`,

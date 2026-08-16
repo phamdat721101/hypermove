@@ -225,6 +225,11 @@ export function isMcpDreamCycleEnabled(): boolean {
   return v3Flag('FEATURE_MCP_DREAM_CYCLE');
 }
 
+/** Quote/session binding is opt-in while legacy signed-header clients migrate. */
+export function isMcpDreamPaymentBindingEnabled(): boolean {
+  return isMcpDreamCycleEnabled() && process.env.FEATURE_MCP_DREAM_PAYMENT_BINDING === 'true';
+}
+
 /**
  * Semantic preservation is deliberately opt-in during its canary period.
  * Keeping it off preserves the legacy Dream pipeline byte-for-byte until an

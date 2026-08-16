@@ -146,6 +146,7 @@ export async function startDream(
   userId: string,
   config: DreamConfig,
   triggeredBy: 'manual' | 'scheduler' = 'manual',
+  paymentSessionId?: string,
 ): Promise<StartDreamResult> {
   const maxBudget = globalMaxBudgetUsd();
   if (!Number.isFinite(config.budget_usd) || config.budget_usd <= 0) {
@@ -178,9 +179,9 @@ export async function startDream(
       [agentId, config.budget_usd, presetName, config.trigger_criteria ? JSON.stringify(config.trigger_criteria) : null, runId],
     );
     await client.query(
-      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot, triggered_by)
-       VALUES ($1,$2,'started',$3,$4)`,
-      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {} }), triggeredBy],
+      `INSERT INTO dream_cycle_runs (run_id, agent_id, status, config_snapshot, triggered_by, payment_session_id)
+       VALUES ($1,$2,'started',$3,$4,$5)`,
+      [runId, agentId, JSON.stringify({ budget_usd: config.budget_usd, preset: presetName, trigger_criteria: config.trigger_criteria ?? {} }), triggeredBy, paymentSessionId ?? null],
     );
     return true;
   });
@@ -628,6 +629,7 @@ export interface DreamStatsResult {
    * autonomously on trigger_criteria's behalf.
    */
   triggered_by?: 'manual' | 'scheduler';
+  payment_session_id?: string;
 }
 
 export async function getDreamStats(agentId: string): Promise<DreamStatsResult> {
@@ -635,9 +637,9 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
     const { rows } = await client.query<{
       started_at: string; status: string; budget_used_usd: string; stages_completed: string[];
       per_stage_tokens: Record<string, number> | null; stage_summaries: StageSummaries | null;
-      triggered_by: 'manual' | 'scheduler';
+      triggered_by: 'manual' | 'scheduler'; payment_session_id: string | null;
     }>(
-      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries, triggered_by
+      `SELECT started_at::text, status, budget_used_usd, stages_completed, per_stage_tokens, stage_summaries, triggered_by, payment_session_id
        FROM dream_cycle_runs WHERE agent_id = $1 ORDER BY started_at DESC LIMIT 1`,
       [agentId],
     );
@@ -706,5 +708,6 @@ export async function getDreamStats(agentId: string): Promise<DreamStatsResult> 
       },
     } as StageSummaries,
     triggered_by: row.triggered_by ?? 'manual',
+    ...(row.payment_session_id ? { payment_session_id: row.payment_session_id } : {}),
   };
 }

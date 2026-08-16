@@ -11,6 +11,7 @@ import { claimOrCheckOwnership } from './ownership';
 
 export interface EpisodeStep {
   action: string;
+  result?: string;
   observation_summary?: string;
   error?: string;
   duration_ms?: number;
@@ -60,15 +61,19 @@ function normalizeEpisode(ep: unknown): { episode: EpisodeLog; normalizedFields:
   const steps: EpisodeStep[] = [];
   for (let index = 0; index < raw.steps.length; index++) {
     const step = raw.steps[index];
-    if (typeof step !== 'object' || step === null || typeof step.action !== 'string') {
-      return { reason: `invalid step at index ${index}: action must be a string` };
+    if (typeof step !== 'object' || step === null || typeof step.action !== 'string' || step.action.trim().length === 0) {
+      return { reason: `invalid step at index ${index}: action must be a non-empty string` };
     }
     const unknown = Object.keys(step).filter((key) => !STEP_KEYS.has(key));
     if (unknown.length > 0) return { reason: `unsupported step field(s) at index ${index}: ${unknown.join(', ')}` };
+    const result = typeof step.result === 'string' ? step.result : typeof step.observation_summary === 'string' ? step.observation_summary : step.action;
+    if (result.trim().length === 0) return { reason: `invalid step at index ${index}: result must be a non-empty string` };
     if (step.result !== undefined && step.observation_summary === undefined) normalizedFields.push(`steps[${index}].result→observation_summary`);
+    if (step.result === undefined) normalizedFields.push(`steps[${index}].observation_summary→result`);
     steps.push({
       action: step.action,
-      observation_summary: typeof step.observation_summary === 'string' ? step.observation_summary : typeof step.result === 'string' ? step.result : undefined,
+      result,
+      observation_summary: typeof step.observation_summary === 'string' ? step.observation_summary : result,
       error: typeof step.error === 'string' ? step.error : undefined,
       duration_ms: typeof step.duration_ms === 'number' ? step.duration_ms : undefined,
     });

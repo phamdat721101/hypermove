@@ -19,6 +19,23 @@ export interface OwnershipResult {
   reason?: string;
 }
 
+/** Non-sensitive restart/recovery view for one agent namespace. */
+export async function getDreamSession(agentId: string, userId: string) {
+  const row = await withClient(async (client) => {
+    const { rows } = await client.query<{ owner_user_id: string; session_id: string | null; run_id: string | null }>(
+      `SELECT o.owner_user_id, s.session_id, r.run_id
+       FROM mcp_agent_ownership o
+       LEFT JOIN LATERAL (SELECT session_id FROM mcp_paid_sessions WHERE user_id = $2 AND agent_id = o.agent_id AND expires_at > NOW() AND quota_used < quota_limit ORDER BY created_at DESC LIMIT 1) s ON true
+       LEFT JOIN LATERAL (SELECT run_id FROM dream_cycle_runs WHERE agent_id = o.agent_id ORDER BY started_at DESC LIMIT 1) r ON true
+       WHERE o.agent_id = $1 LIMIT 1`, [agentId, userId]);
+    return rows[0] ?? null;
+  });
+  if (!row) return { ownership: 'unclaimed', recoveryHint: 'submit an episode or start a paid run to claim this agent_id' };
+  if (row.owner_user_id === userId) return { ownership: 'current_session', ...(row.session_id ? { activePaymentSessionId: row.session_id } : {}), ...(row.run_id ? { lastRunId: row.run_id } : {}), recoveryHint: 'continue with this authenticated identity' };
+  if (row.owner_user_id.startsWith('device:')) return { ownership: 'recoverable_device_owner', recoveryHint: 'call reclaim_agent_ownership from a new device-auth session' };
+  return { ownership: 'other_durable_owner', recoveryHint: 're-authenticate with the wallet or account that originally claimed this agent_id' };
+}
+
 /**
  * First caller for a given agent_id claims it for their session's userId.
  * Subsequent calls from the SAME userId succeed (idempotent). A call from a

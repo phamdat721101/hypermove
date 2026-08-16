@@ -13,8 +13,24 @@
       "mode": "strict"
     },
     "monitor": {
-      "exporter": "file",
-      "file": ".nim/traces.jsonl"
+      "exporters": ["file"],
+      "traceFile": ".nim/traces.jsonl",
+      "tokenAccounting": true
+    },
+    "memory": {
+      "verifyCache": true,
+      "priors": true,
+      "ttlMs": 86400000,
+      "store": ".nim/mcp-verify-memory.jsonl"
+    },
+    "lessons": {
+      "store": ".nim/mcp-lessons.jsonl",
+      "ttlMs": 2592000000
+    },
+    "logCompact": {
+      "maxLines": 40,
+      "strategy": "errors-only",
+      "escalateOnEmpty": true
     }
   },
   "workrule": {

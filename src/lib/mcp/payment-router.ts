@@ -39,6 +39,12 @@ export interface PaymentReceipt {
   payer?: string;
 }
 
+export interface PaymentTerms {
+  merchant: string;
+  issuer: string;
+  nonce: string;
+}
+
 export interface PaymentRail {
   readonly id: RailId;
   /** True for the deterministic mock rail (blocked from granting paid sessions in prod). */
@@ -53,7 +59,7 @@ export interface PaymentRail {
    * additive parameter, not a behavior change for any caller that doesn't
    * read it.
    */
-  settle(input: { selection: PaymentSelection; amount: string; userId: string; tier: string; proof?: string }): Promise<ServiceResult<PaymentReceipt>>;
+  settle(input: { selection: PaymentSelection; amount: string; userId: string; tier: string; proof?: string; paymentTerms?: PaymentTerms }): Promise<ServiceResult<PaymentReceipt>>;
 }
 
 /** Chains that carry a given protocol id. */
@@ -158,10 +164,10 @@ export function validateDreamSelection(sel: Partial<PaymentSelection>): ServiceR
 export class MockPaymentRail implements PaymentRail {
   readonly isMock = true;
   constructor(readonly id: RailId) {}
-  async settle(input: { selection: PaymentSelection; amount: string; userId: string; tier: string; proof?: string }): Promise<ServiceResult<PaymentReceipt>> {
+  async settle(input: { selection: PaymentSelection; amount: string; userId: string; tier: string; proof?: string; paymentTerms?: PaymentTerms }): Promise<ServiceResult<PaymentReceipt>> {
     const seed = `${input.userId}:${input.selection.chain}:${input.amount}:${input.proof ?? 'mock'}`;
     const txHash = `0x${createHash('sha256').update(seed).digest('hex').slice(0, 64)}`;
-    return ok({ txHash, chain: input.selection.chain, rail: this.id, asset: input.selection.asset, amount: input.amount });
+    return ok({ txHash, chain: input.selection.chain, rail: this.id, asset: input.selection.asset, amount: input.amount, payer: `mock:${input.userId}` });
   }
 }
 

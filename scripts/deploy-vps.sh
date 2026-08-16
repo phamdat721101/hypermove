@@ -33,6 +33,7 @@ VPS_USER="${VPS_USER:-ubuntu}"
 VPS_SSH_KEY="${VPS_SSH_KEY:-}"
 APP_REMOTE_DIR="${APP_REMOTE_DIR:-/home/ubuntu/hypermove-app}"
 LLM_REMOTE_DIR="${LLM_REMOTE_DIR:-/home/ubuntu/llm-service}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://hypermove.duckdns.org}"
 
 DEPLOY_APP=1
 DEPLOY_LLM=1
@@ -80,12 +81,18 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
   rsync_to \
     src \
     package.json \
+    pnpm-lock.yaml \
+    pnpm-workspace.yaml \
+    nim.json \
     next.config.mjs
 
   set_env_var "$APP_REMOTE_DIR" "GIT_SHA" "$GIT_SHA"
   set_env_var "$APP_REMOTE_DIR" "DEPLOYED_AT" "$DEPLOYED_AT"
+  set_env_var "$APP_REMOTE_DIR" "NEXT_PUBLIC_MCP_HOST_URL" "$PUBLIC_BASE_URL"
+  set_env_var "$APP_REMOTE_DIR" "NEXT_PUBLIC_LLM_API_URL" "${PUBLIC_BASE_URL%/}/llm"
 
   echo "-> building hypermove-app on VPS (standalone output)"
+  ssh_cmd "cd '$APP_REMOTE_DIR' && pnpm install --frozen-lockfile"
   ssh_cmd "cd '$APP_REMOTE_DIR' && pnpm build"
   ssh_cmd "cd '$APP_REMOTE_DIR' && rm -rf .next/standalone/public .next/standalone/.next/static && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static"
   ssh_cmd "pm2 flush hypermove-app && pm2 restart hypermove-app"

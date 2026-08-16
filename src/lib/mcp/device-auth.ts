@@ -37,6 +37,7 @@ import { ok, fail, type ServiceResult } from './envelope';
 import { storeToken } from './auth';
 import { isMcpDeviceAuthEnabled } from '../platform-flag';
 import { runHarnessed, type SkillDef } from 'nim-skill';
+import { mcpNimHarness } from './nim-harness';
 
 export const DEVICE_CODE_TTL_MS = 5 * 60_000; // 5 minutes
 export const DEVICE_POLL_INTERVAL_S = 5;
@@ -86,9 +87,9 @@ export async function issueDeviceCode(): Promise<ServiceResult<DeviceStartResult
   const skill: SkillDef<Record<string, unknown>, DeviceStartExecuteResult> = {
     name: 'device-auth.start',
     version: '1.0.0',
-    harness: {
+    harness: mcpNimHarness({
       enforcer: { strategies: [{ kind: 'schema', required: ['device_code', 'user_code', 'expires_in', 'interval'] }], maxHeals: 0, mode: 'strict' },
-    },
+    }),
     async execute() {
       const deviceCode = randomBytes(32).toString('base64url');
       const userCode = generateUserCode();
