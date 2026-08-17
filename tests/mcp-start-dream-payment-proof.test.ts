@@ -84,4 +84,41 @@ describe('start_dream payment-proof handling (dream-payment-binding flag)', () =
     expect(data.payment).toBeTruthy();
     expect(data.error).toBe('transaction_not_found');
   });
+
+  /**
+   * Regression for docs/feedback/2026-08-17-start-dream-still-blocked-post-redeploy-followup.md
+   * The real-world shape a caller uses: bare `x-payment: {"txHash":"..."}`
+   * PLUS the separate `X-Payment-Chain` / `X-Payment-Asset` selector headers
+   * (not a proof nested inside a JSON object under those header names, which
+   * the follow-up feedback file's own 4th attempt incorrectly guessed).
+   */
+  it('accepts a real already-submitted-tx-hash proof paired with X-Payment-Chain/X-Payment-Asset selector headers', async () => {
+    vi.doMock('../src/lib/mcp/paywall', async () => {
+      const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
+      return {
+        ...actual,
+        findActiveSession: vi.fn(async () => null),
+        consumeSession: vi.fn(async () => false),
+        settlePayment: vi.fn(async (_userId: string, _tier: string, hdrs: Headers, proof?: string) => {
+          expect(proof).toBe(JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }));
+          expect(hdrs.get('x-payment-chain')).toBe('xrpl-testnet');
+          expect(hdrs.get('x-payment-asset')).toBe('RLUSD');
+          return { ok: true, session: { sessionId: 'sess-real-tx', tier: 'dream', chain: 'xrpl-testnet', quotaRemaining: 50 } };
+        }),
+        issuePaymentQuote: vi.fn(async () => {
+          throw new Error('issuePaymentQuote must NOT be called for a genuinely valid, correctly-shaped proof');
+        }),
+      };
+    });
+    const { callTool } = await import('../src/lib/mcp/gateway');
+    const session = { userId: 'real-tx-user', tier: 'free' as const, kind: 'user' as const };
+    const headers = new Headers({
+      'x-payment': JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }),
+      'x-payment-chain': 'xrpl-testnet',
+      'x-payment-asset': 'RLUSD',
+    });
+    const out = await callTool({ session, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers });
+    expect(out.error).toBeUndefined();
+    expect(out.result).toBeTruthy();
+  });
 });

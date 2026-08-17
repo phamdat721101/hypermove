@@ -59,6 +59,7 @@ export function buildChallenge(tier: PriceTier, resetInHours: number) {
         mpp: '/api/paid-endpoint?rail=mpp',
       },
       select_via_headers: ['X-Payment-Chain', 'X-Payment-Rail', 'X-Payment-Asset'],
+      retry_with_proof: 'To retry after settling: resend this same tool call with the `X-Payment` header set to your proof (a bare 64-hex txHash, or JSON.stringify({txHash}) for an already-submitted XRPL transaction, or a base64 PAYMENT-SIGNATURE envelope), plus `X-Payment-Chain` and `X-Payment-Asset` set to match what you settled (e.g. X-Payment-Chain: xrpl-testnet, X-Payment-Asset: RLUSD). Do not nest the proof inside a JSON object under X-Payment-Chain/Asset — those are separate headers.',
       retry_after_free_hours: resetInHours,
     },
   };
