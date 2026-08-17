@@ -86,6 +86,12 @@ export interface PaymentQuote {
   nonce: string;
   expiresAt: string;
   docsUrl: string;
+  instructions: string;
+}
+
+/** X-Payment-* HTTP headers are never read for quote-first tools — settlement is a payments.settle tool call. */
+function quoteInstructions(quoteId: string): string {
+  return `Call tool "payments.settle" with { quoteId: "${quoteId}", proof }. proof = JSON.stringify({txHash}) for an already-submitted XRPL payment, or a base64 PAYMENT-SIGNATURE envelope. X-Payment-* HTTP headers are not read for this tool.`;
 }
 
 type QuoteRow = PaymentQuote & { userId: string; settledAt?: string; sessionId?: string };
@@ -117,12 +123,14 @@ export async function issuePaymentQuote(
   const merchant = process.env.XRPL_TREASURY_ADDRESS?.trim();
   const issuer = process.env.XRPL_RLUSD_ISSUER?.trim();
   if (!merchant || !issuer) return quoteError('XRPL payment quoting is not configured', 'set XRPL_TREASURY_ADDRESS and XRPL_RLUSD_ISSUER');
+  const quoteId = randomUUID();
   const quote: PaymentQuote = {
-    quoteId: randomUUID(), agentId: input.agentId, tier: input.tier, chain: validated.data.chain,
+    quoteId, agentId: input.agentId, tier: input.tier, chain: validated.data.chain,
     rail: validated.data.rail, asset: 'RLUSD', merchant, amount: TIER_PRICE_USD[input.tier],
     currency: 'RLUSD', issuer, nonce: randomUUID().replaceAll('-', ''),
     expiresAt: new Date(Date.now() + quoteTtlMs()).toISOString(),
     docsUrl: 'https://xrpl.org/docs/agents/agentic-payments-x402',
+    instructions: quoteInstructions(quoteId),
   };
   const row = await withClient(async (client) => {
     await client.query(
@@ -144,7 +152,7 @@ async function loadQuote(userId: string, quoteId: string): Promise<QuoteRow | nu
     }>(`SELECT quote_id, user_id, agent_id, tier, chain, rail, asset, merchant, amount, currency, issuer, nonce, expires_at::text, settled_at::text, session_id
        FROM mcp_payment_quotes WHERE quote_id = $1 AND user_id = $2 LIMIT 1`, [quoteId, userId]);
     const q = rows[0];
-    return q ? { quoteId: q.quote_id, userId: q.user_id, agentId: q.agent_id, tier: q.tier, chain: q.chain, rail: q.rail, asset: q.asset, merchant: q.merchant, amount: q.amount, currency: q.currency, issuer: q.issuer, nonce: q.nonce, expiresAt: q.expires_at, docsUrl: 'https://xrpl.org/docs/agents/agentic-payments-x402', settledAt: q.settled_at ?? undefined, sessionId: q.session_id ?? undefined } : null;
+    return q ? { quoteId: q.quote_id, userId: q.user_id, agentId: q.agent_id, tier: q.tier, chain: q.chain, rail: q.rail, asset: q.asset, merchant: q.merchant, amount: q.amount, currency: q.currency, issuer: q.issuer, nonce: q.nonce, expiresAt: q.expires_at, docsUrl: 'https://xrpl.org/docs/agents/agentic-payments-x402', instructions: quoteInstructions(q.quote_id), settledAt: q.settled_at ?? undefined, sessionId: q.session_id ?? undefined } : null;
   });
   return row ?? localQuotes.get(quoteId) ?? null;
 }
