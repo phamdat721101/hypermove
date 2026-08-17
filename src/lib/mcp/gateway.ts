@@ -80,15 +80,29 @@ export async function callTool(input: {
         sessionId = active.sessionId;
       } else {
         if (tool.requiresPayment) {
-          if (name === 'start_dream' && isMcpDreamPaymentBindingEnabled()) {
+          const isDreamBinding = name === 'start_dream' && isMcpDreamPaymentBindingEnabled();
+          const proof = headers?.get('x-payment');
+          // A caller who already presents proof must get a real settlement
+          // attempt before the dream-payment-binding branch can short-circuit
+          // straight to a fresh quote challenge — otherwise a genuinely valid,
+          // already-settled payment can never be accepted (see
+          // docs/feedback/2026-08-17-start-dream-payment-proof-never-checked.md).
+          if (proof) {
+            const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
+            if (settled.ok) {
+              sessionId = settled.session?.sessionId;
+            } else if (isDreamBinding) {
+              const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
+              return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote, error: settled.error, hint: settled.hint, ...buildChallenge(tool.tier, 0) } : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) } } };
+            } else {
+              return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
+            }
+          } else if (isDreamBinding) {
             const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
             return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote, ...buildChallenge(tool.tier, 0) } : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) } } };
+          } else {
+            return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
           }
-          const proof = headers?.get('x-payment');
-          if (!proof) return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
-          const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
-          if (!settled.ok) return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
-          sessionId = settled.session?.sessionId;
         } else {
           const rate = isMcpRateLimitEnabled() ? await checkAndConsume(session.userId) : { allowed: true, resetInHours: 0 };
           if (!rate.allowed) {
