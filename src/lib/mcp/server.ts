@@ -106,10 +106,11 @@ export function toZodShape(inputSchema: Record<string, unknown>): ZodRawShape {
 
 const ANON: McpSession = { userId: 'anonymous', tier: 'free', kind: 'user' };
 
-function registerTool(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0], tool: ToolDef): void {
+export function registerTool(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0], tool: ToolDef): void {
   server.tool(tool.name, tool.description, toZodShape(tool.inputSchema), async (args, extra) => {
     const session = (extra.authInfo?.extra?.session as McpSession | undefined) ?? ANON;
-    const outcome = await callTool({ session, name: tool.name, args: (args ?? {}) as Record<string, unknown> });
+    const headers = extra.authInfo?.extra?.headers as Headers | undefined;
+    const outcome = await callTool({ session, name: tool.name, args: (args ?? {}) as Record<string, unknown>, headers });
     if (outcome.error) {
       return {
         isError: true,
@@ -201,12 +202,19 @@ export function registerResource(server: Parameters<Parameters<typeof createMcpH
   }
 }
 
-/** Bridge HyperMove's 3-layer auth gate into an MCP AuthInfo (session in `extra`). */
+/** Bridge HyperMove's 3-layer auth gate into an MCP AuthInfo (session in `extra`).
+ *  Also stashes the raw incoming Headers into `extra.headers` — this is the
+ *  ONLY point in the request lifecycle where the original Request is available;
+ *  registerTool()'s per-call handler below only receives MCP SDK `extra`, never
+ *  the Request itself, so without this the x-payment/X-Payment-Chain/
+ *  X-Payment-Asset headers a caller sends can never reach gateway.callTool()
+ *  regardless of how correct callTool()'s own header-handling logic is. See
+ *  docs/feedback/2026-08-17-start-dream-retry-with-proof-added-still-fails.md. */
 async function verifyToken(req: Request, bearer?: string): Promise<AuthInfo | undefined> {
   const outcome = await authenticate(req as unknown as NextRequest);
   if (!outcome.ok) return undefined;
   const s = outcome.session;
-  return { token: bearer ?? 'session', clientId: s.userId, scopes: [s.tier], extra: { session: s } };
+  return { token: bearer ?? 'session', clientId: s.userId, scopes: [s.tier], extra: { session: s, headers: req.headers } };
 }
 
 let handler: ((req: Request) => Promise<Response>) | null = null;
