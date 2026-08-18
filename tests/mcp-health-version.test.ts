@@ -52,6 +52,19 @@ describe('PRD-A · GET /api/mcp/health reports commit + deployed_at', () => {
   });
 });
 
+describe('Dream payment gate diagnostics', () => {
+  it('reports effective paywall and Dream-binding state without exposing configuration values', async () => {
+    process.env.FEATURE_MCP_AUTH_WORKOS = 'true';
+    process.env.FEATURE_MCP_PAYWALL = 'true';
+    process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
+    process.env.FEATURE_MCP_DREAM_PAYMENT_BINDING = 'true';
+    const { GET } = await import('../src/app/api/mcp/health/route');
+    const body = (await (await GET()).json()) as Record<string, unknown>;
+    expect(body.paywall_enabled).toBe(true);
+    expect(body.dream_payment_binding_enabled).toBe(true);
+  });
+});
+
 // ─── Dream Cycle Confidential Extraction on Flare FCC, Task 10 ────────────
 
 describe('Task 10 · GET /api/mcp/health surfaces registered prompts', () => {

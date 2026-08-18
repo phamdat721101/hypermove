@@ -13,7 +13,7 @@ import { withClient } from '../db';
 import { isMcpPaywallEnabled, isMcpRateLimitEnabled, isMcpGuardiansEnabled, isMcpDreamPaymentBindingEnabled } from '../platform-flag';
 import { getTool, getTools } from './tools';
 import { checkAndConsume, FREE_TIER_LIMIT } from './rate-limit';
-import { buildChallenge, findActiveSession, consumeSession, settlePayment, issuePaymentQuote } from './paywall';
+import { buildChallenge, findActiveSession, consumeSession, settlePayment, settleQuote, issuePaymentQuote } from './paywall';
 import { configuredXrplChain } from './npayment-rails';
 import { createSentinel, type Sentinel } from '../sentinel/sentinel';
 import { verifyOrHeal } from '../harness/output-enforcer';
@@ -82,24 +82,42 @@ export async function callTool(input: {
         if (tool.requiresPayment) {
           const isDreamBinding = name === 'start_dream' && isMcpDreamPaymentBindingEnabled();
           const proof = headers?.get('x-payment');
-          // A caller who already presents proof must get a real settlement
-          // attempt before the dream-payment-binding branch can short-circuit
-          // straight to a fresh quote challenge — otherwise a genuinely valid,
-          // already-settled payment can never be accepted (see
-          // docs/feedback/2026-08-17-start-dream-payment-proof-never-checked.md).
-          if (proof) {
+          const quoteId = headers?.get('x-payment-quote-id');
+          if (isDreamBinding) {
+            // Dream binding is quote-first: the quote carries the user, agent,
+            // issuer, merchant, and nonce that the on-ledger payment must match.
+            // A legacy tx hash alone cannot prove those terms.
+            if (proof && quoteId) {
+              const settled = await settleQuote(session.userId, quoteId, proof, { tier: 'dream', agentId: agentId ?? '' });
+              if (settled.ok) {
+                sessionId = settled.session?.sessionId;
+              } else {
+                return { error: { code: -32402, message: 'payment_required', data: { code: 'payment_required', error: settled.error, hint: settled.hint, ...buildChallenge(tool.tier, 0) } } };
+              }
+            } else {
+              const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
+              return {
+                error: {
+                  code: -32402,
+                  message: 'payment_required',
+                  data: quote.ok
+                    ? {
+                      code: 'payment_required',
+                      payment: quote.quote,
+                      retry_with_quote: 'Settle this exact quote, then retry start_dream with X-Payment-Quote-Id, X-Payment, X-Payment-Chain, and X-Payment-Asset headers.',
+                      ...buildChallenge(tool.tier, 0),
+                    }
+                    : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) },
+                },
+              };
+            }
+          } else if (proof) {
             const settled = await settlePayment(session.userId, tool.tier, headers!, proof);
             if (settled.ok) {
               sessionId = settled.session?.sessionId;
-            } else if (isDreamBinding) {
-              const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
-              return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote, error: settled.error, hint: settled.hint, ...buildChallenge(tool.tier, 0) } : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) } } };
             } else {
               return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
             }
-          } else if (isDreamBinding) {
-            const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
-            return { error: { code: -32402, message: 'payment_required', data: quote.ok ? { code: 'payment_required', payment: quote.quote, ...buildChallenge(tool.tier, 0) } : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) } } };
           } else {
             return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
           }

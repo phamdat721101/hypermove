@@ -1,23 +1,10 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 
-/**
- * Regression test for docs/feedback/2026-08-17-start-dream-payment-proof-never-checked.md
- *
- * Bug: gateway.ts's start_dream metering branch, when
- * isMcpDreamPaymentBindingEnabled() is true, always called issuePaymentQuote()
- * and returned the -32402 challenge unconditionally -- even when the caller
- * already presented a valid `x-payment` proof header. The generic
- * settlePayment(headers, proof) path a few lines below was structurally
- * unreachable for start_dream under this flag.
- *
- * Fix: check `headers.get('x-payment')` first; only fall through to
- * issuePaymentQuote() when there is no proof, or when a presented proof
- * genuinely failed to settle.
- */
-describe('start_dream payment-proof handling (dream-payment-binding flag)', () => {
+describe('start_dream quote-bound payment handling', () => {
   beforeEach(() => {
     vi.resetModules();
     process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
+    process.env.FEATURE_MCP_AUTH_WORKOS = 'true';
     process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
     process.env.FEATURE_MCP_PAYWALL = 'true';
     process.env.FEATURE_MCP_DREAM_PAYMENT_BINDING = 'true';
@@ -26,99 +13,82 @@ describe('start_dream payment-proof handling (dream-payment-binding flag)', () =
     }));
   });
 
-  it('accepts a valid x-payment proof and dispatches start_dream instead of re-issuing a quote challenge', async () => {
+  it('issues a Dream quote for an unpaid call', async () => {
     vi.doMock('../src/lib/mcp/paywall', async () => {
       const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
       return {
         ...actual,
         findActiveSession: vi.fn(async () => null),
         consumeSession: vi.fn(async () => false),
-        settlePayment: vi.fn(async () => ({ ok: true, session: { sessionId: 'sess-123', tier: 'dream', chain: 'xrpl-testnet', quotaRemaining: 50 } })),
-        issuePaymentQuote: vi.fn(async () => {
-          throw new Error('issuePaymentQuote must NOT be called when a valid proof is already presented');
-        }),
+        issuePaymentQuote: vi.fn(async () => ({ ok: true, quote: { quoteId: 'q-1', tier: 'dream', agentId: 'robot-42', amount: '0.05' } })),
       };
     });
     const { callTool } = await import('../src/lib/mcp/gateway');
-    const session = { userId: 'paid-user-dream', tier: 'free' as const, kind: 'user' as const };
-    const headers = new Headers({ 'x-payment': JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }) });
-    const out = await callTool({ session, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers });
-    expect(out.error).toBeUndefined();
-    expect(out.result).toBeTruthy();
-  });
-
-  it('still returns the -32402 quote challenge when no proof is presented (unpaid path unchanged)', async () => {
-    vi.doMock('../src/lib/mcp/paywall', async () => {
-      const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
-      return {
-        ...actual,
-        findActiveSession: vi.fn(async () => null),
-        consumeSession: vi.fn(async () => false),
-        issuePaymentQuote: vi.fn(async () => ({ ok: true, quote: { quoteId: 'q-1', tier: 'dream', amount: 0.05 } })),
-      };
-    });
-    const { callTool } = await import('../src/lib/mcp/gateway');
-    const session = { userId: 'unpaid-user-dream', tier: 'free' as const, kind: 'user' as const };
-    const out = await callTool({ session, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers: new Headers() });
+    const out = await callTool({ session: { userId: 'unpaid-user', tier: 'free', kind: 'user' }, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers: new Headers() });
     expect(out.error?.code).toBe(-32402);
-    expect((out.error?.data as { payment?: unknown })?.payment).toBeTruthy();
+    const data = out.error?.data as { payment?: { quoteId?: string }; retry_with_quote?: string };
+    expect(data.payment?.quoteId).toBe('q-1');
+    expect(data.retry_with_quote).toContain('X-Payment-Quote-Id');
   });
 
-  it('falls back to a fresh quote challenge when a presented proof fails to settle (does not silently 500 or accept garbage proof)', async () => {
+  it('settles the exact user, Dream-tier, agent-bound quote before dispatching', async () => {
+    const settleQuote = vi.fn(async (userId: string, quoteId: string, proof: string | undefined, expected: unknown) => {
+      expect(userId).toBe('paid-user');
+      expect(quoteId).toBe('q-123');
+      expect(proof).toBe(JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }));
+      expect(expected).toEqual({ tier: 'dream', agentId: 'robot-42' });
+      return { ok: true, session: { sessionId: 'sess-123', tier: 'dream', chain: 'xrpl-testnet', quotaRemaining: 50 } };
+    });
     vi.doMock('../src/lib/mcp/paywall', async () => {
       const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
-      return {
-        ...actual,
-        findActiveSession: vi.fn(async () => null),
-        consumeSession: vi.fn(async () => false),
-        settlePayment: vi.fn(async () => ({ ok: false, error: 'transaction_not_found', hint: 'verify the txHash on-ledger' })),
-        issuePaymentQuote: vi.fn(async () => ({ ok: true, quote: { quoteId: 'q-2', tier: 'dream', amount: 0.05 } })),
-      };
+      return { ...actual, findActiveSession: vi.fn(async () => null), consumeSession: vi.fn(async () => false), settleQuote, settlePayment: vi.fn() };
     });
     const { callTool } = await import('../src/lib/mcp/gateway');
-    const session = { userId: 'bad-proof-user', tier: 'free' as const, kind: 'user' as const };
-    const headers = new Headers({ 'x-payment': JSON.stringify({ txHash: 'deadbeef' }) });
-    const out = await callTool({ session, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers });
-    expect(out.error?.code).toBe(-32402);
-    const data = out.error?.data as { payment?: unknown; error?: string };
-    expect(data.payment).toBeTruthy();
-    expect(data.error).toBe('transaction_not_found');
-  });
-
-  /**
-   * Regression for docs/feedback/2026-08-17-start-dream-still-blocked-post-redeploy-followup.md
-   * The real-world shape a caller uses: bare `x-payment: {"txHash":"..."}`
-   * PLUS the separate `X-Payment-Chain` / `X-Payment-Asset` selector headers
-   * (not a proof nested inside a JSON object under those header names, which
-   * the follow-up feedback file's own 4th attempt incorrectly guessed).
-   */
-  it('accepts a real already-submitted-tx-hash proof paired with X-Payment-Chain/X-Payment-Asset selector headers', async () => {
-    vi.doMock('../src/lib/mcp/paywall', async () => {
-      const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
-      return {
-        ...actual,
-        findActiveSession: vi.fn(async () => null),
-        consumeSession: vi.fn(async () => false),
-        settlePayment: vi.fn(async (_userId: string, _tier: string, hdrs: Headers, proof?: string) => {
-          expect(proof).toBe(JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }));
-          expect(hdrs.get('x-payment-chain')).toBe('xrpl-testnet');
-          expect(hdrs.get('x-payment-asset')).toBe('RLUSD');
-          return { ok: true, session: { sessionId: 'sess-real-tx', tier: 'dream', chain: 'xrpl-testnet', quotaRemaining: 50 } };
-        }),
-        issuePaymentQuote: vi.fn(async () => {
-          throw new Error('issuePaymentQuote must NOT be called for a genuinely valid, correctly-shaped proof');
-        }),
-      };
-    });
-    const { callTool } = await import('../src/lib/mcp/gateway');
-    const session = { userId: 'real-tx-user', tier: 'free' as const, kind: 'user' as const };
     const headers = new Headers({
+      'x-payment-quote-id': 'q-123',
       'x-payment': JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }),
       'x-payment-chain': 'xrpl-testnet',
       'x-payment-asset': 'RLUSD',
     });
-    const out = await callTool({ session, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers });
+    const out = await callTool({ session: { userId: 'paid-user', tier: 'free', kind: 'user' }, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers });
     expect(out.error).toBeUndefined();
     expect(out.result).toBeTruthy();
+    expect(settleQuote).toHaveBeenCalledTimes(1);
+  });
+
+  it('rejects an invalid or mismatched quote without falling back to unbound settlement', async () => {
+    vi.doMock('../src/lib/mcp/paywall', async () => {
+      const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
+      return {
+        ...actual,
+        findActiveSession: vi.fn(async () => null),
+        consumeSession: vi.fn(async () => false),
+        settleQuote: vi.fn(async () => ({ ok: false, error: 'payment quote is bound to a different agent_id' })),
+        settlePayment: vi.fn(async () => ({ ok: true })),
+      };
+    });
+    const { callTool } = await import('../src/lib/mcp/gateway');
+    const out = await callTool({
+      session: { userId: 'paid-user', tier: 'free', kind: 'user' }, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } },
+      headers: new Headers({ 'x-payment-quote-id': 'other-agent-quote', 'x-payment': 'proof' }),
+    });
+    expect(out.error?.code).toBe(-32402);
+    expect((out.error?.data as { error?: string }).error).toMatch(/different agent_id/);
+  });
+
+  it('retains direct proof settlement when Dream binding is disabled', async () => {
+    process.env.FEATURE_MCP_DREAM_PAYMENT_BINDING = 'false';
+    vi.doMock('../src/lib/mcp/paywall', async () => {
+      const actual = await vi.importActual<typeof import('../src/lib/mcp/paywall')>('../src/lib/mcp/paywall');
+      return {
+        ...actual,
+        findActiveSession: vi.fn(async () => null),
+        consumeSession: vi.fn(async () => false),
+        settlePayment: vi.fn(async () => ({ ok: true, session: { sessionId: 'legacy-session', tier: 'dream', chain: 'xrpl-testnet', quotaRemaining: 50 } })),
+      };
+    });
+    const { callTool } = await import('../src/lib/mcp/gateway');
+    const out = await callTool({ session: { userId: 'legacy-user', tier: 'free', kind: 'user' }, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers: new Headers({ 'x-payment': 'legacy-proof' }) });
+    expect(out.error).toBeUndefined();
   });
 });

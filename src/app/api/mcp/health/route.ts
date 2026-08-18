@@ -1,4 +1,4 @@
-import { isMcpGatewayEnabled, isMcpAuthEnabled, isMcpResourcesEnabled } from '@/lib/platform-flag';
+import { isMcpGatewayEnabled, isMcpAuthEnabled, isMcpPaywallEnabled, isMcpResourcesEnabled, isMcpDreamPaymentBindingEnabled } from '@/lib/platform-flag';
 import { getTools } from '@/lib/mcp/tools';
 import { getPrompts } from '@/lib/mcp/prompts';
 import { isRealPaymentsConfigured } from '@/lib/mcp/npayment-rails';
@@ -12,6 +12,8 @@ export async function GET() {
     ok: true,
     gateway_enabled: isMcpGatewayEnabled(),
     auth_required: isMcpAuthEnabled(),
+    paywall_enabled: isMcpPaywallEnabled(),
+    dream_payment_binding_enabled: isMcpDreamPaymentBindingEnabled(),
     transport: 'streamable-http',
     tools: isMcpGatewayEnabled() ? getTools().map((t) => t.name) : ['payment.x402', 'reputation.read'],
     // Dream Cycle Confidential Extraction on Flare FCC, Task 10. Additive —

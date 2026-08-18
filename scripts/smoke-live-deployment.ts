@@ -15,7 +15,8 @@
  *      PRD 05) real_payments_configured.
  *   2. tools/call submit_episode_log — one well-formed episode for a
  *      throwaway test agent_id.
- *   3. tools/call start_dream — budget_usd: 0.05, preset: 'balanced'.
+ *   3. tools/call start_dream — asserts a Dream quote challenge by default;
+ *      MCP_SMOKE_RUN_PAID_DREAM=true signs one fresh testnet quote and retries.
  *   4. tools/call get_dream_stats — asserts stage_summaries.preprocessing.
  *      live_unconsumed_count (2026-08-11 Task 2) is present.
  *   5. tools/call payments.settle — tier: 't1_read', chain: 'xrpl-testnet',
@@ -45,11 +46,9 @@
  *   MCP_SMOKE_BEARER_TOKEN=<token> \
  *     npx tsx scripts/smoke-live-deployment.ts
  *
- * This script NEVER spends real/testnet RLUSD itself — step 5's proof is
- * intentionally malformed. Live RLUSD settlement verification is a
- * SEPARATE, user-executed step (see scripts/demo-t54-rlusd-dream-cycle.ts
- * and this plan's Task 7) — this script's own scope ends at confirming the
- * gateway's structured-rejection behavior for bad input.
+ * The optional paid-Dream mode requires MCP_SMOKE_XRPL_SEED for a funded
+ * testnet wallet with RLUSD. It refuses mainnet and applies the spend guard
+ * before signing; the seed and proof are never printed.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -59,6 +58,7 @@ const BASE_URL = process.env.MCP_SMOKE_BASE_URL ?? 'http://localhost:3003/api/mc
 const BEARER_TOKEN = process.env.MCP_SMOKE_BEARER_TOKEN;
 const HEALTH_URL = process.env.MCP_SMOKE_HEALTH_URL ?? BASE_URL.replace(/\/api\/mcp\/?$/, '/api/mcp/health');
 const TEST_AGENT_ID = process.env.MCP_SMOKE_AGENT_ID ?? `smoke-test-${randomUUID().slice(0, 8)}`;
+const RUN_PAID_DREAM = process.env.MCP_SMOKE_RUN_PAID_DREAM === 'true';
 
 interface StepResult {
   step: number;
@@ -98,17 +98,21 @@ export function parseJsonRpcBody(raw: string): Record<string, unknown> {
   return JSON.parse(lastData) as Record<string, unknown>;
 }
 
-async function callTool(name: string, args: Record<string, unknown>, id: number): Promise<Record<string, unknown>> {
+async function callTool(name: string, args: Record<string, unknown>, id: number, extraHeaders?: HeadersInit): Promise<Record<string, unknown>> {
   if (!BEARER_TOKEN) {
     throw new Error('MCP_SMOKE_BEARER_TOKEN is required — get one via the documented no-wallet device-code flow (see docs/agent-auth) or /mcp-connect.');
   }
+  const headers = new Headers({
+    'content-type': 'application/json',
+    accept: 'application/json, text/event-stream',
+    authorization: `Bearer ${BEARER_TOKEN}`,
+  });
+  if (extraHeaders) {
+    new Headers(extraHeaders).forEach((value, key) => headers.set(key, value));
+  }
   const res = await fetch(BASE_URL, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      accept: 'application/json, text/event-stream',
-      authorization: `Bearer ${BEARER_TOKEN}`,
-    },
+    headers,
     body: JSON.stringify({ jsonrpc: '2.0', id, method: 'tools/call', params: { name, arguments: args } }),
   });
   const raw = await res.text();
@@ -159,12 +163,47 @@ async function step2SubmitEpisodeLog(): Promise<void> {
 
 async function step3StartDream(): Promise<void> {
   try {
-    const result = await callTool('start_dream', {
+    const args = {
       agent_id: TEST_AGENT_ID,
       config: { budget_usd: 0.05, preset: 'balanced' },
-    }, 3);
-    const pass = typeof result.run_id === 'string' && typeof result.status === 'string';
-    record(3, 'start_dream', pass, JSON.stringify(result));
+    };
+    const challenge = await callTool('start_dream', args, 3);
+    const payment = challenge.payment as { quoteId?: string; merchant?: string; issuer?: string; nonce?: string; amount?: string; chain?: string } | undefined;
+    if (!RUN_PAID_DREAM) {
+      const pass = challenge.error === 'payment_required' && typeof payment?.quoteId === 'string';
+      record(3, 'start_dream (unpaid -> quote challenge)', pass, JSON.stringify(challenge));
+      return;
+    }
+    if (!payment?.quoteId || !payment.merchant || !payment.issuer || !payment.nonce || !payment.amount || payment.chain !== 'xrpl-testnet') {
+      throw new Error('paid Dream mode requires a complete xrpl-testnet quote from start_dream');
+    }
+    const seed = process.env.MCP_SMOKE_XRPL_SEED;
+    if (!seed) throw new Error('MCP_SMOKE_XRPL_SEED is required when MCP_SMOKE_RUN_PAID_DREAM=true');
+    assertWithinSpendGuard(payment.amount);
+    const { Client, Wallet } = await import('xrpl');
+    const client = new Client('wss://s.altnet.rippletest.net:51233');
+    const wallet = Wallet.fromSeed(seed);
+    try {
+      await client.connect();
+      const tx = await client.submitAndWait({
+        TransactionType: 'Payment', Account: wallet.classicAddress, Destination: payment.merchant,
+        Amount: { currency: 'RLUSD', issuer: payment.issuer, value: payment.amount },
+        Memos: [{ Memo: { MemoData: Buffer.from(payment.nonce).toString('hex') } }],
+      }, { wallet });
+      if ((tx.result.meta as { TransactionResult?: string } | undefined)?.TransactionResult !== 'tesSUCCESS') {
+        throw new Error(`XRPL payment failed: ${(tx.result.meta as { TransactionResult?: string } | undefined)?.TransactionResult ?? 'unknown'}`);
+      }
+      const result = await callTool('start_dream', args, 4, {
+        'x-payment-quote-id': payment.quoteId,
+        'x-payment': JSON.stringify({ txHash: tx.result.hash }),
+        'x-payment-chain': 'xrpl-testnet',
+        'x-payment-asset': 'RLUSD',
+      });
+      const pass = typeof result.run_id === 'string' && typeof result.status === 'string';
+      record(3, 'start_dream (fresh quote-bound payment)', pass, pass ? `run_id=${result.run_id}` : JSON.stringify(result));
+    } finally {
+      await client.disconnect().catch(() => undefined);
+    }
   } catch (err) {
     record(3, 'start_dream', false, `request failed: ${(err as Error).message}`);
   }

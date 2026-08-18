@@ -83,6 +83,8 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     package.json \
     pnpm-lock.yaml \
     pnpm-workspace.yaml \
+    .npmrc \
+    patches \
     nim.json \
     next.config.mjs
 

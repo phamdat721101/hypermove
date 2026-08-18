@@ -210,6 +210,11 @@ export interface SettleResult {
   hint?: string;
 }
 
+export interface QuoteSettlementExpectation {
+  tier?: PriceTier;
+  agentId?: string;
+}
+
 /**
  * Settle a payment for a tier from raw request headers (legacy REST path).
  * Delegates to settleSelection — the one settlement core.
@@ -274,9 +279,20 @@ export async function settleSelection(
 }
 
 /** Settle a previously disclosed quote. A quote is single-use and user-bound. */
-export async function settleQuote(userId: string, quoteId: string, proof?: string): Promise<SettleResult & { quote?: PaymentQuote }> {
+export async function settleQuote(
+  userId: string,
+  quoteId: string,
+  proof?: string,
+  expected?: QuoteSettlementExpectation,
+): Promise<SettleResult & { quote?: PaymentQuote }> {
   const quote = await loadQuote(userId, quoteId);
   if (!quote) return { ok: false, error: 'payment quote was not found' };
+  if (expected?.tier && quote.tier !== expected.tier) {
+    return { ok: false, error: `payment quote is for the ${quote.tier} tier, not ${expected.tier}` };
+  }
+  if (expected?.agentId && quote.agentId !== expected.agentId) {
+    return { ok: false, error: 'payment quote is bound to a different agent_id' };
+  }
   if (quote.settledAt || quote.sessionId) return { ok: false, error: 'payment quote has already been settled' };
   if (Date.parse(quote.expiresAt) <= Date.now()) return { ok: false, error: 'payment quote has expired', hint: 'request a new payments.quote before signing' };
   // Quote metadata is always retained for auditing, but the on-ledger memo

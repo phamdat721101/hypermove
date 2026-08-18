@@ -56,7 +56,7 @@ describe('Task 6 (2026-08-11 status-review upgrade) · smoke-live-deployment.ts'
       const body = JSON.parse(String(init?.body)) as { id: number; params: { name: string } };
       const name = body.params.name;
       if (name === 'submit_episode_log') return new Response(sseEnvelope({ ingested_count: 1, rejected: [] }), { status: 200 });
-      if (name === 'start_dream') return new Response(sseEnvelope({ run_id: 'run-1', status: 'started' }), { status: 200 });
+      if (name === 'start_dream') return new Response(sseEnvelope({ error: 'payment_required', payment: { quoteId: 'q-1' } }), { status: 200 });
       if (name === 'get_dream_stats') return new Response(sseEnvelope({ stage_summaries: { preprocessing: { live_unconsumed_count: 0 } } }), { status: 200 });
       if (name === 'payments.settle') return new Response(sseEnvelope({ ok: false, error: 'invalid_proof' }), { status: 200 });
       throw new Error(`unexpected tool call in test: ${name}`);
@@ -77,7 +77,7 @@ describe('Task 6 (2026-08-11 status-review upgrade) · smoke-live-deployment.ts'
       const body = JSON.parse(String(init?.body)) as { params: { name: string } };
       const name = body.params.name;
       if (name === 'submit_episode_log') return new Response(sseEnvelope({ ingested_count: 1 }), { status: 200 });
-      if (name === 'start_dream') return new Response(sseEnvelope({ run_id: 'run-1', status: 'started' }), { status: 200 });
+      if (name === 'start_dream') return new Response(sseEnvelope({ error: 'payment_required', payment: { quoteId: 'q-1' } }), { status: 200 });
       // Deliberately missing stage_summaries entirely.
       if (name === 'get_dream_stats') return new Response(sseEnvelope({}), { status: 200 });
       if (name === 'payments.settle') return new Response(sseEnvelope({ ok: false }), { status: 200 });
@@ -99,7 +99,7 @@ describe('Task 6 (2026-08-11 status-review upgrade) · smoke-live-deployment.ts'
       const body = JSON.parse(String(init?.body)) as { params: { name: string } };
       const name = body.params.name;
       if (name === 'submit_episode_log') return new Response(sseEnvelope({ ingested_count: 1 }), { status: 200 });
-      if (name === 'start_dream') return new Response(sseEnvelope({ run_id: 'run-1', status: 'started' }), { status: 200 });
+      if (name === 'start_dream') return new Response(sseEnvelope({ error: 'payment_required', payment: { quoteId: 'q-1' } }), { status: 200 });
       if (name === 'get_dream_stats') return new Response(sseEnvelope({ stage_summaries: { preprocessing: { live_unconsumed_count: 0 } } }), { status: 200 });
       if (name === 'payments.settle') return new Response(sseEnvelope({ ok: false, code: 'invalid_proof_shape' }), { status: 200 });
       throw new Error(`unexpected tool call: ${name}`);
@@ -117,7 +117,7 @@ describe('Task 6 (2026-08-11 status-review upgrade) · smoke-live-deployment.ts'
       const body = JSON.parse(String(init?.body)) as { params: { name: string } };
       const name = body.params.name;
       if (name === 'submit_episode_log') return new Response(sseEnvelope({ ingested_count: 1 }), { status: 200 });
-      if (name === 'start_dream') return new Response(sseEnvelope({ run_id: 'run-1', status: 'started' }), { status: 200 });
+      if (name === 'start_dream') return new Response(sseEnvelope({ error: 'payment_required', payment: { quoteId: 'q-1' } }), { status: 200 });
       if (name === 'get_dream_stats') return new Response(sseEnvelope({ stage_summaries: { preprocessing: { live_unconsumed_count: 0 } } }), { status: 200 });
       // A malformed proof should NEVER produce ok:true — if it somehow did,
       // this step must fail loudly rather than report a false pass.
@@ -137,7 +137,7 @@ describe('Task 6 (2026-08-11 status-review upgrade) · smoke-live-deployment.ts'
       const body = JSON.parse(String(init?.body)) as { params: { name: string } };
       const name = body.params.name;
       if (name === 'submit_episode_log') return new Response(sseEnvelope({ ingested_count: 1 }), { status: 200 });
-      if (name === 'start_dream') return new Response(sseEnvelope({ run_id: 'run-1', status: 'started' }), { status: 200 });
+      if (name === 'start_dream') return new Response(sseEnvelope({ error: 'payment_required', payment: { quoteId: 'q-1' } }), { status: 200 });
       if (name === 'get_dream_stats') return new Response(sseEnvelope({ stage_summaries: { preprocessing: { live_unconsumed_count: 0 } } }), { status: 200 });
       if (name === 'payments.settle') return new Response('<html>502 Bad Gateway</html>', { status: 502 });
       throw new Error(`unexpected tool call: ${name}`);

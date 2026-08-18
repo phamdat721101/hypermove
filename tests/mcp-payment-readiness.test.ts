@@ -39,6 +39,16 @@ describe('XRPL payment readiness contract', () => {
     expect(settled.error).toMatch(/expired/);
   });
 
+  it('rejects a quote before settlement when the requested Dream agent differs', async () => {
+    configureQuote();
+    const issued = await issuePaymentQuote('user-bound', { tier: 'dream', chain: 'xrpl-testnet', asset: 'RLUSD', agentId: 'agent-a' });
+    expect(issued.ok).toBe(true);
+    if (!issued.ok) return;
+    const settled = await settleQuote('user-bound', issued.quote.quoteId, 'proof', { tier: 'dream', agentId: 'agent-b' });
+    expect(settled.ok).toBe(false);
+    expect(settled.error).toMatch(/different agent_id/);
+  });
+
   it('publishes secret-free local-signer bootstrap and strict episode schema', async () => {
     const bootstrap = getTool('wallet.xrpl.bootstrap')!;
     const value = await bootstrap.handler({});

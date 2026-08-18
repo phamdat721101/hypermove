@@ -118,12 +118,14 @@ handler output is checked before it ships.
 | Tool | Tier | Purpose |
 |---|---|---|
 | `submit_episode_log` | unmetered | Batch-upload episode logs to cold storage (zero LLM calls) |
-| `start_dream` | unmetered | Run the pipeline (preprocess → cluster → extract → consolidate → prune) |
+| `start_dream` | dream paid tier | Run the pipeline (preprocess → cluster → extract → consolidate → prune) |
 | `get_dream_config` | unmetered | Retrieve the last stored Dream Cycle config for an agent |
 | `query_dream` | unmetered | Query consolidated memories by natural-language query |
 | `get_dream_stats` | unmetered | Last-run metadata: status, memories added/removed, budget used |
 
-All 5 are unmetered — their spend is bounded by `start_dream`'s own per-cycle `budget_usd`
+Dream reads and ingestion are unmetered. `start_dream` requires a Dream-tier payment whenever MCP auth and the paywall are enabled; its per-cycle `budget_usd` remains an independent cost guardrail.
+
+When `FEATURE_MCP_DREAM_PAYMENT_BINDING=true`, first call `start_dream` without payment to receive a quote. Submit the quoted RLUSD payment with its nonce memo, then retry the same call with `X-Payment-Quote-Id`, `X-Payment`, `X-Payment-Chain`, and `X-Payment-Asset`. The quote is bound to the authenticated user and `agent_id`.
 guardrail, not the gateway's free-tier metering. See "Dream Cycle" below for the full
 learn-loop walkthrough.
 

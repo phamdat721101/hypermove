@@ -33,6 +33,7 @@ describe('MCP transport threads real request headers into gateway.callTool()', (
 
     const realHeaders = new Headers({
       'x-payment': JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }),
+      'x-payment-quote-id': 'dream-quote-123',
       'x-payment-chain': 'xrpl-testnet',
       'x-payment-asset': 'RLUSD',
     });
@@ -49,6 +50,7 @@ describe('MCP transport threads real request headers into gateway.callTool()', (
     expect(capturedHeaders).toBe(realHeaders);
     expect(capturedHeaders?.get('x-payment')).toBe(JSON.stringify({ txHash: '59B4F5A720E3657AA01BE4A5766BD4658EAEAC9E2CDFA8089DF734483BAF5ECF' }));
     expect(capturedHeaders?.get('x-payment-chain')).toBe('xrpl-testnet');
+    expect(capturedHeaders?.get('x-payment-quote-id')).toBe('dream-quote-123');
   });
 
   it('falls back to undefined headers gracefully when authInfo carries no headers (unauthenticated/anon path unchanged)', async () => {

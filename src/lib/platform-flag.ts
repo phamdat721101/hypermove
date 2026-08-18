@@ -217,9 +217,8 @@ export function isMcpDeviceAuthEnabled(): boolean {
 // query_dream / get_dream_stats / dream/* resources + prompts at near-zero
 // token cost on the read side. See docs/prd/dream-cycle-v1.md.
 //
-// All 5 new tools are `unmetered: true` (bypass the paywall/rate-limit tiers
-// entirely — see gateway.ts) because spend is bounded by this feature's own
-// per-cycle `budget_usd` guardrail, not the gateway's free-tier metering.
+// Dream reads and ingestion are unmetered. start_dream is paid when the MCP
+// paywall is enabled; its per-cycle budget remains a separate cost guardrail.
 // Default ON (v3Flag opt-out), matching every other v3.0/v4.0 sub-flag.
 export function isMcpDreamCycleEnabled(): boolean {
   return v3Flag('FEATURE_MCP_DREAM_CYCLE');
