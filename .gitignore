@@ -65,7 +65,9 @@ credentials/
 service-account.json
 serviceAccountKey.json
 gha-creds-*.json
-.npmrc
+# .npmrc is intentionally committed — it contains only ${GITHUB_TOKEN} env-var
+# interpolation (no hardcoded secrets). Required to fix ERR_PNPM_FETCH_429 in CI.
+# See docs/prd/ for context.
 .netrc
 
 # SSH / GPG (defensive — never want these in the repo)
