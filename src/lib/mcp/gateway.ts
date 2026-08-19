@@ -24,6 +24,16 @@ export interface RpcOutcome {
   error?: { code: number; message: string; data?: unknown };
 }
 
+/**
+ * Versioned so agents can distinguish a rejected proof from a changed payment
+ * contract. Increment this only when the required quote/proof exchange changes.
+ */
+export const DREAM_PAYMENT_CONTRACT_VERSION = 'dream-quote-memo/v1';
+
+function dreamPaymentChallenge(data: Record<string, unknown>): Record<string, unknown> {
+  return { contract_version: DREAM_PAYMENT_CONTRACT_VERSION, ...data };
+}
+
 // ─── Gateway Guardians — module-level sentinel singleton ──────────────────
 //
 // forceEnabled:true makes isMcpGuardiansEnabled() the SOLE gate for this
@@ -92,7 +102,7 @@ export async function callTool(input: {
               if (settled.ok) {
                 sessionId = settled.session?.sessionId;
               } else {
-                return { error: { code: -32402, message: 'payment_required', data: { code: 'payment_required', error: settled.error, hint: settled.hint, ...buildChallenge(tool.tier, 0) } } };
+                return { error: { code: -32402, message: 'payment_required', data: dreamPaymentChallenge({ code: 'payment_required', error: settled.error, hint: settled.hint, ...buildChallenge(tool.tier, 0) }) } };
               }
             } else {
               const quote = await issuePaymentQuote(session.userId, { tier: tool.tier, chain: configuredXrplChain(), asset: 'RLUSD', agentId: agentId ?? '' });
@@ -101,13 +111,13 @@ export async function callTool(input: {
                   code: -32402,
                   message: 'payment_required',
                   data: quote.ok
-                    ? {
+                    ? dreamPaymentChallenge({
                       code: 'payment_required',
                       payment: quote.quote,
                       retry_with_quote: 'Settle this exact quote, then retry start_dream with X-Payment-Quote-Id, X-Payment, X-Payment-Chain, and X-Payment-Asset headers.',
                       ...buildChallenge(tool.tier, 0),
-                    }
-                    : { code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) },
+                    })
+                    : dreamPaymentChallenge({ code: 'payment_required', error: quote.error, hint: quote.hint, ...buildChallenge(tool.tier, 0) }),
                 },
               };
             }
@@ -116,10 +126,10 @@ export async function callTool(input: {
             if (settled.ok) {
               sessionId = settled.session?.sessionId;
             } else {
-              return { error: { code: -32402, message: settled.error ?? 'payment failed', data: { hint: settled.hint } } };
+              return { error: { code: -32402, message: settled.error ?? 'payment failed', data: dreamPaymentChallenge({ hint: settled.hint }) } };
             }
           } else {
-            return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: buildChallenge(tool.tier, 0) } };
+            return { error: { code: -32402, message: `Payment required — settle the ${tool.tier} tier before starting a Dream Cycle.`, data: dreamPaymentChallenge(buildChallenge(tool.tier, 0)) } };
           }
         } else {
           const rate = isMcpRateLimitEnabled() ? await checkAndConsume(session.userId) : { allowed: true, resetInHours: 0 };

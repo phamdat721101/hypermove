@@ -48,6 +48,40 @@ describe('Task 6 (2026-08-11 status-review upgrade) · smoke-live-deployment.ts'
     expect(() => parseJsonRpcBody('not json, not sse, just garbage')).toThrow(/Could not parse response/);
   });
 
+  it('requires the versioned, memo-complete XRPL testnet quote before paid mode can sign', async () => {
+    const { validatePaidDreamQuote, unwrapPaymentChallenge, XRPL_RLUSD_CURRENCY } = await import('../scripts/smoke-live-deployment');
+    expect(XRPL_RLUSD_CURRENCY).toBe('524C555344000000000000000000000000000000');
+    expect(validatePaidDreamQuote({
+      contract_version: 'dream-quote-memo/v1',
+      payment: { quoteId: 'q-1', merchant: 'rMerchant', issuer: 'rIssuer', nonce: 'nonce', amount: '0.05', chain: 'xrpl-testnet' },
+    })).toBeNull();
+    expect(unwrapPaymentChallenge({
+      __jsonrpc_error: {
+        code: -32402,
+        data: {
+          contract_version: 'dream-quote-memo/v1',
+          payment: { quoteId: 'q-1', merchant: 'rMerchant', issuer: 'rIssuer', nonce: 'nonce', amount: '0.05', chain: 'xrpl-testnet' },
+        },
+      },
+    })).toMatchObject({ contract_version: 'dream-quote-memo/v1', payment: { quoteId: 'q-1' } });
+    expect(validatePaidDreamQuote({
+      __jsonrpc_error: {
+        data: {
+          contract_version: 'dream-quote-memo/v1',
+          payment: { quoteId: 'q-1', merchant: 'rMerchant', issuer: 'rIssuer', nonce: 'nonce', amount: '0.05', chain: 'xrpl-testnet' },
+        },
+      },
+    })).toBeNull();
+    expect(validatePaidDreamQuote({
+      error: 'payment_required',
+      data: {
+        contract_version: 'dream-quote-memo/v1',
+        payment: { quoteId: 'q-1', merchant: 'rMerchant', issuer: 'rIssuer', nonce: 'nonce', amount: '0.05', chain: 'xrpl-testnet' },
+      },
+    })).toBeNull();
+    expect(validatePaidDreamQuote({ payment: { quoteId: 'q-1' } })).toMatch(/contract_version/);
+  });
+
   it('runs all 5 steps in order and reports 5/5 pass when every call succeeds', async () => {
     vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
       if (url.includes('/health')) {

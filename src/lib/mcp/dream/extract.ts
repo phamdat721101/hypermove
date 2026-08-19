@@ -28,12 +28,22 @@ import { fetchWithTimeout } from '../http';
 import type { EpisodeCluster } from './cluster';
 import { CostTracker, estimateTokens } from './cost';
 
+export interface ScoredDreamInsight {
+  type: 'rule' | 'preference' | 'error_pattern' | 'fact';
+  content: string;
+  confidence: number;
+  importance: number;
+  reasoning?: string;
+}
+
 export interface ExtractedInsights {
   cluster_id: string;
   rules: string[];
   preferences: string[];
   error_patterns: string[];
   facts: string[];
+  /** Additive scored records. Legacy category arrays remain supported. */
+  scored_insights?: ScoredDreamInsight[];
 }
 
 export interface ExtractionOutcome {
@@ -153,6 +163,9 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
       preferences: (body.preferences ?? []).slice(0, 10),
       error_patterns: (body.error_patterns ?? []).slice(0, 10),
       facts: (body.facts ?? []).slice(0, 10),
+      ...(Array.isArray(body.scored_insights)
+        ? { scored_insights: body.scored_insights.slice(0, 40).flatMap(normalizeScoredInsight) }
+        : {}),
     };
     // Root-cause fix (2026-07-27): services/llm's extractDreamInsights() now
     // tags a failed-to-parse/truncated result with extraction_failure_reason
@@ -175,6 +188,14 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
     // Never genuine — a thrown/network-level failure is never cost-worthy.
     return emptyAttempt(cluster.cluster_id, 'upstream_error');
   }
+}
+
+function normalizeScoredInsight(value: unknown): ScoredDreamInsight[] {
+  if (typeof value !== 'object' || value === null) return [];
+  const input = value as Partial<ScoredDreamInsight>;
+  if (!['rule', 'preference', 'error_pattern', 'fact'].includes(String(input.type)) || typeof input.content !== 'string') return [];
+  const score = (value: unknown) => Math.min(1, Math.max(0, typeof value === 'number' && Number.isFinite(value) ? value : 0.5));
+  return [{ type: input.type as ScoredDreamInsight['type'], content: input.content.slice(0, 200), confidence: score(input.confidence), importance: score(input.importance), ...(typeof input.reasoning === 'string' ? { reasoning: input.reasoning.slice(0, 300) } : {}) }];
 }
 
 function emptyAttempt(clusterId: string, failureReason: ClusterExtractionAttempt['failureReason'], errorDetail?: string): ClusterExtractionAttempt {

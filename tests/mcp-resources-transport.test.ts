@@ -88,7 +88,7 @@ function installFakeDreamDb(runRow?: { agent_id: string; status: string; started
 }
 
 describe('Task 7 · MCP Resources primitive — real SDK protocol round-trip', () => {
-  it('resources/list returns the 4 Dream Cycle resource templates when isMcpResourcesEnabled() + Dream Cycle are on', async () => {
+  it('resources/list returns the Dream Cycle resource templates when isMcpResourcesEnabled() + Dream Cycle are on', async () => {
     process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 = 'true';
     process.env.FEATURE_MCP_DREAM_CYCLE = 'true';
     process.env.FEATURE_MCP_RESOURCES = 'true';
@@ -103,6 +103,7 @@ describe('Task 7 · MCP Resources primitive — real SDK protocol round-trip', (
     expect(uris).toContain('hypermove:///agents/{agent_id}/dream/rules');
     expect(uris).toContain('hypermove:///agents/{agent_id}/dream/errors');
     expect(uris).toContain('hypermove:///agents/{agent_id}/dream/stats');
+    expect(uris).toContain('hypermove:///agents/{agent_id}/dream/wake');
   });
 
   it('resources/list has no handler at all (-32601) when isMcpResourcesEnabled() is off — same "not even discoverable" discipline as prompts', async () => {

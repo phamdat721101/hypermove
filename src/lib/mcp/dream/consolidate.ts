@@ -22,6 +22,8 @@ export type MemoryType = 'rule' | 'error_pattern' | 'preference' | 'fact';
 export interface FlatInsight {
   type: MemoryType;
   content: string;
+  confidence?: number;
+  importance?: number;
 }
 
 export interface ExistingMemory {
@@ -29,6 +31,8 @@ export interface ExistingMemory {
   type: MemoryType;
   content: string;
   confidence: number;
+  /** Optional only for backwards-compatible test fixtures; durable rows always provide it. */
+  importance?: number;
   source_count: number;
   embedding: number[];
 }
@@ -53,6 +57,10 @@ const MAX_CONTENT_CHARS = 200;
 export function flattenInsights(extracted: ExtractedInsights[]): FlatInsight[] {
   const out: FlatInsight[] = [];
   for (const e of extracted) {
+    if (e.scored_insights?.length) {
+      for (const insight of e.scored_insights) out.push({ type: insight.type, content: insight.content.slice(0, MAX_CONTENT_CHARS), confidence: insight.confidence, importance: insight.importance });
+      continue;
+    }
     for (const content of e.rules) out.push({ type: 'rule', content: content.slice(0, MAX_CONTENT_CHARS) });
     for (const content of e.preferences) out.push({ type: 'preference', content: content.slice(0, MAX_CONTENT_CHARS) });
     for (const content of e.error_patterns) out.push({ type: 'error_pattern', content: content.slice(0, MAX_CONTENT_CHARS) });
@@ -162,9 +170,9 @@ export async function consolidateInsights(
       const newSourceCount = existing.source_count + 1;
       await withClient(async (client) => {
         await client.query(
-          `UPDATE dream_consolidated_memories SET confidence = $1, source_count = $2, last_accessed_at = NOW()
-           WHERE memory_id = $3`,
-          [newConfidence, newSourceCount, existing.memory_id],
+          `UPDATE dream_consolidated_memories SET confidence = $1, importance = $2, source_count = $3, last_accessed_at = NOW()
+           WHERE memory_id = $4`,
+          [newConfidence, Math.max(existing.importance ?? 0.5, insight.importance ?? 0.5), newSourceCount, existing.memory_id],
         );
         return true;
       });
@@ -174,9 +182,9 @@ export async function consolidateInsights(
       const inserted = await withClient(async (client) => {
         const { rows } = await client.query<{ memory_id: string }>(
           `INSERT INTO dream_consolidated_memories (agent_id, type, content, confidence, importance, source_count, embedding)
-           VALUES ($1,$2,$3,0.5,0.5,1,$4)
+           VALUES ($1,$2,$3,$5,$6,1,$4)
            RETURNING memory_id`,
-          [agentId, insight.type, insight.content, JSON.stringify(vec)],
+          [agentId, insight.type, insight.content, JSON.stringify(vec), insight.confidence ?? 0.5, insight.importance ?? 0.5],
         );
         return rows[0]?.memory_id ?? null;
       });
@@ -184,7 +192,8 @@ export async function consolidateInsights(
         memory_id: inserted ?? `local-${memories.length}`,
         type: insight.type,
         content: insight.content,
-        confidence: 0.5,
+        confidence: insight.confidence ?? 0.5,
+        importance: insight.importance ?? 0.5,
         source_count: 1,
         embedding: vec,
       });

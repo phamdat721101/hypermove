@@ -998,6 +998,21 @@ describe('Task 7 · extractInsights — services/llm HTTP call + budget gating',
     expect(result.extracted[0].rules).toContain('retry gripper after 200ms cooldown');
   });
 
+  it('normalizes bounded confidence and importance from additive scored insights', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      rules: ['verify payment memo'], preferences: [], error_patterns: [], facts: [],
+      scored_insights: [{ type: 'rule', content: 'verify payment memo', confidence: 1.4, importance: -2, reasoning: 'it appears in the failed settlement trace' }],
+    }), { status: 200 })));
+
+    const result = await extractInsights([fixtureCluster('c-1')], new CostTracker(0.10), 100);
+    expect(result.extracted[0].scored_insights).toEqual([{
+      type: 'rule', content: 'verify payment memo', confidence: 1, importance: 0,
+      reasoning: 'it appears in the failed settlement trace',
+    }]);
+  });
+
   it('enforces the hard per-cluster output token cap by truncating the arrays to a max length', async () => {
     const { extractInsights } = await import('../src/lib/mcp/dream/extract');
     const { CostTracker } = await import('../src/lib/mcp/dream/cost');
@@ -1152,6 +1167,15 @@ describe('Task 8 · dedupeInsights / flattenInsights', () => {
       { type: 'error_pattern', content: 'e1' },
       { type: 'fact', content: 'f1' },
     ]);
+  });
+
+  it('uses scored insights in preference to legacy unscored category arrays', async () => {
+    const { flattenInsights } = await import('../src/lib/mcp/dream/consolidate');
+    const flat = flattenInsights([{
+      cluster_id: 'c-1', rules: ['legacy rule'], preferences: [], error_patterns: [], facts: [],
+      scored_insights: [{ type: 'rule', content: 'scored rule', confidence: 0.91, importance: 0.88 }],
+    }]);
+    expect(flat).toEqual([{ type: 'rule', content: 'scored rule', confidence: 0.91, importance: 0.88 }]);
   });
 
   it('deduplicates exact/near-exact insights (case-insensitive, trimmed) without any LLM call', async () => {
@@ -1645,7 +1669,7 @@ describe('Task 11 · Dream Cycle MCP resources', () => {
     process.env.FEATURE_MCP_RESOURCES = 'true';
   });
 
-  it('lists all 4 dream resources when the flag is on, none when off', async () => {
+  it('lists all Dream resources including wake context when the flag is on, none when off', async () => {
     installFakeResourceDb([]);
     const { getResources } = await import('../src/lib/mcp/resources');
     const uris = getResources().map((r) => r.uri);
@@ -1653,6 +1677,7 @@ describe('Task 11 · Dream Cycle MCP resources', () => {
     expect(uris).toContain('hypermove:///agents/{agent_id}/dream/rules');
     expect(uris).toContain('hypermove:///agents/{agent_id}/dream/errors');
     expect(uris).toContain('hypermove:///agents/{agent_id}/dream/stats');
+    expect(uris).toContain('hypermove:///agents/{agent_id}/dream/wake');
 
     process.env.FEATURE_MCP_DREAM_CYCLE = 'false';
     vi.resetModules();
@@ -1666,6 +1691,16 @@ describe('Task 11 · Dream Cycle MCP resources', () => {
     const { findResource } = await import('../src/lib/mcp/resources');
     const resource = findResource('hypermove:///agents/robot-42/dream/rules');
     expect(resource?.name).toBe('Dream Cycle Rules');
+  });
+
+  it('dream/wake returns an empty but agent-scoped package before the first completed run', async () => {
+    installFakeResourceDb([]);
+    const { findResource } = await import('../src/lib/mcp/resources');
+    const resource = findResource('hypermove:///agents/robot-42/dream/wake')!;
+    const data = (await resource.read('hypermove:///agents/robot-42/dream/wake')) as { agent_id: string; daily_digest: { last_run_id: string | null }; prompt_injection_snippet: string };
+    expect(data.agent_id).toBe('robot-42');
+    expect(data.daily_digest.last_run_id).toBeNull();
+    expect(data.prompt_injection_snippet).toContain('Wake Intelligence');
   });
 
   it('dream/summary scopes strictly to the agent_id parsed from the URI — never leaks another agent\'s data', async () => {

@@ -47,6 +47,7 @@ coverage/
 *.env
 !.env.example
 !.env.sample
+!scripts/.env.mcp-smoke.example
 
 # Private keys, certificates, keystores
 *.pem

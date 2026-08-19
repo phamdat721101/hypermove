@@ -354,11 +354,12 @@ const DREAM_EXTRACT_SYSTEM_PROMPT = `You are extracting reusable lessons from a 
 
 You will be given a short summary of several related episodes (what the agent tried, what happened, whether it succeeded/failed/timed out). Extract concise, general insights the agent can read back BEFORE its next similar task, so it doesn't repeat the same mistake or re-learn the same thing.
 
-Return ONLY a JSON object with exactly these 4 keys, each an array of short strings (max ~20 words each):
+Return ONLY a JSON object with these 5 keys. Keep the 4 legacy category arrays as short strings (max ~20 words each):
 - "rules": concrete behavioral rules to follow going forward (e.g. "verify the payment network before settlement")
 - "preferences": softer stylistic/strategic preferences learned (e.g. "prefer the documented API contract")
 - "error_patterns": recurring failure modes worth flagging (e.g. "retry only after a timeout is classified")
 - "facts": neutral facts about the environment/task learned from these episodes (e.g. "the service exposes a health endpoint")
+- "scored_insights": records with type, content, confidence (0-1), importance (0-1), and brief reasoning grounded in the supplied summary
 
 Any category with nothing worth extracting should be an empty array — do not pad with generic filler. Do not infer a domain from these examples; use only facts in the supplied summary. Do not fabricate details not supported by the summary. Return raw JSON only, no markdown fences, no commentary.`;
 
@@ -367,6 +368,7 @@ interface DreamExtractResponse {
   preferences: string[];
   error_patterns: string[];
   facts: string[];
+  scored_insights?: Array<{ type: 'rule' | 'preference' | 'error_pattern' | 'fact'; content: string; confidence: number; importance: number; reasoning?: string }>;
   usage?: { input_tokens: number; output_tokens: number };
   /**
    * Additive (2026-07-27 root-cause fix). Present ONLY when both the first
@@ -400,6 +402,7 @@ function tryParseDreamExtractResponse(
         preferences: Array.isArray(parsed.preferences) ? parsed.preferences.map(String) : [],
         error_patterns: Array.isArray(parsed.error_patterns) ? parsed.error_patterns.map(String) : [],
         facts: Array.isArray(parsed.facts) ? parsed.facts.map(String) : [],
+        ...(Array.isArray(parsed.scored_insights) ? { scored_insights: parsed.scored_insights.filter((item): item is NonNullable<DreamExtractResponse['scored_insights']>[number] => typeof item === 'object' && item !== null && ['rule', 'preference', 'error_pattern', 'fact'].includes(String((item as { type?: unknown }).type)) && typeof (item as { content?: unknown }).content === 'string').slice(0, 40) } : {}),
       },
     };
   } catch {

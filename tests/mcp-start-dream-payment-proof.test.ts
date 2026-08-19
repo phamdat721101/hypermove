@@ -26,9 +26,10 @@ describe('start_dream quote-bound payment handling', () => {
     const { callTool } = await import('../src/lib/mcp/gateway');
     const out = await callTool({ session: { userId: 'unpaid-user', tier: 'free', kind: 'user' }, name: 'start_dream', args: { agent_id: 'robot-42', config: { budget_usd: 0.05 } }, headers: new Headers() });
     expect(out.error?.code).toBe(-32402);
-    const data = out.error?.data as { payment?: { quoteId?: string }; retry_with_quote?: string };
+    const data = out.error?.data as { payment?: { quoteId?: string }; retry_with_quote?: string; contract_version?: string };
     expect(data.payment?.quoteId).toBe('q-1');
     expect(data.retry_with_quote).toContain('X-Payment-Quote-Id');
+    expect(data.contract_version).toBe('dream-quote-memo/v1');
   });
 
   it('settles the exact user, Dream-tier, agent-bound quote before dispatching', async () => {

@@ -149,11 +149,25 @@ const dreamStatsResource: McpResource = {
   },
 };
 
+const dreamWakeResource: McpResource = {
+  uri: 'hypermove:///agents/{agent_id}/dream/wake',
+  name: 'Dream Cycle Wake Context',
+  description: 'Agent-ready REM wake package with digest, active constraints, validated skills, and prompt snippet.',
+  mimeType: 'application/json',
+  async read(matchedUri) {
+    if (!isMcpDreamCycleEnabled()) return dreamDisabledError();
+    const agentId = matchedUri ? extractAgentId(matchedUri) : null;
+    if (!agentId) return missingAgentIdError();
+    const { getWakeContext } = await import('./dream/wake');
+    return getWakeContext(agentId);
+  },
+};
+
 /** All resources, gated by the master flag. */
 export function getResources(): McpResource[] {
   if (!isMcpResourcesEnabled()) return [];
   const resources = [ftsoFeedResource, amendmentsResource, fxrpCapacityResource];
-  if (isMcpDreamCycleEnabled()) resources.push(dreamSummaryResource, dreamRulesResource, dreamErrorsResource, dreamStatsResource);
+  if (isMcpDreamCycleEnabled()) resources.push(dreamSummaryResource, dreamRulesResource, dreamErrorsResource, dreamStatsResource, dreamWakeResource);
   return resources;
 }
 

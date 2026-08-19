@@ -52,13 +52,32 @@
  */
 
 import { randomUUID } from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { assertWithinSpendGuard } from './lib/spend-guard';
+
+/** Load an ignored local smoke config without adding a runtime dependency. */
+function loadLocalSmokeEnv(): void {
+  const path = resolve(process.cwd(), 'scripts/.env.mcp-smoke');
+  if (!existsSync(path)) return;
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const match = line.match(/^\s*([A-Z0-9_]+)=(.*)$/);
+    if (!match || process.env[match[1]] !== undefined) continue;
+    process.env[match[1]] = match[2].replace(/^['"]|['"]$/g, '');
+  }
+}
+
+loadLocalSmokeEnv();
 
 const BASE_URL = process.env.MCP_SMOKE_BASE_URL ?? 'http://localhost:3003/api/mcp';
 const BEARER_TOKEN = process.env.MCP_SMOKE_BEARER_TOKEN;
 const HEALTH_URL = process.env.MCP_SMOKE_HEALTH_URL ?? BASE_URL.replace(/\/api\/mcp\/?$/, '/api/mcp/health');
 const TEST_AGENT_ID = process.env.MCP_SMOKE_AGENT_ID ?? `smoke-test-${randomUUID().slice(0, 8)}`;
 const RUN_PAID_DREAM = process.env.MCP_SMOKE_RUN_PAID_DREAM === 'true';
+const EXPECTED_DREAM_PAYMENT_CONTRACT = process.env.MCP_SMOKE_EXPECTED_DREAM_PAYMENT_CONTRACT ?? 'dream-quote-memo/v1';
+// XRPL only permits three-character ISO-style codes verbatim. RLUSD is five
+// characters, so issued-currency Payment.Amount must use its 160-bit hex code.
+export const XRPL_RLUSD_CURRENCY = '524C555344000000000000000000000000000000';
 
 interface StepResult {
   step: number;
@@ -72,6 +91,38 @@ const results: StepResult[] = [];
 function record(step: number, name: string, pass: boolean, detail: string): void {
   results.push({ step, name, pass, detail });
   console.log(`[${step}/5] ${pass ? 'PASS' : 'FAIL'} — ${name}: ${detail}`);
+}
+
+/**
+ * `start_dream` deliberately signals a payment challenge as a JSON-RPC error.
+ * callTool preserves that envelope for rejection checks, while the paid path
+ * needs the actual challenge from its `error.data` field before it can sign.
+ */
+export function unwrapPaymentChallenge(response: Record<string, unknown>): Record<string, unknown> {
+  const rpcError = response.__jsonrpc_error;
+  if (rpcError && typeof rpcError === 'object') {
+    const data = (rpcError as { data?: unknown }).data;
+    if (data && typeof data === 'object') return { ...response, ...(data as Record<string, unknown>) };
+  }
+  // Streamable HTTP adapters expose an MCP tool failure as a successful
+  // JSON-RPC result whose text decodes to { error, data }. Keep `error` for
+  // unpaid-mode reporting and lift the challenge fields for paid-mode signing.
+  if (response.error === 'payment_required' && response.data && typeof response.data === 'object') {
+    return { ...response, ...(response.data as Record<string, unknown>) };
+  }
+  return response;
+}
+
+export function validatePaidDreamQuote(response: Record<string, unknown>): string | null {
+  const challenge = unwrapPaymentChallenge(response);
+  const payment = challenge.payment as { quoteId?: string; merchant?: string; issuer?: string; nonce?: string; amount?: string; chain?: string } | undefined;
+  if (challenge.contract_version !== EXPECTED_DREAM_PAYMENT_CONTRACT) {
+    return `expected contract_version=${EXPECTED_DREAM_PAYMENT_CONTRACT}, received ${String(challenge.contract_version ?? 'missing')}`;
+  }
+  if (!payment?.quoteId || !payment.merchant || !payment.issuer || !payment.nonce || !payment.amount || payment.chain !== 'xrpl-testnet') {
+    return 'paid Dream mode requires a complete xrpl-testnet quote from start_dream';
+  }
+  return null;
 }
 
 /**
@@ -167,34 +218,39 @@ async function step3StartDream(): Promise<void> {
       agent_id: TEST_AGENT_ID,
       config: { budget_usd: 0.05, preset: 'balanced' },
     };
-    const challenge = await callTool('start_dream', args, 3);
+    const challenge = unwrapPaymentChallenge(await callTool('start_dream', args, 3));
     const payment = challenge.payment as { quoteId?: string; merchant?: string; issuer?: string; nonce?: string; amount?: string; chain?: string } | undefined;
     if (!RUN_PAID_DREAM) {
       const pass = challenge.error === 'payment_required' && typeof payment?.quoteId === 'string';
       record(3, 'start_dream (unpaid -> quote challenge)', pass, JSON.stringify(challenge));
       return;
     }
-    if (!payment?.quoteId || !payment.merchant || !payment.issuer || !payment.nonce || !payment.amount || payment.chain !== 'xrpl-testnet') {
-      throw new Error('paid Dream mode requires a complete xrpl-testnet quote from start_dream');
+    const quoteError = validatePaidDreamQuote(challenge);
+    if (quoteError) throw new Error(quoteError);
+    // validatePaidDreamQuote establishes these fields at runtime; unpack them
+    // with an explicit guard so TypeScript preserves that proof for signing.
+    if (!payment?.quoteId || !payment.merchant || !payment.issuer || !payment.nonce || !payment.amount) {
+      throw new Error('validated paid Dream quote lost required payment fields');
     }
+    const { quoteId, merchant, issuer, nonce, amount } = payment;
     const seed = process.env.MCP_SMOKE_XRPL_SEED;
     if (!seed) throw new Error('MCP_SMOKE_XRPL_SEED is required when MCP_SMOKE_RUN_PAID_DREAM=true');
-    assertWithinSpendGuard(payment.amount);
+    assertWithinSpendGuard(amount);
     const { Client, Wallet } = await import('xrpl');
     const client = new Client('wss://s.altnet.rippletest.net:51233');
     const wallet = Wallet.fromSeed(seed);
     try {
       await client.connect();
       const tx = await client.submitAndWait({
-        TransactionType: 'Payment', Account: wallet.classicAddress, Destination: payment.merchant,
-        Amount: { currency: 'RLUSD', issuer: payment.issuer, value: payment.amount },
-        Memos: [{ Memo: { MemoData: Buffer.from(payment.nonce).toString('hex') } }],
+        TransactionType: 'Payment', Account: wallet.classicAddress, Destination: merchant,
+        Amount: { currency: XRPL_RLUSD_CURRENCY, issuer, value: amount },
+        Memos: [{ Memo: { MemoData: Buffer.from(nonce).toString('hex') } }],
       }, { wallet });
       if ((tx.result.meta as { TransactionResult?: string } | undefined)?.TransactionResult !== 'tesSUCCESS') {
         throw new Error(`XRPL payment failed: ${(tx.result.meta as { TransactionResult?: string } | undefined)?.TransactionResult ?? 'unknown'}`);
       }
       const result = await callTool('start_dream', args, 4, {
-        'x-payment-quote-id': payment.quoteId,
+        'x-payment-quote-id': quoteId,
         'x-payment': JSON.stringify({ txHash: tx.result.hash }),
         'x-payment-chain': 'xrpl-testnet',
         'x-payment-asset': 'RLUSD',

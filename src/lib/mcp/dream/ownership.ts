@@ -36,6 +36,19 @@ export async function getDreamSession(agentId: string, userId: string) {
   return { ownership: 'other_durable_owner', recoveryHint: 're-authenticate with the wallet or account that originally claimed this agent_id' };
 }
 
+/** List only namespaces owned by the requesting identity. This replaces the
+ * trial-and-error ownership discovery that previously required a failed write. */
+export async function listMyDreamAgentIds(userId: string): Promise<{ agent_ids: string[] }> {
+  const rows = await withClient(async (client) => {
+    const { rows } = await client.query<{ agent_id: string }>(
+      `SELECT agent_id FROM mcp_agent_ownership WHERE owner_user_id = $1 ORDER BY claimed_at DESC`,
+      [userId],
+    );
+    return rows;
+  });
+  return { agent_ids: (rows ?? []).map((row) => row.agent_id) };
+}
+
 /**
  * First caller for a given agent_id claims it for their session's userId.
  * Subsequent calls from the SAME userId succeed (idempotent). A call from a

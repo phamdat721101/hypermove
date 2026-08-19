@@ -452,7 +452,7 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
 
     const afterConsolidation = await loadExistingMemories(agentId);
     const pruneResult = pruneMemories(
-      afterConsolidation.map((m): PrunableMemory => ({ memory_id: m.memory_id, confidence: m.confidence, importance: 0.5, source_count: m.source_count, embedding: m.embedding })),
+      afterConsolidation.map((m): PrunableMemory => ({ memory_id: m.memory_id, confidence: m.confidence, importance: m.importance ?? 0.5, source_count: m.source_count, embedding: m.embedding })),
     );
     memoriesRemoved = pruneResult.memories_removed;
     if (pruneResult.removed_memory_ids.length > 0) {
@@ -465,7 +465,7 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
 
     // Phase 4: Proactive Skillification (Matt-Pocock Standard)
     const { skillifyMemories } = await import('./skillify-insights');
-    const createdSkills = await skillifyMemories(agentId, flat.map((f: FlatInsight) => ({ ...f, confidence: 0.8 })));
+    const createdSkills = await skillifyMemories(agentId, flat.map((f: FlatInsight) => ({ ...f, confidence: f.confidence ?? 0.5, importance: f.importance ?? 0.5 })));
     if (createdSkills.length > 0) {
       stagesCompleted.push('skillification');
     }
@@ -541,8 +541,8 @@ async function runPipeline(runId: string, agentId: string, budgetUsd: number, pr
 
 async function loadExistingMemories(agentId: string): Promise<ExistingMemory[]> {
   const rows = await withClient(async (client) => {
-    const { rows } = await client.query<{ memory_id: string; type: ExistingMemory['type']; content: string; confidence: number; source_count: number; embedding: number[] | null }>(
-      `SELECT memory_id, type, content, confidence, source_count, embedding FROM dream_consolidated_memories WHERE agent_id = $1 AND quarantined_at IS NULL`,
+    const { rows } = await client.query<{ memory_id: string; type: ExistingMemory['type']; content: string; confidence: number; importance: number; source_count: number; embedding: number[] | null }>(
+      `SELECT memory_id, type, content, confidence, importance, source_count, embedding FROM dream_consolidated_memories WHERE agent_id = $1 AND quarantined_at IS NULL`,
       [agentId],
     );
     return rows;

@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest';
 import { CHAINS, PROTOCOLS, chainById } from '../src/lib/registry';
 import { supportedNetworks } from '../src/lib/mcp/payment-router';
 import { librarianScan } from '../src/lib/mcp/dream/consolidate';
-import { formatMattPocockSOP } from '../src/lib/mcp/dream/skillify-insights';
+import { formatDreamSkillMarkdown, isValidDreamSkillMarkdown } from '../src/lib/mcp/dream/skillify-insights';
 import { formatMorningBriefMarkdown } from '../src/lib/mcp/dream/morning-brief';
 
 describe('XRPL & Base Dream Cycle Integration (RLUSD & USDC Focus)', () => {
@@ -48,16 +48,17 @@ describe('XRPL & Base Dream Cycle Integration (RLUSD & USDC Focus)', () => {
     expect(contradictions[0].reason).toContain('Logical contradiction detected');
   });
 
-  it('Phase 4 Skillification: produces Matt-Pocock Standard type-safe SOPs', () => {
+  it('Phase 4 Skillification: produces agent-loadable SKILL.md artifacts', () => {
     const memories = [
-      { type: 'rule', content: 'Settle Dream Cycle extraction via RLUSD on XRPL testnet', confidence: 0.95 },
-      { type: 'rule', content: 'Verify on-ledger transaction proof via T54 facilitator', confidence: 0.92 },
+      { type: 'rule', content: 'Settle Dream Cycle extraction via RLUSD on XRPL testnet', confidence: 0.95, importance: 0.9 },
+      { type: 'rule', content: 'Verify on-ledger transaction proof via T54 facilitator', confidence: 0.92, importance: 0.85 },
     ];
-    const sop = formatMattPocockSOP('sop_xrpl_rlusd_execution', 'XRPL RLUSD Execution SOP', memories);
-    expect(sop).toContain('@standard Matt-Pocock TypeScript Type-Safe SOP');
-    expect(sop).toContain('export interface SopXrplRlusdExecutionInput');
-    expect(sop).toContain('export interface SopXrplRlusdExecutionOutput');
-    expect(sop).toContain('RLUSD');
+    const skill = formatDreamSkillMarkdown('sop_xrpl_rlusd_execution', 'XRPL RLUSD Execution SOP', memories);
+    expect(skill).toContain('name: sop_xrpl_rlusd_execution');
+    expect(skill).toContain('## Verification gate');
+    expect(skill).toContain('RLUSD');
+    expect(isValidDreamSkillMarkdown(skill)).toBe(true);
+    expect(isValidDreamSkillMarkdown('export async function unsafe() {}')).toBe(false);
   });
 
   it('Phase 5 Morning Brief: formats 3-bullet Sovereign Morning Brief markdown', () => {

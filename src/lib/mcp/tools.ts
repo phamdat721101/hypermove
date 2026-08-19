@@ -826,6 +826,22 @@ const getDreamStatsTool: ToolDef = {
   },
 };
 
+const getWakeContextTool: ToolDef = {
+  name: 'get_wake_context',
+  description: 'Return the structured Dream Cycle REM wake package: latest run digest, active constraints, validated SKILL.md artifacts, and a prompt-ready snippet.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: { agent_id: { type: 'string' }, max_constraints: { type: 'number', minimum: 1, maximum: 50 } },
+    required: ['agent_id'],
+  },
+  handler: async (args) => {
+    const { getWakeContext } = await import('./dream/wake');
+    return getWakeContext(String(args.agent_id ?? ''), args.max_constraints === undefined ? undefined : Number(args.max_constraints));
+  },
+};
+
 // 2026-08-11 status-review upgrade, PRD 02 self-serve diagnostics. Free,
 // unmetered, read-oriented tool letting a caller with only an MCP bearer
 // token (no server/log access) check whether their own agent_id's episodes
@@ -899,6 +915,18 @@ const dreamSessionTool: ToolDef = {
   handler: async (args, ctx) => {
     const { getDreamSession } = await import('./dream/ownership');
     return getDreamSession(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
+  },
+};
+
+const listMyDreamAgentIdsTool: ToolDef = {
+  name: 'list_my_dream_agent_ids',
+  description: 'List Dream agent_ids owned by the authenticated caller. Read-only; never exposes another identity’s namespaces.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: {} },
+  handler: async (_args, ctx) => {
+    const { listMyDreamAgentIds } = await import('./dream/ownership');
+    return listMyDreamAgentIds(ctx?.session.userId ?? 'anonymous');
   },
 };
 
@@ -987,7 +1015,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, dreamSessionTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 
