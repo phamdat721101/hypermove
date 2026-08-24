@@ -166,11 +166,11 @@ export async function consolidateInsights(
 
     if (bestIdx >= 0 && bestScore > MERGE_SIMILARITY_THRESHOLD) {
       const existing = memories[bestIdx];
-      const newConfidence = Math.min(1, existing.confidence + 0.05);
+      const newConfidence = Math.min(1, existing.confidence + 0.15);
       const newSourceCount = existing.source_count + 1;
       await withClient(async (client) => {
         await client.query(
-          `UPDATE dream_consolidated_memories SET confidence = $1, importance = $2, source_count = $3, last_accessed_at = NOW()
+          `UPDATE dream_consolidated_memories SET confidence = $1, importance = $2, source_count = $3, last_accessed_at = NOW(), last_reinforced_at = NOW()
            WHERE memory_id = $4`,
           [newConfidence, Math.max(existing.importance ?? 0.5, insight.importance ?? 0.5), newSourceCount, existing.memory_id],
         );

@@ -102,8 +102,9 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
 fi
 
 if [[ "$DEPLOY_LLM" == "1" ]]; then
-  echo "-> syncing services/llm/server.ts + start.sh"
-  rsync -avz -e "ssh ${SSH_OPTS[*]}" services/llm/server.ts services/llm/start.sh "$VPS_USER@$VPS_HOST:$LLM_REMOTE_DIR/"
+  echo "-> syncing services/llm source + runtime dependencies"
+  rsync -avz -e "ssh ${SSH_OPTS[*]}" services/llm/server.ts services/llm/start.sh services/llm/package.json "$VPS_USER@$VPS_HOST:$LLM_REMOTE_DIR/"
+  ssh_cmd "cd '$LLM_REMOTE_DIR' && npm install --omit=dev"
   ssh_cmd "chmod +x '$LLM_REMOTE_DIR/start.sh'"
 
   set_env_var "$LLM_REMOTE_DIR" "GIT_SHA" "$GIT_SHA"

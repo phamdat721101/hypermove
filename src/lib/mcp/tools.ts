@@ -897,13 +897,25 @@ const applyDreamRepairTool: ToolDef = {
 
 const reclaimAgentOwnershipTool: ToolDef = {
   name: 'reclaim_agent_ownership',
-  description: 'Reclaim an agent_id currently owned by a DIFFERENT device-auth (anonymous, terminal-only) session, so a new device-code sign-in can continue using the same agent_id instead of fragmenting memory across a fresh one every session. Only works when the CURRENT owner is itself a device-auth session — an agent_id owned by a wallet- or account-authenticated session is never reclaimable this way (re-authenticate with that same wallet/account instead). Calling this on an agent_id you already own, or one with no owner yet, is a harmless no-op.',
+  description: 'Reclaim a device-owned agent_id using its stored recovery secret. Wallet- or account-owned agent IDs are never reclaimable by this tool.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' }, recovery_secret: { type: 'string' } }, required: ['agent_id', 'recovery_secret'] },
+  handler: async (args, ctx) => {
+    const { reclaimDeviceOwnership } = await import('./dream/ownership');
+    return reclaimDeviceOwnership(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous', String(args.recovery_secret ?? ''));
+  },
+};
+
+const createAgentRecoverySecretTool: ToolDef = {
+  name: 'create_agent_recovery_secret',
+  description: 'Create or rotate the recovery secret for an agent ID owned by the current device-auth session. Store the returned secret locally; it is required after device-token rotation.',
   tier: 't1_read',
   unmetered: true,
   inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
   handler: async (args, ctx) => {
-    const { reclaimDeviceOwnership } = await import('./dream/ownership');
-    return reclaimDeviceOwnership(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
+    const { issueDeviceRecoverySecret } = await import('./dream/ownership');
+    return issueDeviceRecoverySecret(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
   },
 };
 
@@ -1015,7 +1027,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, createAgentRecoverySecretTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 

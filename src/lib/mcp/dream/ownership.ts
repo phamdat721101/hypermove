@@ -12,11 +12,31 @@
  * claimOrCheckOwnership() before touching any other dream_* table.
  */
 
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { withClient } from '../../db';
 
 export interface OwnershipResult {
   ok: boolean;
   reason?: string;
+}
+
+function hashRecoverySecret(secret: string): string {
+  return createHash('sha256').update(secret).digest('hex');
+}
+
+/** Bootstrap or rotate a recovery secret for the current device owner only. */
+export async function issueDeviceRecoverySecret(agentId: string, userId: string): Promise<OwnershipResult & { recovery_secret?: string }> {
+  if (!userId.startsWith('device:')) return { ok: false, reason: 'recovery secrets are available only to device-auth sessions' };
+  const secret = randomBytes(32).toString('base64url');
+  const result = await withClient(async (client) => {
+    const { rowCount } = await client.query(
+      `UPDATE mcp_agent_ownership SET recovery_secret_hash = $1 WHERE agent_id = $2 AND owner_user_id = $3`,
+      [hashRecoverySecret(secret), agentId, userId],
+    );
+    return rowCount ?? 0;
+  });
+  if (result === null) return { ok: true, recovery_secret: secret };
+  return result > 0 ? { ok: true, recovery_secret: secret } : { ok: false, reason: 'only the current device owner can bootstrap a recovery secret' };
 }
 
 /** Non-sensitive restart/recovery view for one agent namespace. */
@@ -124,10 +144,11 @@ export async function claimOrCheckOwnership(agentId: string, userId: string): Pr
  * device-auth.ts's own header comment for why those three mitigations are
  * "non-negotiable, not defense-in-depth extras").
  */
-export async function reclaimDeviceOwnership(agentId: string, newUserId: string): Promise<OwnershipResult> {
+export async function reclaimDeviceOwnership(agentId: string, newUserId: string, recoverySecret: string): Promise<OwnershipResult> {
+  if (!recoverySecret) return { ok: false, reason: 'recovery_secret is required to reclaim a device-owned agent_id' };
   const result = await withClient(async (client) => {
-    const { rows } = await client.query<{ owner_user_id: string }>(
-      `SELECT owner_user_id FROM mcp_agent_ownership WHERE agent_id = $1 LIMIT 1`,
+    const { rows } = await client.query<{ owner_user_id: string; recovery_secret_hash: string | null }>(
+      `SELECT owner_user_id, recovery_secret_hash FROM mcp_agent_ownership WHERE agent_id = $1 LIMIT 1`,
       [agentId],
     );
     const currentOwner = rows[0]?.owner_user_id ?? null;
@@ -140,6 +161,9 @@ export async function reclaimDeviceOwnership(agentId: string, newUserId: string)
     if (!currentOwner.startsWith('device:')) {
       return { outcome: 'not_reclaimable' as const, currentOwner };
     }
+    const expected = rows[0]?.recovery_secret_hash;
+    const supplied = hashRecoverySecret(recoverySecret);
+    if (!expected || expected.length !== supplied.length || !timingSafeEqual(Buffer.from(expected), Buffer.from(supplied))) return { outcome: 'invalid_secret' as const };
     await client.query(
       `UPDATE mcp_agent_ownership SET owner_user_id = $1, claimed_at = NOW() WHERE agent_id = $2`,
       [newUserId, agentId],
@@ -162,6 +186,8 @@ export async function reclaimDeviceOwnership(agentId: string, newUserId: string)
         ok: false,
         reason: `agent_id "${agentId}" is owned by a wallet- or account-authenticated session, not a device-auth session — reclaim is only available for agent_ids currently owned by an anonymous device-auth session. If you own this agent_id, re-authenticate with the same wallet/account that originally claimed it instead.`,
       };
+    case 'invalid_secret':
+      return { ok: false, reason: 'recovery_secret is invalid or has not been bootstrapped by the current device owner' };
     case 'reclaimed':
       return { ok: true };
   }

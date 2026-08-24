@@ -299,6 +299,7 @@ CREATE TABLE IF NOT EXISTS mcp_agent_ownership (
   claimed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 CREATE INDEX IF NOT EXISTS idx_mcp_agent_ownership_owner ON mcp_agent_ownership(owner_user_id);
+ALTER TABLE mcp_agent_ownership ADD COLUMN IF NOT EXISTS recovery_secret_hash TEXT;
 
 -- Zero-token cold storage for raw episode logs (submit_episode_log). No
 -- LLM/embedding call happens at insert time — see dream/ingest.ts.
@@ -338,6 +339,8 @@ CREATE INDEX IF NOT EXISTS idx_dream_memories_agent_confidence ON dream_consolid
 ALTER TABLE dream_consolidated_memories ADD COLUMN IF NOT EXISTS quarantined_at TIMESTAMPTZ;
 ALTER TABLE dream_consolidated_memories ADD COLUMN IF NOT EXISTS quarantine_reason TEXT;
 CREATE INDEX IF NOT EXISTS idx_dream_memories_active ON dream_consolidated_memories(agent_id) WHERE quarantined_at IS NULL;
+ALTER TABLE dream_consolidated_memories ADD COLUMN IF NOT EXISTS last_reinforced_at TIMESTAMPTZ;
+UPDATE dream_consolidated_memories SET last_reinforced_at = COALESCE(last_reinforced_at, created_at) WHERE last_reinforced_at IS NULL;
 
 -- One row per start_dream invocation (run lifecycle + cost/observability).
 CREATE TABLE IF NOT EXISTS dream_cycle_runs (

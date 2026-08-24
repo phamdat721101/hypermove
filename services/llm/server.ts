@@ -11,6 +11,7 @@
 import { createServer } from 'node:http';
 import { Pool } from 'pg';
 import { createPublicClient, http, parseUnits, decodeEventLog } from 'viem';
+import { jsonrepair } from 'jsonrepair';
 
 const PORT = Number(process.env.PORT || 3001);
 
@@ -270,6 +271,59 @@ async function callLlm(content: string): Promise<string> {
   return callLlmWithPrompt(SYSTEM_PROMPT, content, 4000);
 }
 
+type LlmProvider = 'bedrock' | 'anthropic' | 'openai';
+type ProviderFailureKind = 'transient' | 'permanent';
+
+class ProviderError extends Error {
+  constructor(readonly provider: LlmProvider, readonly kind: ProviderFailureKind, message: string) {
+    super(message);
+  }
+}
+
+const dreamBreakers = new Map<LlmProvider, { failures: number; openUntil: number }>();
+const DREAM_TIMEOUT_MS = Number(process.env.DREAM_PROVIDER_TIMEOUT_MS ?? 12_000);
+const DREAM_BREAKER_FAILURES = Number(process.env.DREAM_PROVIDER_BREAKER_FAILURES ?? 3);
+const DREAM_BREAKER_COOLDOWN_MS = Number(process.env.DREAM_PROVIDER_BREAKER_COOLDOWN_MS ?? 60_000);
+
+function providerConfigured(provider: LlmProvider): boolean {
+  return Boolean(provider === 'bedrock' ? process.env.BEDROCK_API_KEY : provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY);
+}
+
+function classifyProviderFailure(provider: LlmProvider, error: unknown): ProviderError {
+  const message = error instanceof Error ? error.message : String(error);
+  return new ProviderError(provider, /\b(408|429|5\d\d)\b|timeout|abort|network|fetch/i.test(message) ? 'transient' : 'permanent', message.slice(0, 200));
+}
+
+async function callDreamWithFallback(systemPrompt: string, content: string, maxTokens: number): Promise<string> {
+  const failures: string[] = [];
+  for (const provider of ['bedrock', 'anthropic', 'openai'] as const) {
+    if (!providerConfigured(provider)) continue;
+    const breaker = dreamBreakers.get(provider);
+    if (breaker?.openUntil > Date.now()) { failures.push(`${provider}:circuit_open`); continue; }
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        const output = await callLlmWithPrompt(systemPrompt, content, maxTokens, provider, DREAM_TIMEOUT_MS);
+        dreamBreakers.delete(provider);
+        return output;
+      } catch (error) {
+        const failure = classifyProviderFailure(provider, error);
+        failures.push(`${provider}:${failure.kind}`);
+        if (failure.kind === 'permanent' || attempt === 1) {
+          if (failure.kind === 'transient') {
+            const state = dreamBreakers.get(provider) ?? { failures: 0, openUntil: 0 };
+            state.failures++;
+            if (state.failures >= DREAM_BREAKER_FAILURES) state.openUntil = Date.now() + DREAM_BREAKER_COOLDOWN_MS;
+            dreamBreakers.set(provider, state);
+          }
+          break;
+        }
+        await new Promise((resolve) => setTimeout(resolve, 150 + Math.floor(Math.random() * 150)));
+      }
+    }
+  }
+  throw new Error(`Dream extraction upstream_error: ${failures.join(',') || 'no configured provider'}`);
+}
+
 /**
  * Same provider dispatch as callLlm(), but with a caller-supplied system
  * prompt and max_tokens instead of the crawl-scan SYSTEM_PROMPT/4000 default.
@@ -279,8 +333,8 @@ async function callLlm(content: string): Promise<string> {
  * Cycle's insight extraction without duplicating the fetch/provider-branching
  * logic per call site.
  */
-async function callLlmWithPrompt(systemPrompt: string, content: string, maxTokens: number): Promise<string> {
-  const provider = process.env.LLM_PROVIDER || 'bedrock';
+async function callLlmWithPrompt(systemPrompt: string, content: string, maxTokens: number, selectedProvider?: LlmProvider, timeoutMs?: number): Promise<string> {
+  const provider = selectedProvider ?? (process.env.LLM_PROVIDER || 'bedrock');
 
   if (provider === 'bedrock') {
     const apiKey = process.env.BEDROCK_API_KEY;
@@ -304,7 +358,7 @@ async function callLlmWithPrompt(systemPrompt: string, content: string, maxToken
         messages: [{ role: 'user', content: [{ text: content.slice(0, 15000) }] }],
         inferenceConfig: { maxTokens },
       }),
-    });
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
     if (!res.ok) throw new Error(`Bedrock Converse ${res.status}: ${await res.text().catch(() => '')}`);
     // Verified against a real live call (2026-07-26): bedrock-runtime's HTTP
     // Converse response nests the standard Converse shape under an `output`
@@ -324,7 +378,8 @@ async function callLlmWithPrompt(systemPrompt: string, content: string, maxToken
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
       body: JSON.stringify({ model: process.env.ANTHROPIC_MODEL || 'claude-sonnet-4-20250514', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
-    });
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
+    if (!res.ok) throw new Error(`Anthropic ${res.status}: ${await res.text().catch(() => '')}`);
     const data = await res.json() as { content?: Array<{ text?: string }> };
     return data.content?.[0]?.text || '';
   }
@@ -336,7 +391,8 @@ async function callLlmWithPrompt(systemPrompt: string, content: string, maxToken
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
       body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
-    });
+    ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
+    if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text().catch(() => '')}`);
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
     return data.choices?.[0]?.message?.content || '';
   }
@@ -394,7 +450,7 @@ function tryParseDreamExtractResponse(
   const jsonMatch = raw.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return { ok: false, reason: 'truncated_no_match' };
   try {
-    const parsed = JSON.parse(jsonMatch[0]) as Partial<DreamExtractResponse>;
+    const parsed = JSON.parse(jsonrepair(jsonMatch[0])) as Partial<DreamExtractResponse>;
     return {
       ok: true,
       value: {
@@ -428,7 +484,7 @@ function tryParseDreamExtractResponse(
  * failure apart from a genuine empty result, and skip charging cost for it.
  */
 async function extractDreamInsights(summary: string, maxOutputTokens: number): Promise<DreamExtractResponse> {
-  const raw = await callLlmWithPrompt(DREAM_EXTRACT_SYSTEM_PROMPT, summary, maxOutputTokens);
+  const raw = await callDreamWithFallback(DREAM_EXTRACT_SYSTEM_PROMPT, summary, maxOutputTokens);
   const first = tryParseDreamExtractResponse(raw);
   if (first.ok) return first.value;
 
@@ -436,14 +492,13 @@ async function extractDreamInsights(summary: string, maxOutputTokens: number): P
   // prompt — asks for compact JSON only, no prose/fences, to reduce the
   // chance the retry ALSO truncates before closing its braces.
   const strictPrompt = `${DREAM_EXTRACT_SYSTEM_PROMPT}\n\nIMPORTANT: Return ONLY the raw JSON object, as compact as possible, no markdown fences, no commentary, no explanation before or after. If you are unsure, return fewer/shorter items so the JSON always closes completely within the token budget.`;
-  const retryRaw = await callLlmWithPrompt(strictPrompt, summary, maxOutputTokens);
+  const retryRaw = await callDreamWithFallback(strictPrompt, summary, maxOutputTokens);
   const retry = tryParseDreamExtractResponse(retryRaw);
   if (retry.ok) return retry.value;
-
   // Both attempts failed to yield parseable JSON — report the retry's own
   // failure reason (more informative than the first attempt's, since it
   // reflects the stricter-prompt outcome), never crash, never fabricate.
-  const retryReason: 'truncated_no_match' | 'truncated_partial_json' = retry.reason;
+  const retryReason = 'reason' in retry ? retry.reason : 'truncated_partial_json';
   return { rules: [], preferences: [], error_patterns: [], facts: [], extraction_failure_reason: retryReason === 'truncated_no_match' ? 'truncated_no_match' : 'retry_exhausted' };
 }
 

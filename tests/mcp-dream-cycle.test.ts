@@ -53,7 +53,7 @@ describe('Task 1 · isMcpDreamCycleEnabled — v3Flag cascade', () => {
 // removal. See docs/fcc-removal-proposal-2026-08-14.md.)
 
 describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
-  interface OwnershipRow { agent_id: string; owner_user_id: string; }
+  interface OwnershipRow { agent_id: string; owner_user_id: string; recovery_secret_hash?: string; }
 
   /** Fresh in-memory fake DB per test, mirrors mcp-device-auth.test.ts's convention. */
   function installFakeOwnershipDb() {
@@ -69,9 +69,14 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
               }
               return { rows: [], rowCount: 1 };
             }
-            if (sql.includes('SELECT owner_user_id FROM mcp_agent_ownership')) {
+            if (sql.includes('SELECT owner_user_id') && sql.includes('FROM mcp_agent_ownership')) {
               const row = rows.find((r) => r.agent_id === (params[0] as string));
-              return { rows: row ? [{ owner_user_id: row.owner_user_id }] : [] };
+              return { rows: row ? [{ owner_user_id: row.owner_user_id, recovery_secret_hash: row.recovery_secret_hash ?? null }] : [] };
+            }
+            if (sql.includes('UPDATE mcp_agent_ownership SET recovery_secret_hash')) {
+              const row = rows.find((r) => r.agent_id === (params[1] as string) && r.owner_user_id === (params[2] as string));
+              if (row) row.recovery_secret_hash = params[0] as string;
+              return { rows: [], rowCount: row ? 1 : 0 };
             }
             if (sql.includes('UPDATE mcp_agent_ownership SET owner_user_id')) {
               const [newOwnerUserId, agentId] = params as [string, string];
@@ -137,9 +142,10 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
 
   it('reclaim succeeds when the current owner is a device-kind session', async () => {
     installFakeOwnershipDb();
-    const { claimOrCheckOwnership, reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
+    const { claimOrCheckOwnership, reclaimDeviceOwnership, issueDeviceRecoverySecret } = await import('../src/lib/mcp/dream/ownership');
     await claimOrCheckOwnership('robot-42', 'device:aaaaaaaaaaaa');
-    const result = await reclaimDeviceOwnership('robot-42', 'device:bbbbbbbbbbbb');
+    const secret = await issueDeviceRecoverySecret('robot-42', 'device:aaaaaaaaaaaa');
+    const result = await reclaimDeviceOwnership('robot-42', 'device:bbbbbbbbbbbb', secret.recovery_secret ?? '');
     expect(result).toEqual({ ok: true });
     // The new session can now use the agent_id normally.
     const check = await claimOrCheckOwnership('robot-42', 'device:bbbbbbbbbbbb');
@@ -154,7 +160,7 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
     installFakeOwnershipDb();
     const { claimOrCheckOwnership, reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
     await claimOrCheckOwnership('robot-42', 'wallet:0xabc123');
-    const result = await reclaimDeviceOwnership('robot-42', 'device:bbbbbbbbbbbb');
+    const result = await reclaimDeviceOwnership('robot-42', 'device:bbbbbbbbbbbb', 'unused');
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/wallet- or account-authenticated/i);
     // Confirm the wallet owner is genuinely untouched.
@@ -165,16 +171,17 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
   it('reclaim on an agent_id with no existing owner is a clear no-op, not a silent success', async () => {
     installFakeOwnershipDb();
     const { reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
-    const result = await reclaimDeviceOwnership('never-claimed-agent', 'device:bbbbbbbbbbbb');
+    const result = await reclaimDeviceOwnership('never-claimed-agent', 'device:bbbbbbbbbbbb', 'unused');
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/no existing owner/i);
   });
 
   it('reclaim by the CURRENT owner itself is a harmless idempotent no-op', async () => {
     installFakeOwnershipDb();
-    const { claimOrCheckOwnership, reclaimDeviceOwnership } = await import('../src/lib/mcp/dream/ownership');
+    const { claimOrCheckOwnership, reclaimDeviceOwnership, issueDeviceRecoverySecret } = await import('../src/lib/mcp/dream/ownership');
     await claimOrCheckOwnership('robot-42', 'device:aaaaaaaaaaaa');
-    const result = await reclaimDeviceOwnership('robot-42', 'device:aaaaaaaaaaaa');
+    const secret = await issueDeviceRecoverySecret('robot-42', 'device:aaaaaaaaaaaa');
+    const result = await reclaimDeviceOwnership('robot-42', 'device:aaaaaaaaaaaa', secret.recovery_secret ?? '');
     expect(result).toEqual({ ok: true });
   });
 

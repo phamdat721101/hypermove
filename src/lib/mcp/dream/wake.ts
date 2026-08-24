@@ -58,7 +58,8 @@ export async function getWakeContext(agentId: string, maxConstraints = 12): Prom
          ORDER BY ended_at DESC NULLS LAST, started_at DESC LIMIT 1`, [agentId],
       ),
       client.query<WakeConstraint>(
-        `SELECT type, content, importance, confidence
+        `SELECT type, content, importance,
+                GREATEST(0.5, confidence - (0.05 * FLOOR(EXTRACT(EPOCH FROM (NOW() - COALESCE(last_reinforced_at, created_at))) / 1209600))) AS confidence
          FROM dream_consolidated_memories
          WHERE agent_id = $1 AND quarantined_at IS NULL
            AND type IN ('rule', 'error_pattern', 'preference')
