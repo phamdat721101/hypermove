@@ -52,6 +52,9 @@ export interface ConsolidationResult {
 
 const MERGE_SIMILARITY_THRESHOLD = 0.85;
 const MAX_CONTENT_CHARS = 200;
+const DEFAULT_IMPORTANCE: Record<MemoryType, number> = {
+  error_pattern: 0.85, rule: 0.8, preference: 0.5, fact: 0.5,
+};
 
 /** Flatten extracted insights into (type, content) pairs, capped at 200 chars each. */
 export function flattenInsights(extracted: ExtractedInsights[]): FlatInsight[] {
@@ -61,10 +64,10 @@ export function flattenInsights(extracted: ExtractedInsights[]): FlatInsight[] {
       for (const insight of e.scored_insights) out.push({ type: insight.type, content: insight.content.slice(0, MAX_CONTENT_CHARS), confidence: insight.confidence, importance: insight.importance });
       continue;
     }
-    for (const content of e.rules) out.push({ type: 'rule', content: content.slice(0, MAX_CONTENT_CHARS) });
-    for (const content of e.preferences) out.push({ type: 'preference', content: content.slice(0, MAX_CONTENT_CHARS) });
-    for (const content of e.error_patterns) out.push({ type: 'error_pattern', content: content.slice(0, MAX_CONTENT_CHARS) });
-    for (const content of e.facts) out.push({ type: 'fact', content: content.slice(0, MAX_CONTENT_CHARS) });
+    for (const content of e.rules) out.push({ type: 'rule', content: content.slice(0, MAX_CONTENT_CHARS), importance: DEFAULT_IMPORTANCE.rule });
+    for (const content of e.preferences) out.push({ type: 'preference', content: content.slice(0, MAX_CONTENT_CHARS), importance: DEFAULT_IMPORTANCE.preference });
+    for (const content of e.error_patterns) out.push({ type: 'error_pattern', content: content.slice(0, MAX_CONTENT_CHARS), importance: DEFAULT_IMPORTANCE.error_pattern });
+    for (const content of e.facts) out.push({ type: 'fact', content: content.slice(0, MAX_CONTENT_CHARS), importance: DEFAULT_IMPORTANCE.fact });
   }
   return out;
 }

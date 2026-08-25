@@ -194,8 +194,14 @@ function normalizeScoredInsight(value: unknown): ScoredDreamInsight[] {
   if (typeof value !== 'object' || value === null) return [];
   const input = value as Partial<ScoredDreamInsight>;
   if (!['rule', 'preference', 'error_pattern', 'fact'].includes(String(input.type)) || typeof input.content !== 'string') return [];
-  const score = (value: unknown) => Math.min(1, Math.max(0, typeof value === 'number' && Number.isFinite(value) ? value : 0.5));
-  return [{ type: input.type as ScoredDreamInsight['type'], content: input.content.slice(0, 200), confidence: score(input.confidence), importance: score(input.importance), ...(typeof input.reasoning === 'string' ? { reasoning: input.reasoning.slice(0, 300) } : {}) }];
+  const type = input.type as ScoredDreamInsight['type'];
+  const score = (value: unknown, fallback: number) => Math.min(1, Math.max(0, typeof value === 'number' && Number.isFinite(value) ? value : fallback));
+  // A missing model score must not flatten a recurring failure to the same
+  // priority as a preference. Explicit model scores remain authoritative.
+  const defaultImportance: Record<ScoredDreamInsight['type'], number> = {
+    error_pattern: 0.85, rule: 0.8, preference: 0.5, fact: 0.5,
+  };
+  return [{ type, content: input.content.slice(0, 200), confidence: score(input.confidence, 0.5), importance: score(input.importance, defaultImportance[type]), ...(typeof input.reasoning === 'string' ? { reasoning: input.reasoning.slice(0, 300) } : {}) }];
 }
 
 function emptyAttempt(clusterId: string, failureReason: ClusterExtractionAttempt['failureReason'], errorDetail?: string): ClusterExtractionAttempt {

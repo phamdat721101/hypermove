@@ -681,6 +681,11 @@ const submitEpisodeLogTool: ToolDef = {
                   result: { type: 'string', minLength: 1, description: 'Non-empty outcome of this action.' },
                   error: { type: 'string' },
                   duration_ms: { type: 'number' },
+                  detail: { description: 'Optional bounded JSON metadata retained with the episode.' },
+                  tool: { description: 'Optional bounded JSON metadata retained with the episode.' },
+                  input: { description: 'Optional bounded JSON metadata retained with the episode.' },
+                  output: { description: 'Optional bounded JSON metadata retained with the episode.' },
+                  status: { description: 'Optional bounded JSON metadata retained with the episode.' },
                 },
                 required: ['action', 'result'],
               },
@@ -839,6 +844,18 @@ const getWakeContextTool: ToolDef = {
   handler: async (args) => {
     const { getWakeContext } = await import('./dream/wake');
     return getWakeContext(String(args.agent_id ?? ''), args.max_constraints === undefined ? undefined : Number(args.max_constraints));
+  },
+};
+
+const getDreamReadinessTool: ToolDef = {
+  name: 'get_dream_readiness',
+  description: 'Read-only Dream learning readiness: reports whether the agent has lessons, pending episodes, or an active run, plus the safe manual next action. Never claims ownership or starts a run.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args, ctx) => {
+    const { getDreamReadiness } = await import('./dream/readiness');
+    return getDreamReadiness(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
   },
 };
 
@@ -1027,7 +1044,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, createAgentRecoverySecretTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamReadinessTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, createAgentRecoverySecretTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 

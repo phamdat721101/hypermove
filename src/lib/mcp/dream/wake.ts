@@ -27,6 +27,8 @@ export interface WakeContextResponse {
   };
   active_constraints: WakeConstraint[];
   new_skills: Array<{ name: string; description: string; skill_md: string; artifact_hash: string }>;
+  learning_state: 'no_lessons_yet' | 'lessons_available';
+  recommended_next_action: string;
   prompt_injection_snippet: string;
 }
 
@@ -111,6 +113,10 @@ export async function getWakeContext(agentId: string, maxConstraints = 12): Prom
     daily_digest: dailyDigest,
     active_constraints: constraints,
     new_skills: skills,
+    learning_state: constraints.length === 0 ? 'no_lessons_yet' : 'lessons_available',
+    recommended_next_action: constraints.length === 0
+      ? 'No specific Dream lesson is available yet. Submit meaningful episode logs, confirm them with get_dream_episode_diagnostics, then manually start a quote-bound Dream run.'
+      : 'Apply the active constraints to the current task and call query_dream for task-specific recall when needed.',
     prompt_injection_snippet: promptSnippet(run?.run_id ?? null, constraints, skills),
   };
 }

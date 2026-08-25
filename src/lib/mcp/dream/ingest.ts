@@ -15,6 +15,8 @@ export interface EpisodeStep {
   observation_summary?: string;
   error?: string;
   duration_ms?: number;
+  /** Optional context retained with an episode but excluded from its summary. */
+  metadata?: Record<string, unknown>;
 }
 
 export interface EpisodeLog {
@@ -51,7 +53,26 @@ export interface IngestResult {
 }
 
 const VALID_OUTCOMES = new Set(['success', 'failure', 'timeout']);
-const STEP_KEYS = new Set(['action', 'observation_summary', 'result', 'error', 'duration_ms']);
+const STEP_KEYS = new Set(['action', 'observation_summary', 'result', 'error', 'duration_ms', 'detail', 'tool', 'input', 'output', 'status']);
+const METADATA_KEYS = ['detail', 'tool', 'input', 'output', 'status'] as const;
+const MAX_STEP_METADATA_CHARS = 4_000;
+
+function metadataForStep(step: Record<string, unknown>): Record<string, unknown> | { reason: string } {
+  const metadata: Record<string, unknown> = {};
+  for (const key of METADATA_KEYS) {
+    if (step[key] === undefined) continue;
+    try {
+      const encoded = JSON.stringify(step[key]);
+      if (encoded === undefined || encoded.length > MAX_STEP_METADATA_CHARS) {
+        return { reason: `invalid step metadata field ${key}: must be JSON-serializable and at most ${MAX_STEP_METADATA_CHARS} characters` };
+      }
+      metadata[key] = JSON.parse(encoded);
+    } catch {
+      return { reason: `invalid step metadata field ${key}: must be JSON-serializable` };
+    }
+  }
+  return metadata;
+}
 
 function normalizeEpisode(ep: unknown): { episode: EpisodeLog; normalizedFields: string[] } | { reason: string } {
   const reason = validateEpisode(ep);
@@ -70,12 +91,15 @@ function normalizeEpisode(ep: unknown): { episode: EpisodeLog; normalizedFields:
     if (result.trim().length === 0) return { reason: `invalid step at index ${index}: result must be a non-empty string` };
     if (step.result !== undefined && step.observation_summary === undefined) normalizedFields.push(`steps[${index}].result→observation_summary`);
     if (step.result === undefined) normalizedFields.push(`steps[${index}].observation_summary→result`);
+    const metadata = metadataForStep(step);
+    if ('reason' in metadata && typeof metadata.reason === 'string') return { reason: metadata.reason };
     steps.push({
       action: step.action,
       result,
       observation_summary: typeof step.observation_summary === 'string' ? step.observation_summary : result,
       error: typeof step.error === 'string' ? step.error : undefined,
       duration_ms: typeof step.duration_ms === 'number' ? step.duration_ms : undefined,
+      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
     });
   }
   return { episode: { ...raw, steps }, normalizedFields };

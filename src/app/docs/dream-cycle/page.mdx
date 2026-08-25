@@ -400,6 +400,12 @@ else on the gateway changes.
 
 - **`start_dream` still always runs immediately when called** — the manual path is
   unchanged and always available, on-demand, regardless of the scheduler below.
+- **Manual learning is the default workflow.** Call `get_dream_readiness` before
+  starting: it tells an agent whether it has a usable lesson, pending episodes,
+  an active run, or an ownership recovery requirement. If it reports
+  `idle_no_lessons`, work normally, submit a meaningful episode, verify it with
+  `get_dream_episode_diagnostics`, then settle a fresh quote and call
+  `start_dream`. `get_wake_context` returns the resulting lesson and next action.
 - **Server-side `trigger_criteria` enforcement is opt-in, not default (2026-07-27).**
   By default, nothing runs your cycles for you:
   - Set `trigger_criteria` in `config` and it's saved either way.

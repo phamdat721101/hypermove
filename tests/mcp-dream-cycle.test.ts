@@ -197,6 +197,26 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
   });
 });
 
+describe('Dream readiness — manual-first learning guidance', () => {
+  it('reports uninitialized without claiming an uninitialized namespace', async () => {
+    const queries: string[] = [];
+    vi.doMock('../src/lib/db', () => ({
+      withClient: vi.fn(async (fn: (client: unknown) => Promise<unknown>) => fn({
+        query: vi.fn(async (sql: string) => {
+          queries.push(sql);
+          if (sql.includes('mcp_agent_ownership')) return { rows: [] };
+          return { rows: [{ count: '0' }] };
+        }),
+      })),
+    }));
+    const { getDreamReadiness } = await import('../src/lib/mcp/dream/readiness');
+    const result = await getDreamReadiness('new-agent', 'device:new');
+    expect(result.state).toBe('uninitialized');
+    expect(result.next_action).toMatch(/submit/i);
+    expect(queries.some((sql) => sql.includes('INSERT INTO mcp_agent_ownership'))).toBe(false);
+  });
+});
+
 // ─── Task 3 · submit_episode_log — zero-token ingestion ────────────────────
 
 describe('Task 3 · ingestEpisodes — zero-token cold storage', () => {
@@ -268,6 +288,17 @@ describe('Task 3 · ingestEpisodes — zero-token cold storage', () => {
     const result = await ingestEpisodes('robot-42', 'user-a', [{ ...validEpisode('ep-unknown'), steps: [{ action: 'verify', ignored_result: 'lost' }] }]);
     expect(result.ingested_count).toBe(0);
     expect(result.rejected[0].reason).toMatch(/unsupported step field/i);
+  });
+
+  it('preserves supported optional step metadata without making it extraction text', async () => {
+    installFakeIngestDb();
+    const { ingestEpisodes } = await import('../src/lib/mcp/dream/ingest');
+    const result = await ingestEpisodes('robot-42', 'user-a', [{
+      ...validEpisode('ep-metadata'),
+      steps: [{ action: 'inspect', result: 'complete', detail: 'checked quote', tool: 'payments.quote', input: { asset: 'RLUSD' }, output: { amount: '0.05' }, status: 'ok' }],
+    }]);
+    expect(result.ingested_count).toBe(1);
+    expect(result.rejected).toEqual([]);
   });
 
   it('is idempotent — submitting the same episode_id twice ingests it only once', async () => {
@@ -1020,6 +1051,18 @@ describe('Task 7 · extractInsights — services/llm HTTP call + budget gating',
     }]);
   });
 
+  it('assigns a stronger importance default to an unscored error pattern', async () => {
+    const { extractInsights } = await import('../src/lib/mcp/dream/extract');
+    const { CostTracker } = await import('../src/lib/mcp/dream/cost');
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+      rules: [], preferences: [], error_patterns: [], facts: [],
+      scored_insights: [{ type: 'error_pattern', content: 'payment quote expired' }],
+    }), { status: 200 })));
+
+    const result = await extractInsights([fixtureCluster('c-importance')], new CostTracker(0.10), 100);
+    expect(result.extracted[0].scored_insights?.[0]).toMatchObject({ confidence: 0.5, importance: 0.85 });
+  });
+
   it('enforces the hard per-cluster output token cap by truncating the arrays to a max length', async () => {
     const { extractInsights } = await import('../src/lib/mcp/dream/extract');
     const { CostTracker } = await import('../src/lib/mcp/dream/cost');
@@ -1169,10 +1212,10 @@ describe('Task 8 · dedupeInsights / flattenInsights', () => {
       { cluster_id: 'c-1', rules: ['r1'], preferences: ['p1'], error_patterns: ['e1'], facts: ['f1'] },
     ]);
     expect(flat).toEqual([
-      { type: 'rule', content: 'r1' },
-      { type: 'preference', content: 'p1' },
-      { type: 'error_pattern', content: 'e1' },
-      { type: 'fact', content: 'f1' },
+      { type: 'rule', content: 'r1', importance: 0.8 },
+      { type: 'preference', content: 'p1', importance: 0.5 },
+      { type: 'error_pattern', content: 'e1', importance: 0.85 },
+      { type: 'fact', content: 'f1', importance: 0.5 },
     ]);
   });
 
