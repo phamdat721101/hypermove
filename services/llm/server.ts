@@ -271,7 +271,7 @@ async function callLlm(content: string): Promise<string> {
   return callLlmWithPrompt(SYSTEM_PROMPT, content, 4000);
 }
 
-type LlmProvider = 'bedrock' | 'anthropic' | 'openai';
+type LlmProvider = 'deepseek' | 'bedrock' | 'anthropic' | 'openai';
 type ProviderFailureKind = 'transient' | 'permanent';
 
 class ProviderError extends Error {
@@ -286,7 +286,11 @@ const DREAM_BREAKER_FAILURES = Number(process.env.DREAM_PROVIDER_BREAKER_FAILURE
 const DREAM_BREAKER_COOLDOWN_MS = Number(process.env.DREAM_PROVIDER_BREAKER_COOLDOWN_MS ?? 60_000);
 
 function providerConfigured(provider: LlmProvider): boolean {
-  return Boolean(provider === 'bedrock' ? process.env.BEDROCK_API_KEY : provider === 'anthropic' ? process.env.ANTHROPIC_API_KEY : process.env.OPENAI_API_KEY);
+  if (provider === 'deepseek') return Boolean(process.env.DEEPSEEK_API_KEY);
+  if (provider === 'bedrock') return Boolean(process.env.BEDROCK_API_KEY);
+  if (provider === 'anthropic') return Boolean(process.env.ANTHROPIC_API_KEY);
+  if (provider === 'openai') return Boolean(process.env.OPENAI_API_KEY);
+  return false;
 }
 
 function classifyProviderFailure(provider: LlmProvider, error: unknown): ProviderError {
@@ -296,7 +300,7 @@ function classifyProviderFailure(provider: LlmProvider, error: unknown): Provide
 
 async function callDreamWithFallback(systemPrompt: string, content: string, maxTokens: number): Promise<string> {
   const failures: string[] = [];
-  for (const provider of ['bedrock', 'anthropic', 'openai'] as const) {
+  for (const provider of ['deepseek', 'bedrock', 'anthropic', 'openai'] as const) {
     if (!providerConfigured(provider)) continue;
     const breaker = dreamBreakers.get(provider);
     if (breaker?.openUntil > Date.now()) { failures.push(`${provider}:circuit_open`); continue; }
@@ -328,13 +332,38 @@ async function callDreamWithFallback(systemPrompt: string, content: string, maxT
  * Same provider dispatch as callLlm(), but with a caller-supplied system
  * prompt and max_tokens instead of the crawl-scan SYSTEM_PROMPT/4000 default.
  * Used by /dream/extract (Dream Cycle) so this file's single LLM-provider
- * config (LLM_PROVIDER, BEDROCK_API_KEY etc., ANTHROPIC_API_KEY etc.,
+ * config (LLM_PROVIDER, DEEPSEEK_API_KEY etc., BEDROCK_API_KEY etc., ANTHROPIC_API_KEY etc.,
  * OPENAI_API_KEY etc.) serves both the webmcp-generator scan flow and Dream
  * Cycle's insight extraction without duplicating the fetch/provider-branching
  * logic per call site.
  */
 async function callLlmWithPrompt(systemPrompt: string, content: string, maxTokens: number, selectedProvider?: LlmProvider, timeoutMs?: number): Promise<string> {
-  const provider = selectedProvider ?? (process.env.LLM_PROVIDER || 'bedrock');
+  const provider = selectedProvider ?? (process.env.LLM_PROVIDER || (process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'bedrock'));
+
+  if (provider === 'deepseek') {
+    const apiKey = process.env.DEEPSEEK_API_KEY;
+    if (!apiKey) throw new Error('DEEPSEEK_API_KEY not set');
+    const baseUrl = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
+    const model = process.env.DEEPSEEK_MODEL || 'deepseek-chat';
+    const endpoint = baseUrl.endsWith('/v1') ? `${baseUrl}/chat/completions` : `${baseUrl}/v1/chat/completions`;
+    const res = await fetch(endpoint, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+      body: JSON.stringify({
+        model,
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: content.slice(0, 15000) },
+        ],
+      }),
+      ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}),
+    });
+    if (!res.ok) throw new Error(`DeepSeek ${res.status}: ${await res.text().catch(() => '')}`);
+    const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    return data.choices?.[0]?.message?.content || '';
+  }
 
   if (provider === 'bedrock') {
     const apiKey = process.env.BEDROCK_API_KEY;
@@ -390,7 +419,12 @@ async function callLlmWithPrompt(systemPrompt: string, content: string, maxToken
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'authorization': `Bearer ${apiKey}` },
-      body: JSON.stringify({ model: process.env.OPENAI_MODEL || 'gpt-4o', max_tokens: maxTokens, messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }] }),
+      body: JSON.stringify({
+        model: process.env.OPENAI_MODEL || 'gpt-4o',
+        max_tokens: maxTokens,
+        response_format: { type: 'json_object' },
+        messages: [{ role: 'user', content: `${systemPrompt}\n\n---\n${content.slice(0, 15000)}` }],
+      }),
     ...(timeoutMs ? { signal: AbortSignal.timeout(timeoutMs) } : {}) });
     if (!res.ok) throw new Error(`OpenAI ${res.status}: ${await res.text().catch(() => '')}`);
     const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
@@ -447,10 +481,12 @@ interface DreamExtractResponse {
 function tryParseDreamExtractResponse(
   raw: string,
 ): { ok: true; value: Omit<DreamExtractResponse, 'extraction_failure_reason'> } | { ok: false; reason: 'truncated_no_match' | 'truncated_partial_json' } {
-  const jsonMatch = raw.match(/\{[\s\S]*\}/);
+  const cleaned = raw.replace(/```(?:json)?/gi, '').replace(/```/g, '').trim();
+  const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
   if (!jsonMatch) return { ok: false, reason: 'truncated_no_match' };
   try {
-    const parsed = JSON.parse(jsonrepair(jsonMatch[0])) as Partial<DreamExtractResponse>;
+    const repaired = jsonrepair(jsonMatch[0]);
+    const parsed = JSON.parse(repaired) as Partial<DreamExtractResponse>;
     return {
       ok: true,
       value: {
@@ -538,9 +574,11 @@ const server = createServer(async (req, res) => {
     // environment by the deploy step — see scripts/deploy-vps.sh's GIT_SHA
     // injection) — never a runtime `git` call, so this has zero per-request
     // cost and can't drift from what was actually deployed.
+    const activeProvider = process.env.LLM_PROVIDER || (process.env.DEEPSEEK_API_KEY ? 'deepseek' : 'bedrock');
     res.end(JSON.stringify({
       ok: true,
-      provider: process.env.LLM_PROVIDER || 'bedrock',
+      provider: activeProvider,
+      model: activeProvider === 'deepseek' ? (process.env.DEEPSEEK_MODEL || 'deepseek-chat') : (process.env.BEDROCK_MODEL || 'deepseek.v3.2'),
       commit: process.env.GIT_SHA || null,
       deployed_at: process.env.DEPLOYED_AT || null,
     }));

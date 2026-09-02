@@ -1030,6 +1030,50 @@ const getMorningBriefTool: ToolDef = {
   },
 };
 
+const grantAgentDelegateTool: ToolDef = {
+  name: 'grant_agent_delegate',
+  description: 'Grant write (episode submission) and dream execution permissions on an agent_id to a secondary session/user ID. Only the primary agent owner can grant delegation.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: { agent_id: { type: 'string' }, delegate_user_id: { type: 'string' } },
+    required: ['agent_id', 'delegate_user_id'],
+  },
+  handler: async (args, ctx) => {
+    const { grantAgentDelegate } = await import('./dream/ownership');
+    return grantAgentDelegate(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous', String(args.delegate_user_id ?? ''));
+  },
+};
+
+const revokeAgentDelegateTool: ToolDef = {
+  name: 'revoke_agent_delegate',
+  description: 'Revoke write and dream execution permissions from a previously authorized delegate user ID on an agent_id. Only the primary agent owner can revoke delegation.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: {
+    type: 'object',
+    properties: { agent_id: { type: 'string' }, delegate_user_id: { type: 'string' } },
+    required: ['agent_id', 'delegate_user_id'],
+  },
+  handler: async (args, ctx) => {
+    const { revokeAgentDelegate } = await import('./dream/ownership');
+    return revokeAgentDelegate(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous', String(args.delegate_user_id ?? ''));
+  },
+};
+
+const listAgentDelegatesTool: ToolDef = {
+  name: 'list_agent_delegates',
+  description: 'List all authorized delegate user IDs for an agent_id. Available to the owner or authorized delegates.',
+  tier: 't1_read',
+  unmetered: true,
+  inputSchema: { type: 'object', properties: { agent_id: { type: 'string' } }, required: ['agent_id'] },
+  handler: async (args, ctx) => {
+    const { listAgentDelegates } = await import('./dream/ownership');
+    return listAgentDelegates(String(args.agent_id ?? ''), ctx?.session.userId ?? 'anonymous');
+  },
+};
+
 export function getTools(): ToolDef[] {
   const tools = [
     searchTool, vectorSearchTool, specTool, catalogTool, describeTool, paymentsNetworksTool,
@@ -1044,7 +1088,7 @@ export function getTools(): ToolDef[] {
   if (isMcpFlareEnabled()) tools.push(flareBridgeStatusTool);
   if (isMcpInstructEnabled()) tools.push(flareInstructDispatchTool);
   if (isMcpTokenProfileEnabled()) tools.push(flareTokenSaveTool, flareTokenProfileTool);
-  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamReadinessTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, createAgentRecoverySecretTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
+  if (isMcpDreamCycleEnabled()) tools.push(submitEpisodeLogTool, startDreamTool, getDreamConfigTool, queryDreamTool, getDreamStatsTool, getWakeContextTool, getDreamReadinessTool, getDreamEpisodeDiagnosticsTool, previewDreamRepairTool, applyDreamRepairTool, reclaimAgentOwnershipTool, createAgentRecoverySecretTool, grantAgentDelegateTool, revokeAgentDelegateTool, listAgentDelegatesTool, dreamSessionTool, listMyDreamAgentIdsTool, getDreamSkillsTool, getDreamSkillValidationTool, resolveDreamSkillProposalTool, getMorningBriefTool);
   return tools;
 }
 

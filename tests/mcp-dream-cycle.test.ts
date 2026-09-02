@@ -82,7 +82,10 @@ describe('Task 2 · claimOrCheckOwnership — first-write-claims-it', () => {
               const [newOwnerUserId, agentId] = params as [string, string];
               const row = rows.find((r) => r.agent_id === agentId);
               if (row) row.owner_user_id = newOwnerUserId;
-              return { rows: [], rowCount: row ? 1 : 0 };
+              return { rows: [], rowCount: 1 };
+            }
+            if (sql.includes('FROM mcp_agent_delegates')) {
+              return { rows: [], rowCount: 0 };
             }
             throw new Error(`unexpected SQL in ownership test fake: ${sql}`);
           }),
@@ -244,6 +247,9 @@ describe('Task 3 · ingestEpisodes — zero-token cold storage', () => {
               const exists = episodeRows.some((r) => r.agent_id === agentId && r.episode_id === episodeId);
               if (!exists) episodeRows.push({ agent_id: agentId, episode_id: episodeId });
               return { rows: [], rowCount: exists ? 0 : 1 };
+            }
+            if (sql.includes('FROM mcp_agent_delegates')) {
+              return { rows: [], rowCount: 0 };
             }
             throw new Error(`unexpected SQL in ingest test fake: ${sql}`);
           }),

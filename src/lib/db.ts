@@ -301,6 +301,16 @@ CREATE TABLE IF NOT EXISTS mcp_agent_ownership (
 CREATE INDEX IF NOT EXISTS idx_mcp_agent_ownership_owner ON mcp_agent_ownership(owner_user_id);
 ALTER TABLE mcp_agent_ownership ADD COLUMN IF NOT EXISTS recovery_secret_hash TEXT;
 
+-- Multi-session delegate authorization: allows an owner to delegate write & dream
+-- permissions to secondary session IDs (e.g. edge harnesses, portal gateways).
+CREATE TABLE IF NOT EXISTS mcp_agent_delegates (
+  agent_id         TEXT NOT NULL REFERENCES mcp_agent_ownership(agent_id) ON DELETE CASCADE,
+  delegate_user_id TEXT NOT NULL,
+  granted_at       TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  PRIMARY KEY (agent_id, delegate_user_id)
+);
+CREATE INDEX IF NOT EXISTS idx_mcp_agent_delegates_user ON mcp_agent_delegates(delegate_user_id);
+
 -- Zero-token cold storage for raw episode logs (submit_episode_log). No
 -- LLM/embedding call happens at insert time — see dream/ingest.ts.
 CREATE TABLE IF NOT EXISTS dream_episode_logs (

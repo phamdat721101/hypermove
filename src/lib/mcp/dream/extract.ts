@@ -167,18 +167,17 @@ async function extractOneCluster(cluster: EpisodeCluster, maxOutputTokens: numbe
         ? { scored_insights: body.scored_insights.slice(0, 40).flatMap(normalizeScoredInsight) }
         : {}),
     };
-    // Root-cause fix (2026-07-27): services/llm's extractDreamInsights() now
-    // tags a failed-to-parse/truncated result with extraction_failure_reason
-    // even on an HTTP 200 — this is the caller-visible signal that lets us
-    // tell "genuinely found nothing" apart from "the call didn't work,"
-    // which is exactly what the live-session bug report could NOT
-    // distinguish from the client side. Absence of the field (undefined) is
-    // the only "genuine" case; any string value means treat as non-genuine.
+    // Root-cause fix (2026-07-27 & 2026-09-02): services/llm's extractDreamInsights()
+    // tags a failed-to-parse/truncated result with extraction_failure_reason.
+    // However, if the parser managed to salvage any insights before truncation,
+    // preserve those insights as genuine rather than zeroing out candidate extraction.
     if (body.extraction_failure_reason !== undefined) {
-      // Finding C fix (2026-08-10): a 2xx response that still failed to
-      // produce genuine output is a parse/malformed-output failure, distinct
-      // from the upstream_error bucket above — the HTTP call itself worked.
-      return { insights, genuine: false, failureReason: 'parse_error' };
+      const totalExtracted = (insights.rules.length + insights.preferences.length +
+        insights.error_patterns.length + insights.facts.length + (insights.scored_insights?.length ?? 0));
+      if (totalExtracted > 0) {
+        return { insights, genuine: true };
+      }
+      return { insights, genuine: false, failureReason: 'parse_error', errorDetail: body.extraction_failure_reason };
     }
     return { insights, genuine: true };
   } catch {

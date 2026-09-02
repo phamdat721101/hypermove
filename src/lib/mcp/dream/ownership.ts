@@ -42,8 +42,9 @@ export async function issueDeviceRecoverySecret(agentId: string, userId: string)
 /** Non-sensitive restart/recovery view for one agent namespace. */
 export async function getDreamSession(agentId: string, userId: string) {
   const row = await withClient(async (client) => {
-    const { rows } = await client.query<{ owner_user_id: string; session_id: string | null; run_id: string | null }>(
-      `SELECT o.owner_user_id, s.session_id, r.run_id
+    const { rows } = await client.query<{ owner_user_id: string; session_id: string | null; run_id: string | null; is_delegate: boolean }>(
+      `SELECT o.owner_user_id, s.session_id, r.run_id,
+              EXISTS (SELECT 1 FROM mcp_agent_delegates d WHERE d.agent_id = o.agent_id AND d.delegate_user_id = $2) AS is_delegate
        FROM mcp_agent_ownership o
        LEFT JOIN LATERAL (SELECT session_id FROM mcp_paid_sessions WHERE user_id = $2 AND agent_id = o.agent_id AND expires_at > NOW() AND quota_used < quota_limit ORDER BY created_at DESC LIMIT 1) s ON true
        LEFT JOIN LATERAL (SELECT run_id FROM dream_cycle_runs WHERE agent_id = o.agent_id ORDER BY started_at DESC LIMIT 1) r ON true
@@ -52,6 +53,7 @@ export async function getDreamSession(agentId: string, userId: string) {
   });
   if (!row) return { ownership: 'unclaimed', recoveryHint: 'submit an episode or start a paid run to claim this agent_id' };
   if (row.owner_user_id === userId) return { ownership: 'current_session', ...(row.session_id ? { activePaymentSessionId: row.session_id } : {}), ...(row.run_id ? { lastRunId: row.run_id } : {}), recoveryHint: 'continue with this authenticated identity' };
+  if (row.is_delegate) return { ownership: 'authorized_delegate', ...(row.session_id ? { activePaymentSessionId: row.session_id } : {}), ...(row.run_id ? { lastRunId: row.run_id } : {}), recoveryHint: 'continue with this delegated session' };
   if (row.owner_user_id.startsWith('device:')) return { ownership: 'recoverable_device_owner', recoveryHint: 'call reclaim_agent_ownership from a new device-auth session' };
   return { ownership: 'other_durable_owner', recoveryHint: 're-authenticate with the wallet or account that originally claimed this agent_id' };
 }
@@ -61,7 +63,10 @@ export async function getDreamSession(agentId: string, userId: string) {
 export async function listMyDreamAgentIds(userId: string): Promise<{ agent_ids: string[] }> {
   const rows = await withClient(async (client) => {
     const { rows } = await client.query<{ agent_id: string }>(
-      `SELECT agent_id FROM mcp_agent_ownership WHERE owner_user_id = $1 ORDER BY claimed_at DESC`,
+      `SELECT agent_id FROM mcp_agent_ownership WHERE owner_user_id = $1
+       UNION
+       SELECT agent_id FROM mcp_agent_delegates WHERE delegate_user_id = $1
+       ORDER BY agent_id ASC`,
       [userId],
     );
     return rows;
@@ -71,8 +76,8 @@ export async function listMyDreamAgentIds(userId: string): Promise<{ agent_ids: 
 
 /**
  * First caller for a given agent_id claims it for their session's userId.
- * Subsequent calls from the SAME userId succeed (idempotent). A call from a
- * DIFFERENT userId against an already-claimed agent_id is rejected.
+ * Subsequent calls from the SAME userId or an authorized DELEGATE userId succeed.
+ * A call from an unauthorized DIFFERENT userId against an already-claimed agent_id is rejected.
  *
  * Race-safety: uses INSERT ... ON CONFLICT DO NOTHING, then re-selects the
  * actual owner — so two concurrent first-claims for the same agent_id never
@@ -90,7 +95,17 @@ export async function claimOrCheckOwnership(agentId: string, userId: string): Pr
       `SELECT owner_user_id FROM mcp_agent_ownership WHERE agent_id = $1 LIMIT 1`,
       [agentId],
     );
-    return rows[0]?.owner_user_id ?? null;
+    const owner = rows[0]?.owner_user_id ?? null;
+    if (owner === null || owner === userId) return { authorized: true };
+
+    // Check delegate authorization
+    const delegateRes = await client.query<{ delegate_user_id: string }>(
+      `SELECT delegate_user_id FROM mcp_agent_delegates WHERE agent_id = $1 AND delegate_user_id = $2 LIMIT 1`,
+      [agentId, userId],
+    );
+    if ((delegateRes.rows?.length ?? 0) > 0) return { authorized: true };
+
+    return { authorized: false, owner };
   });
 
   // withClient() returns null when DATABASE_URL is unset (dev/mock-first
@@ -99,14 +114,11 @@ export async function claimOrCheckOwnership(agentId: string, userId: string): Pr
   // convention (see db.ts's insertRegistryRequest, etc.).
   if (result === null) return { ok: true };
 
-  if (result === userId) return { ok: true };
-  // Message-copy fix (2026-08-10, PRD 05 — dream-cycle-fcc-live-session-feedback):
-  // the prior message stated only the problem, not the fix. A caller hitting
-  // this had no signal of the two actual resolution paths short of guessing.
-  // No change to the claim/check logic above — copy only.
+  if (result.authorized) return { ok: true };
+
   return {
     ok: false,
-    reason: `agent_id "${agentId}" is already claimed by a different session. Choose a different agent_id, or if you own this agent_id, verify you're using the same authenticated session/credentials that first claimed it.`,
+    reason: `agent_id "${agentId}" is already claimed by a different session. Choose a different agent_id, or if you own this agent_id, verify you're using the same authenticated session/credentials that first claimed it, or have the owner grant delegation to your session via grant_agent_delegate.`,
   };
 }
 
@@ -191,4 +203,106 @@ export async function reclaimDeviceOwnership(agentId: string, newUserId: string,
     case 'reclaimed':
       return { ok: true };
   }
+}
+
+/**
+ * Grant write and dream authorization to a secondary session/user identity.
+ * Can ONLY be performed by the actual primary owner of the agent_id.
+ */
+export async function grantAgentDelegate(agentId: string, ownerUserId: string, delegateUserId: string): Promise<OwnershipResult> {
+  const trimmedDelegate = delegateUserId?.trim();
+  if (!trimmedDelegate) {
+    return { ok: false, reason: 'delegate_user_id cannot be empty' };
+  }
+  const result = await withClient(async (client) => {
+    const { rows } = await client.query<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM mcp_agent_ownership WHERE agent_id = $1 LIMIT 1`,
+      [agentId],
+    );
+    const currentOwner = rows[0]?.owner_user_id ?? null;
+    if (currentOwner === null) {
+      return { outcome: 'not_claimed' as const };
+    }
+    if (currentOwner !== ownerUserId) {
+      return { outcome: 'not_owner' as const };
+    }
+    await client.query(
+      `INSERT INTO mcp_agent_delegates (agent_id, delegate_user_id) VALUES ($1, $2)
+       ON CONFLICT (agent_id, delegate_user_id) DO NOTHING`,
+      [agentId, trimmedDelegate],
+    );
+    return { outcome: 'granted' as const };
+  });
+
+  if (result === null) return { ok: true };
+
+  switch (result.outcome) {
+    case 'not_claimed':
+      return { ok: false, reason: `agent_id "${agentId}" has no existing owner to grant delegation from.` };
+    case 'not_owner':
+      return { ok: false, reason: `only the primary owner of agent_id "${agentId}" can grant delegation.` };
+    case 'granted':
+      return { ok: true };
+  }
+}
+
+/**
+ * Revoke delegation from a secondary session/user identity.
+ * Can ONLY be performed by the actual primary owner of the agent_id.
+ */
+export async function revokeAgentDelegate(agentId: string, ownerUserId: string, delegateUserId: string): Promise<OwnershipResult> {
+  const trimmedDelegate = delegateUserId?.trim();
+  if (!trimmedDelegate) {
+    return { ok: false, reason: 'delegate_user_id cannot be empty' };
+  }
+  const result = await withClient(async (client) => {
+    const { rows } = await client.query<{ owner_user_id: string }>(
+      `SELECT owner_user_id FROM mcp_agent_ownership WHERE agent_id = $1 LIMIT 1`,
+      [agentId],
+    );
+    const currentOwner = rows[0]?.owner_user_id ?? null;
+    if (currentOwner === null) {
+      return { outcome: 'not_claimed' as const };
+    }
+    if (currentOwner !== ownerUserId) {
+      return { outcome: 'not_owner' as const };
+    }
+    const { rowCount } = await client.query(
+      `DELETE FROM mcp_agent_delegates WHERE agent_id = $1 AND delegate_user_id = $2`,
+      [agentId, trimmedDelegate],
+    );
+    return { outcome: 'revoked' as const, deletedCount: rowCount ?? 0 };
+  });
+
+  if (result === null) return { ok: true };
+
+  switch (result.outcome) {
+    case 'not_claimed':
+      return { ok: false, reason: `agent_id "${agentId}" has no existing owner.` };
+    case 'not_owner':
+      return { ok: false, reason: `only the primary owner of agent_id "${agentId}" can revoke delegation.` };
+    case 'revoked':
+      return { ok: true };
+  }
+}
+
+/**
+ * List all authorized delegate user IDs for an agent.
+ * Available to the owner or authorized delegates.
+ */
+export async function listAgentDelegates(agentId: string, userId: string): Promise<{ ok: boolean; delegates?: string[]; reason?: string }> {
+  const auth = await claimOrCheckOwnership(agentId, userId);
+  if (!auth.ok) {
+    return { ok: false, reason: auth.reason ?? 'not authorized to view delegates' };
+  }
+
+  const rows = await withClient(async (client) => {
+    const { rows } = await client.query<{ delegate_user_id: string }>(
+      `SELECT delegate_user_id FROM mcp_agent_delegates WHERE agent_id = $1 ORDER BY granted_at ASC`,
+      [agentId],
+    );
+    return rows;
+  });
+
+  return { ok: true, delegates: (rows ?? []).map((r) => r.delegate_user_id) };
 }
