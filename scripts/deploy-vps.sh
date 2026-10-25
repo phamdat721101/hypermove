@@ -31,16 +31,19 @@ cd "$ROOT_DIR"
 VPS_HOST="${VPS_HOST:-13.212.193.69}"
 VPS_USER="${VPS_USER:-ubuntu}"
 VPS_SSH_KEY="${VPS_SSH_KEY:-}"
-APP_REMOTE_DIR="${APP_REMOTE_DIR:-/home/ubuntu/hypermove-app}"
+APP_REMOTE_DIR="${APP_REMOTE_DIR:-/home/ubuntu/hypermove-flashloan-release}"
 LLM_REMOTE_DIR="${LLM_REMOTE_DIR:-/home/ubuntu/llm-service}"
-PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://hypermove.duckdns.org}"
+PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://mcp.overguild.com}"
 
 DEPLOY_APP=1
 DEPLOY_LLM=1
+DEPLOY_FLASHLOAN=0
 for arg in "$@"; do
   case "$arg" in
     --app-only) DEPLOY_LLM=0 ;;
     --llm-only) DEPLOY_APP=0 ;;
+    --flashloan-only) DEPLOY_APP=0; DEPLOY_LLM=0; DEPLOY_FLASHLOAN=1 ;;
+    --with-flashloan) DEPLOY_FLASHLOAN=1 ;;
     *) echo "unknown flag: $arg" >&2; exit 1 ;;
   esac
 done
@@ -86,7 +89,11 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
     .npmrc \
     patches \
     nim.json \
-    next.config.mjs
+    next.config.mjs \
+    mdx-components.tsx \
+    tsconfig.json \
+    postcss.config.mjs \
+    tailwind.config.mjs
 
   set_env_var "$APP_REMOTE_DIR" "GIT_SHA" "$GIT_SHA"
   set_env_var "$APP_REMOTE_DIR" "DEPLOYED_AT" "$DEPLOYED_AT"
@@ -97,8 +104,18 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
   ssh_cmd "cd '$APP_REMOTE_DIR' && pnpm install --frozen-lockfile"
   ssh_cmd "cd '$APP_REMOTE_DIR' && pnpm build"
   ssh_cmd "cd '$APP_REMOTE_DIR' && rm -rf .next/standalone/public .next/standalone/.next/static && cp -r public .next/standalone/public && cp -r .next/static .next/standalone/.next/static"
-  ssh_cmd "pm2 flush hypermove-app && pm2 restart hypermove-app"
+  ssh_cmd "pm2 restart hypermove-app"
   echo "OK hypermove-app deployed"
+fi
+
+if [[ "$DEPLOY_FLASHLOAN" == "1" ]]; then
+  # Research remains opt-in. Build on the target OS/architecture; never copy a local binary.
+  rsync_to src package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc patches
+  rsync_to services/flashloan/server.ts services/flashloan/tsconfig.json services/flashloan/start.sh services/flashloan/Cargo.toml services/flashloan/Cargo.lock services/flashloan/native services/flashloan/contracts services/flashloan/foundry.toml services/flashloan/environment-contract.json
+  ssh_cmd "export PATH=\"\$HOME/.cargo/bin:\$HOME/.foundry/bin:\$PATH\"; cd '$APP_REMOTE_DIR' && command -v cargo && command -v forge && pnpm install --frozen-lockfile && pnpm flashloan:build"
+  # Existing service .env must be provisioned separately; never transfer local credentials.
+  ssh_cmd "cd '$APP_REMOTE_DIR' && test -f services/flashloan/.env && (pm2 describe flashloan-worker >/dev/null 2>&1 && pm2 restart flashloan-worker || pm2 start services/flashloan/start.sh --interpreter bash --name flashloan-worker)"
+  echo "OK flashloan research worker deployed; gateway flag remains explicitly configured"
 fi
 
 if [[ "$DEPLOY_LLM" == "1" ]]; then

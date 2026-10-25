@@ -19,6 +19,9 @@ import { isMcpVectorSearchEnabled, isMcpNewsEnabled, isMcpAgenticEnabled, isMcpS
 import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 import type { OutputEnforceConfig } from '../harness/types';
+import type { z } from 'zod';
+import { isMcpFlashloanEnabled } from '../platform-flag';
+import { getFlashloanTools } from './flashloan/tools';
 
 /** Per-call context injected by the gateway (never from client args). */
 export interface ToolContext {
@@ -31,6 +34,9 @@ export interface ToolDef {
   description: string;
   tier: PriceTier;
   inputSchema: Record<string, unknown>;
+  /** Full opt-in schema, shared by every transport and dispatch path. */
+  nativeInputSchema?: z.ZodObject;
+  requiresAuthentication?: boolean;
   handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<unknown>;
   /** Skip free-tier metering (e.g. payments.* — metering them would deadlock). */
   unmetered?: boolean;
@@ -1080,6 +1086,7 @@ export function getTools(): ToolDef[] {
     paymentsQuoteTool, paymentsSettleTool, paymentsStatusTool, xrplReadinessTool, xrplBootstrapTool, dataCallTool,
     xrplToolkitListTool, // N3 — canonical toolkit directory, always available (pure reference data)
   ];
+  if (isMcpFlashloanEnabled()) tools.push(...getFlashloanTools());
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
   if (isMcpAgenticEnabled()) tools.push(roadmapTool, ideasTool, skillifyTool);
   if (isMcpSkillsEnabled()) tools.push(...getSkillTools());

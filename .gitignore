@@ -10,6 +10,16 @@ node_modules/
 jspm_packages/
 # Top-level research/build docs only — NOT the Next.js app routes in src/app/docs.
 /docs/
+# Keep this feature's reviewable delivery contract while other local research stays ignored.
+!/docs/
+/docs/*
+!/docs/features/
+/docs/features/*
+!/docs/features/flashloan-research.md
+!/docs/features/flashloan-research-map.md
+!/docs/prd/
+/docs/prd/*
+!/docs/prd/flashloan-research-implementation.md
 
 # --- build + compiled output -----------------------------------------
 .next/
@@ -36,6 +46,11 @@ coverage/
 
 # --- nim-skill harness: local traces + agent-audit memory (never commit) ---
 .nim/
+.nim-memory/
+services/flashloan/target/
+services/flashloan/data/
+services/flashloan/out/
+services/flashloan/cache/
 
 # --- Kiro agent memory: local task-tracking notes (never commit) -----
 .kiro/memory/
@@ -45,6 +60,7 @@ coverage/
 .env
 .env.*
 *.env
+*.env.*
 !.env.example
 !.env.sample
 !scripts/.env.mcp-smoke.example
@@ -65,6 +81,10 @@ secrets/
 credentials/
 service-account.json
 serviceAccountKey.json
+credentials.json
+credentials-*.json
+secrets.json
+secrets.*.json
 gha-creds-*.json
 # .npmrc is intentionally committed — it contains only ${GITHUB_TOKEN} env-var
 # interpolation (no hardcoded secrets). Required to fix ERR_PNPM_FETCH_429 in CI.
@@ -123,3 +143,7 @@ node_repl_history
 .tern-port
 .fleet/
 .gstack/
+
+# Host-specific deployment evidence/configuration stays local.
+services/flashloan/certs/
+services/flashloan/deployment-*.json

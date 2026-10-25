@@ -496,11 +496,23 @@ CREATE INDEX IF NOT EXISTS idx_dream_contradictions_agent ON dream_contradiction
 `;
 
 let pool: Pool | null = null;
+let verifiedPool: Pool | null = null;
 let schemaReady = false;
 
-function getPool(): Pool | null {
+function getPool(verifiedTls = false): Pool | null {
   const url = process.env.DATABASE_URL;
   if (!url) return null;
+  if (verifiedTls) {
+    if (!verifiedPool) {
+      const endpoint = new URL(url);
+      const local = ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname);
+      // URI sslmode can otherwise override pg's explicit verified TLS options.
+      for (const key of ['sslmode', 'sslcert', 'sslkey', 'sslrootcert']) endpoint.searchParams.delete(key);
+      verifiedPool = new Pool({ connectionString: endpoint.toString(), max: 5, ssl: local ? undefined : { rejectUnauthorized: true }, connectionTimeoutMillis: 5000, idleTimeoutMillis: 30000, statement_timeout: 15000, query_timeout: 15000 });
+      verifiedPool.on('error', () => console.error('[research:db] idle connection interrupted'));
+    }
+    return verifiedPool;
+  }
   if (!pool) {
     pool = new Pool({
       connectionString: url,
@@ -511,6 +523,12 @@ function getPool(): Pool | null {
     });
   }
   return pool;
+}
+
+/** Worker shutdown/test cleanup; does not affect the legacy application pool. */
+export async function closeResearchPool(): Promise<void> {
+  const current = verifiedPool; verifiedPool = null;
+  if (current) await current.end();
 }
 
 async function ensureSchema(client: PoolClient): Promise<void> {
@@ -524,17 +542,17 @@ async function ensureSchema(client: PoolClient): Promise<void> {
  * DATABASE_URL is unset (dev / mock-first). Every MCP feature module uses this
  * instead of re-implementing connect/ensureSchema/release — SRP + no dup.
  */
-export async function withClient<T>(fn: (client: PoolClient) => Promise<T>): Promise<T | null> {
-  const p = getPool();
+export async function withClient<T>(fn: (client: PoolClient) => Promise<T>, options?: { verifiedTls?: boolean; skipSchema?: boolean }): Promise<T | null> {
+  const p = getPool(options?.verifiedTls);
   if (!p) return null;
   let client: PoolClient | null = null;
   try {
     client = await p.connect();
-    await ensureSchema(client);
+    if (!options?.skipSchema) await ensureSchema(client);
     return await fn(client);
   } catch (err) {
     // eslint-disable-next-line no-console
-    console.error('[mcp:withClient] query failed', err);
+    console.error('[mcp:withClient] query failed', options?.verifiedTls ? 'research database request failed' : err);
     return null;
   } finally {
     client?.release();

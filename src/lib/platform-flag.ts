@@ -42,6 +42,11 @@ export function isMcpGatewayEnabled(): boolean {
   return process.env.FEATURE_HYPERMOVE_MCP_GATEWAY_V1 !== 'false';
 }
 
+/** Research is opt-in; disabled deployments never initialize a worker. */
+export function isMcpFlashloanEnabled(): boolean {
+  return isMcpGatewayEnabled() && process.env.FEATURE_MCP_FLASHLOAN === 'true';
+}
+
 function subFlag(name: string): boolean {
   return isMcpGatewayEnabled() && process.env[name] !== 'false';
 }

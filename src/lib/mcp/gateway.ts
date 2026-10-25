@@ -62,9 +62,16 @@ export async function callTool(input: {
   args: Record<string, unknown>;
   headers?: Headers;
 }): Promise<RpcOutcome> {
-  const { session, name, args, headers } = input;
+  const { session, name, headers } = input;
+  let { args } = input;
   const tool = getTool(name);
   if (!tool) return { error: { code: -32601, message: `unknown tool: ${name}` } };
+  if (tool.requiresAuthentication && (!session.userId || session.userId === 'anonymous')) return { error: { code: -32001, message: 'authenticated session required' } };
+  if (tool.nativeInputSchema) {
+    const parsed = tool.nativeInputSchema.safeParse(args);
+    if (!parsed.success) return { error: { code: -32602, message: 'invalid tool arguments', data: { issues: parsed.error.issues.map(({ path, code }) => ({ path, code })) } } };
+    args = parsed.data;
+  }
 
   const started = Date.now();
   let sessionId: string | undefined;

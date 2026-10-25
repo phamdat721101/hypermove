@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "incremental": false,
+    "module": "CommonJS",
+    "moduleResolution": "Node",
+    "target": "ES2022",
+    "outDir": "dist",
+    "rootDir": "../..",
+    "plugins": []
+  },
+  "include": ["server.ts"],
+  "exclude": ["dist", "target", "node_modules"]
+}

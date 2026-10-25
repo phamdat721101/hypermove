@@ -107,7 +107,7 @@ export function toZodShape(inputSchema: Record<string, unknown>): ZodRawShape {
 const ANON: McpSession = { userId: 'anonymous', tier: 'free', kind: 'user' };
 
 export function registerTool(server: Parameters<Parameters<typeof createMcpHandler>[0]>[0], tool: ToolDef): void {
-  server.tool(tool.name, tool.description, toZodShape(tool.inputSchema), async (args, extra) => {
+  const handle = async (args: Record<string, unknown>, extra: { authInfo?: AuthInfo }) => {
     const session = (extra.authInfo?.extra?.session as McpSession | undefined) ?? ANON;
     const headers = extra.authInfo?.extra?.headers as Headers | undefined;
     const outcome = await callTool({ session, name: tool.name, args: (args ?? {}) as Record<string, unknown>, headers });
@@ -123,7 +123,9 @@ export function registerTool(server: Parameters<Parameters<typeof createMcpHandl
       content: [{ type: 'text' as const, text: JSON.stringify(result) }],
       ...(structured ? { structuredContent: structured } : {}),
     };
-  });
+  };
+  if (tool.nativeInputSchema) server.registerTool(tool.name, { description: tool.description, inputSchema: tool.nativeInputSchema }, handle);
+  else server.tool(tool.name, tool.description, toZodShape(tool.inputSchema), handle);
 }
 
 /**

@@ -5,7 +5,200 @@
 
 Standalone Next.js 14 implementation of the HyperMove consolidation surface. The homepage IS the demo — an AI agent visiting the site reads `.well-known/webmcp.json`, hits a $0.01 `payment.x402` paywall, signs through n-payment, and renders a 200 OK — all in-page.
 
-## Status
+## Latest upgrade: flashloan research MCP
+
+HyperMove now exposes eight authenticated research tools for pool discovery,
+block-pinned reserves and tick maps, bounded route sizing, EVM simulation, native
+XRPL arbitrage research, and cited memory. Ethereum, Arbitrum and Base use an
+isolated worker; XRPL uses its native ledger APIs. There is no signing or
+transaction-broadcasting tool.
+
+| Service | Public URL |
+|---|---|
+| MCP, Streamable HTTP | **https://mcp.overguild.com** (alias: `/api/mcp`) |
+| Gateway health and advertised tools | https://mcp.overguild.com/api/mcp/health |
+| LLM API | https://mcp.overguild.com/llm |
+
+Deployment verification on **2026-10-25** passed public MCP initialization,
+all eight tool schemas, discovery, Base tick-map ingestion, sizing and owned
+artifact retrieval. The deployed Linux engine also passed local Anvil repayment,
+transfer-tax rejection and same-block cooldown rejection tests. The sampled live
+market returned `INCONCLUSIVE`; these checks establish functionality, not profit.
+
+**Current authentication limitation:** the existing application Supabase
+connection rejects its tenant/user, so normal wallet/device token persistence
+requires repairing that connection. Deployment verification used the server-held
+admin credential. Research jobs use a separate durable PostgreSQL database.
+Keep admin and worker credentials server-side; never place them in UI variables.
+
+### Connect an MCP client
+
+Configure a client that supports Streamable HTTP with URL
+`https://mcp.overguild.com` and header `Authorization: Bearer <your-token>`.
+Use an issued HyperMove token after authentication is available; self-hosted
+operators can provision `HYPERMOVE_MCP_ADMIN_TOKEN` for administrative checks.
+The gateway retains its installed SDK protocol negotiation; no protocol revision
+upgrade is required. [Authentication guide](src/app/docs/agent-auth/page.mdx).
+
+From this repository, save the following as `flashloan-client.mjs`, provide
+`HYPERMOVE_MCP_TOKEN` through your shell's secret/environment mechanism, and run
+`node flashloan-client.mjs`. The SDK handles initialization and transport headers.
+
+```js
+import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+
+const token = process.env.HYPERMOVE_MCP_TOKEN;
+if (!token) throw new Error('Set HYPERMOVE_MCP_TOKEN');
+const client = new Client({ name: 'flashloan-research', version: '1.0.0' });
+await client.connect(new StreamableHTTPClientTransport(
+  new URL('https://mcp.overguild.com'),
+  { requestInit: { headers: { Authorization: `Bearer ${token}` } } },
+));
+async function call(name, args) {
+  const result = await client.callTool({ name, arguments: args });
+  if (result.isError) throw new Error(JSON.stringify(result.content));
+  return result.structuredContent ?? JSON.parse(
+    result.content.find((item) => item.type === 'text').text,
+  );
+}
+try {
+  console.log(await call('flashloan_research_job', { operation: 'capabilities' }));
+  const job = await call('flashloan_discover_arbitrage_pools', {
+    idempotency_key: `base-discovery-${Date.now()}`,
+    network: 'base',
+    tokens: ['0x4200000000000000000000000000000000000006'],
+  });
+  let complete = false;
+  for (let attempt = 0; attempt < 120; attempt++) {
+    const status = await call('flashloan_research_job', {
+      operation: 'get', job_id: job.id,
+    });
+    if (status.state === 'SUCCEEDED') {
+      console.log(await call('flashloan_research_job', {
+        operation: 'artifact', artifact_id: status.result_id,
+      }));
+      complete = true;
+      break;
+    }
+    if (['FAILED', 'CANCELLED'].includes(status.state)) {
+      throw new Error(JSON.stringify(status.error ?? status));
+    }
+    await new Promise((done) => setTimeout(done, 1000));
+  }
+  if (!complete) throw new Error(`Poll budget exceeded; resume with job_id ${job.id}`);
+} finally {
+  await client.close();
+}
+```
+
+### Research workflow and contracts
+
+| Tool | Input → output |
+|---|---|
+| `flashloan_discover_arbitrage_pools` | Network + token addresses → discovery job/artifact with candidates and diagnostics |
+| `flashloan_ingest_l2_tickmap_and_reserves` | Reviewed pool references + lender/asset → canonical block snapshot with reserves, bounded ticks, fees and capacity |
+| `flashloan_solve_dynamic_route_split` | Owned snapshot ID + borrow asset + risk policy → feasible plan, `NO_OPPORTUNITY`, or `INCONCLUSIVE` report |
+| `flashloan_simulate_atomic_revm` | Owned feasible plan ID + caller + executor mode/address → repayment/revert and reference dry-run report |
+| `xrpl_discover_arbitrage_routes` | Native assets + account-backed or hypothetical funding → ledger-pinned AMM/book routes |
+| `xrpl_simulate_arbitrage_route` | Owned XRPL route artifact + optional unsigned transaction → native dry-run report |
+| `nim_memory_sync_flashloan_lesson` | Explicit `RETRIEVE`, `PROPOSE`, `VALIDATE`, or `COMMIT` operation → cited owner-scoped memory artifact |
+| `flashloan_research_job` | `capabilities`, `get`, `cancel`, or `artifact` → configuration, owned job state, cancellation or result |
+
+Start with `capabilities` to see the configured networks and reviewed deployments.
+Discovery candidates are not automatically trusted: only registered deployments
+with matching runtime hashes can enter EVM snapshots. The initial deployment
+contains two Uniswap V3 pools and one Aave lender on each EVM network.
+
+For example, enqueue a Base snapshot with these tool arguments, then poll its
+job and pass the resulting **snapshot artifact ID** to the sizing tool:
+
+```json
+{
+  "idempotency_key": "base-snapshot-unique-request",
+  "network": "base",
+  "pools": [
+    { "address": "0xd0b53d9277642d899df5c87a3966a349a798f224", "adapter": "UNISWAP_V3", "word_range": 3 },
+    { "address": "0x6c561b446416e1a00e8e93e221854d6ea4171372", "adapter": "UNISWAP_V3", "word_range": 3 }
+  ],
+  "lender": {
+    "provider": "AAVE_V3",
+    "address": "0xa238dd80c259a72e81d7e4664a9801593f98d1c5",
+    "asset": "0x4200000000000000000000000000000000000006"
+  }
+}
+```
+
+Sizing requires `snapshot_id`, `borrow_asset`, and a `policy` containing
+`max_principal` and `network_cost`. Amounts are exact decimal **strings in raw
+token units**, not JSON numbers or USD. For WETH, `"10000000000000000"` is 0.01
+WETH. Supply an explicit cost assumption; the service does not guarantee live gas
+costs or fiat valuations. Only a feasible `plan` artifact can be simulated.
+
+All asynchronous requests require an `idempotency_key`; retry the same request
+with the same key and use a new key for new research. Jobs are owner-scoped and
+move through `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, or `CANCELLED`. Large
+artifacts return JSON chunks; follow `next_offset` with `offset` and `limit`
+(at most 100,000 characters). Reports/jobs expire after seven days; other large
+artifacts expire after 24 hours.
+
+Route sizing is a bounded heuristic. Tick coverage can be incomplete, transfer
+restrictions can cause contextual reverts, and generic Cancun execution does not
+fully reproduce ArbOS, OP Stack or later Ethereum hardforks.
+`chain_native_verified` and `can_execute` remain false. Native XRPL uses
+issuer-aware assets and account funding rather than an EVM flashloan; hypothetical
+funding remains explicitly labeled. Memory evidence stays cited, inferences stay
+provisional, and procedures/rules require owner approval before activation.
+
+### Run the worker locally
+
+The worker requires Node **20.19+ or 22.12+**, Rust/Cargo, Foundry and PostgreSQL.
+The main app can still run with flashloan research disabled and without Rust.
+
+```bash
+pnpm install
+cp services/flashloan/.env.example services/flashloan/.env
+# Configure a dedicated DATABASE_URL, a random worker token (32+ characters),
+# HTTPS RPC endpoints and an explicitly reviewed FLASHLOAN_DEPLOYMENTS registry.
+pnpm flashloan:build
+bash services/flashloan/start.sh
+```
+
+In a separate terminal, configure the gateway's `.env.local` and run `pnpm dev`:
+
+```dotenv
+FEATURE_MCP_FLASHLOAN=true
+FLASHLOAN_WORKER_URL=http://127.0.0.1:3012
+FLASHLOAN_WORKER_TOKEN=<same-server-only-worker-token>
+HYPERMOVE_MCP_ADMIN_TOKEN=<separate-server-only-admin-token>
+NEXT_PUBLIC_MCP_HOST_URL=https://mcp.overguild.com
+NEXT_PUBLIC_LLM_API_URL=https://mcp.overguild.com/llm
+```
+
+Use `http://localhost:3003/api/mcp` for the local MCP client. The two public URL
+variables above direct the UI to the deployed services; adjust them when using
+local services. Worker/admin tokens and database URLs must never use a
+`NEXT_PUBLIC_` prefix. For remote PostgreSQL, keep CA/hostname verification enabled
+and configure `NODE_EXTRA_CA_CERTS` when the provider requires its own CA.
+
+Run `pnpm flashloan:test` and `pnpm flashloan:e2e` for focused checks.
+`pnpm flashloan:native-e2e` exercises actual Anvil/Rust repayment and rejection
+cases; `pnpm flashloan:postgres-e2e` and `pnpm flashloan:live` are explicit opt-in
+checks requiring their documented endpoints/environment.
+
+The PostgreSQL E2E suite creates a disposable local cluster. Set
+`FLASHLOAN_POSTGRES_BIN` to your PostgreSQL binary directory if it differs from
+the test's default `/usr/local/opt/postgresql@15/bin`; it does not use the
+production research database.
+
+Read the [worker/deployment guide](services/flashloan/README.md),
+[implementation specification](docs/prd/flashloan-research-implementation.md), and
+[canonical input schemas](src/lib/mcp/flashloan/contracts.ts) for exact fields,
+limits and verification details. Environment files, credentials, private keys,
+local memory, deployment evidence and compiled artifacts stay outside Git;
+only placeholder configuration examples are committed.
+
+## Earlier milestones
 
 | Sprint | Scope | Status |
 |---|---|---|
@@ -44,7 +237,7 @@ The `/api/paid-endpoint` paywall always emits the real `HTTP 402 + WWW-Authentic
 
 ## Registry storage
 
-`/portal` email-bundle requests are persisted to Postgres (Supabase project `boopiufnqyrwzvyrjens`) via a Next.js Server Action (`src/app/portal/actions.ts`). The schema is auto-created idempotently on first write — see `src/lib/db.ts`. Configure via `DATABASE_URL` in `.env.local`.
+`/portal` email-bundle requests use Postgres via a Next.js Server Action (`src/app/portal/actions.ts`). The schema is auto-created idempotently on first write — see `src/lib/db.ts`. Configure a working database via `DATABASE_URL` in `.env.local`; see the current deployment limitation above.
 
 ### Use the Supavisor pooler URL, not the direct host
 
@@ -72,9 +265,28 @@ When the Server Action returns `persist_failed`, the UI shows a hint code mapped
 | `tenant_not_found`  | Usually **not** a shard mismatch — the pooler's own DNS (`aws-0`/`aws-1-<region>.pooler.supabase.com`) resolves regardless of project state, so it never tells you the shard is wrong. Run `./run.sh doctor` — it pings `https://<project-ref>.supabase.co` directly: no DNS record there means the project was deleted; DNS resolves but HTTP doesn't respond means it's paused (free-tier auto-pause after ~7 days idle — restore it from the Dashboard). |
 | `auth_failed`       | Password rotated, or `postgres.<project-ref>` tenant prefix missing from the username.  |
 | `connection_refused`| Pooler port is `6543` (not `5432`) for Transaction mode.                                |
-| `tls_failed`        | Provider requires `ssl=true`; `db.ts` enables `rejectUnauthorized:false` automatically when host contains `supabase`. |
+| `tls_failed`        | Check the provider CA and hostname. The research worker verifies TLS; configure its trusted CA rather than disabling verification. The legacy registry pool has separate TLS behavior. |
 
 ## Deploy
+
+### Current production — VPS with PM2 and Caddy
+
+The MCP gateway and research worker run from
+`/home/ubuntu/hypermove-flashloan-release`. Caddy terminates HTTPS at
+`mcp.overguild.com`; the worker remains on loopback port 3012 and is not exposed
+directly. Provision server-only environment files before deploying:
+
+```bash
+VPS_SSH_KEY=/path/to/your-private-key.pem \
+  bash scripts/deploy-vps.sh --with-flashloan
+```
+
+The script builds the native worker on the target OS. Set `APP_REMOTE_DIR` or
+`PUBLIC_BASE_URL` to override the installed release path or public domain.
+The [worker guide](services/flashloan/README.md) records the deployed topology,
+rollback locations and verification limits. The alternatives below describe
+other app deployments; a standalone app deployment does not provision the
+research worker automatically.
 
 ### Option A — Vercel
 
@@ -322,9 +534,9 @@ Deployed as native Go binaries under PM2 on the same VPS as `hypermove-app`/`llm
 — no Docker, no ngrok. Self-hosted MySQL + Redis + Flare's own `flare-system-c-chain-indexer`
 back the TEE-proxy's on-chain sync requirement; a third Caddy route
 (`/tee-proxy/* → localhost:6664`) exposes it publicly, mirroring the existing `/llm/*`
-route. Full deployment story — every real bug found and fixed, the exact dependency
-chain, and the precise resume point at the attestation-hardware boundary — is documented
-in [`services/tee-extension/README.md`](./services/tee-extension/README.md).
+route. These are earlier TEE integration notes; the extension source and its
+deployment guide are maintained separately from this app checkout. The current
+flashloan deployment and its verified boundaries are documented above.
 
 ## Architecture
 

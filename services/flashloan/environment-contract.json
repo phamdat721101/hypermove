@@ -1,0 +1,9 @@
+{
+  "secrets": [{ "key": "FLASHLOAN_WORKER_TOKEN", "required": true }, { "key": "DATABASE_URL", "required": true }],
+  "tls": [{ "target": "market-rpc", "ssl": true, "verification": "hostname" }],
+  "collateral": [
+    { "dependency": "PostgreSQL", "behavior": "Creates flashloan_jobs and flashloan_artifacts; never signs or submits transactions." },
+    { "dependency": "nim-skill", "behavior": "Writes owner-scoped knowledge and harness evidence only for explicitly enabled research jobs." },
+    { "dependency": "RPC", "behavior": "Read calls and unsigned dry-runs only." }
+  ]
+}
