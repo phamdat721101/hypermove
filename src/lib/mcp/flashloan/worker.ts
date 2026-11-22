@@ -1,9 +1,9 @@
 import { resolve, join } from 'node:path';
 import { runHarnessed, HarnessExecutionError } from 'nim-skill';
 import { operationSchemas, operationEnabled, arbGtEnabled, arbUniverseEnabled, groundTruthInputSchema, GROUND_TRUTH_OPERATION, UNIVERSE_OPERATION, errorResult, ResearchError, boundaryEvent, hash, VERSION, type Operation } from './contracts';
-import { arbCacheKey, arbGroundTruthRefSchema, arbGroundTruthDocumentSchema, deploymentsVersion } from './arb-contracts';
+import { arbGroundTruthRefSchema } from './arb-contracts';
 import { buildArbUniverse, universeCacheKey } from './arb-universe';
-import { measureArbGroundTruth, groundTruthKeyInputs, type GroundTruthInput, type GtNetwork } from './arb-ground-truth';
+import { measureArbGroundTruth, groundTruthKeyInputs, groundTruthCacheKey, readLatestGroundTruth, GT_LATEST_KIND, type GroundTruthInput, type GtNetwork } from './arb-ground-truth';
 import { RoundBudget } from './transport';
 import type { XrplSnapshot } from './xrpl';
 import { ResearchEngine, type EngineOptions, type ComputeAdapter } from './engine';
@@ -20,8 +20,6 @@ const OPERATION_TIMEOUT_MS: Partial<Record<string, number>> = { [GROUND_TRUTH_OP
 const GROUND_TRUTH_BUDGET = { maxRpcCalls: 6000, maxEvaluations: 0, deadlineMs: 270_000 };
 /** Universe build round: inventory + bounded hydration + lender reads, inside the 120 s default job deadline. */
 const UNIVERSE_BUDGET = { maxRpcCalls: 1500, maxEvaluations: 0, deadlineMs: 100_000 };
-/** Pointer to the latest non-INCONCLUSIVE GT document per network, published only with the universe flag on. */
-const GT_LATEST_KIND = 'arb_ground_truth_latest';
 /** ≈1 hour of blocks per network for the scheduled public refresh. */
 const HOUR_BLOCKS: Record<GtNetwork, number> = { arbitrum: 14_400, base: 1_800, ethereum: 300 };
 export type WorkerOptions = EngineOptions & { finance?: Omit<FinanceOptions, 'repo'>; repo: Repository; root?: string; timeoutMs?: number; concurrency?: number; publicKey?: string; compute?: ComputeAdapter; clock?: () => number };
@@ -84,7 +82,7 @@ export class ResearchWorker {
   private groundTruthKey(network: GtNetwork, inputs: Record<string, unknown>) {
     const registry = this.options.discoveryRegistry;
     if (!registry) throw new ResearchError('REGISTRY_UNCONFIGURED', 'Ground truth needs the reviewed discovery registry (FLASHLOAN_DISCOVERY_REGISTRY).');
-    return arbCacheKey({ op: GROUND_TRUTH_OPERATION, network, registry, deployments_version: deploymentsVersion(this.options.deployments.filter((d) => d.network === network)), inputs });
+    return groundTruthCacheKey(registry, this.options.deployments, network, inputs);
   }
   /** Explicit windows key on the resolved window (the same key the result is published under); latest windows key on their request. */
   private groundTruthDedupe(input: GroundTruthInput) {
@@ -121,11 +119,8 @@ export class ResearchWorker {
   }
   /** Latest GT document for ranking; null (stated in coverage) when none is published or the pointer is stale. */
   private async latestGroundTruth(network: GtNetwork) {
-    const pointer = await this.options.repo.readSharedLatest(GT_LATEST_KIND, this.groundTruthKey(network, { latest_pointer: true }));
-    if (!pointer) return null;
-    const { cache_key } = pointer.data as { cache_key: string };
-    const doc = await this.options.repo.readSharedLatest('arb_ground_truth', cache_key);
-    return doc ? arbGroundTruthDocumentSchema.parse(doc.data) : null;
+    this.groundTruthKey(network, {}); // REGISTRY_UNCONFIGURED, as before
+    return (await readLatestGroundTruth(this.options.repo, this.options.discoveryRegistry!, this.options.deployments, network))?.document ?? null;
   }
   private async universe(job: StoredJob, signal: AbortSignal) {
     const { idempotency_key: _key, ...input } = operationSchemas[UNIVERSE_OPERATION].parse(job.input), { repo, discoveryRegistry: registry, deployments } = this.options;

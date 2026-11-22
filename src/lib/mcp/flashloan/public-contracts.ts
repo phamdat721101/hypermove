@@ -3,7 +3,7 @@ import { rlusdDevtoolsSchema } from './rlusd-devtools';
 import { xrplHolderReportInput } from './xrpl-holder-report';
 import { moverInputSchema } from './movers';
 import { suiOperations, suiPolicy } from './sui-contracts';
-import { operationSchemas, discoveryRequestSchema, validateDiscoveryTokens, address, digest, ResearchError, riskPolicy, uint, evmNetwork, universeInputSchema, arbUniverseEnabled, UNIVERSE_OPERATION } from './contracts';
+import { operationSchemas, discoveryRequestSchema, validateDiscoveryTokens, address, digest, ResearchError, riskPolicy, uint, evmNetwork, universeInputSchema, arbUniverseEnabled, UNIVERSE_OPERATION, quoteCycleInputSchema, arbQuoteCycleEnabled, QUOTE_CYCLE_OPERATION } from './contracts';
 import { candidateRequestV2Schema, resolutionRequestSchema } from './integration-contracts';
 import { v8Enabled, discoveryV3InputSchema, moversV2InputSchema, watchlistInputSchema, registryInputSchema } from './v8-contracts';
 
@@ -35,7 +35,7 @@ export const candidateResearchEnabled = () => process.env.FLASHLOAN_CANDIDATE_RE
 export const integrationEnabled = () => process.env.FLASHLOAN_CANDIDATE_RESEARCH_V2 === 'true';
 export const resolutionEnabled = () => process.env.FLASHLOAN_POOL_RESOLUTION_V1 === 'true';
 export const watchlistEnabled = () => v8Enabled('WATCHLIST_V1') && v8Enabled('INVENTORY_V3') && v8Enabled('MOVERS_V2') && v8Enabled('REGISTRY_V1');
-export const publicOperationEnabled = (name: string) => name === UNIVERSE_OPERATION ? arbUniverseEnabled() : name === 'flashloan_get_watchlist_v1' ? watchlistEnabled() : name === 'flashloan_get_registry_v1' ? v8Enabled('REGISTRY_V1') : name === 'flashloan_research_candidates_v1' ? candidateResearchEnabled() : name === 'flashloan_research_candidates_v2' ? integrationEnabled() : name === 'flashloan_resolve_pool_inventory_v1' ? resolutionEnabled() : true;
+export const publicOperationEnabled = (name: string) => name === UNIVERSE_OPERATION ? arbUniverseEnabled() : name === QUOTE_CYCLE_OPERATION ? arbQuoteCycleEnabled() : name === 'flashloan_get_watchlist_v1' ? watchlistEnabled() : name === 'flashloan_get_registry_v1' ? v8Enabled('REGISTRY_V1') : name === 'flashloan_research_candidates_v1' ? candidateResearchEnabled() : name === 'flashloan_research_candidates_v2' ? integrationEnabled() : name === 'flashloan_resolve_pool_inventory_v1' ? resolutionEnabled() : true;
 const legacyDiscovery = discovery.extend({ tokens: discovery.shape.tokens.max(PUBLIC_LIMITS.tokens), exclude_tokens: discovery.shape.exclude_tokens.removeDefault().max(PUBLIC_LIMITS.tokens).default([]) }).strict().superRefine(validateDiscoveryTokens);
 const versionedDiscovery = legacyDiscovery.safeExtend({ schema_version: z.enum(['v2', 'v3']).optional() }).superRefine((v, ctx) => { if (v.schema_version === 'v3') { const result = discoveryV3InputSchema.safeParse({ network: v.network, tokens: v.tokens, exclude_tokens: v.exclude_tokens, min_liquidity_usd: v.min_liquidity_usd }); if (!result.success) for (const issue of result.error.issues) ctx.addIssue({ code: 'custom', path: issue.path, message: issue.message }); } });
 const versionedMovers = z.object({ schema_version: z.enum(['v1', 'v2']).optional(), networks: z.array(z.enum(['base', 'arbitrum', 'robinhood', 'ethereum', 'sui'])).optional(), direction: z.enum(['both', 'gainers', 'losers']).optional(), min_change_24h_pct: z.number().optional(), limit_per_chain: z.number().optional(), min_liquidity_usd: z.number().optional(), seed_tokens: z.record(z.string(), z.array(z.string())).optional(), exclude_tokens: z.record(z.string(), z.array(z.string())).optional() }).strict().superRefine((value, ctx) => {
@@ -61,6 +61,7 @@ export const publicSchemas = {
   flashloan_get_watchlist_v1: watchlistInputSchema,
   flashloan_get_registry_v1: registryInputSchema,
   flashloan_get_arb_universe_v1: universeInputSchema,
+  flashloan_quote_cycle_v1: quoteCycleInputSchema,
   flashloan_resolve_pool_inventory_v1: resolutionRequestSchema,
   flashloan_research_candidates_v2: candidateRequestV2Schema,
   flashloan_research_candidates_v1: candidateResearchSchema,

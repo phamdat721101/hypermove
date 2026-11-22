@@ -6,15 +6,16 @@ import { integrationNetwork, validateIntegration, type ResolutionRequest, type C
 import { managerMapping, resolveInventory } from './pool-resolution';
 import { randomUUID } from 'node:crypto';
 import { runHarnessed, HarnessExecutionError } from 'nim-skill';
-import { hash, ResearchError, errorResult, boundaryEvent, operationSchemas, UNIVERSE_OPERATION, universeInputSchema } from './contracts';
-import { arbUniversePayloadSchema } from './arb-contracts';
-import { universeCacheKey, fitUniverse, UNIVERSE_FRESH_MS } from './arb-universe';
+import { hash, ResearchError, errorResult, boundaryEvent, operationSchemas, UNIVERSE_OPERATION, universeInputSchema, QUOTE_CYCLE_OPERATION, quoteCycleInputSchema, CHAINS } from './contracts';
+import { arbUniversePayloadSchema, arbCycleQuotePayloadSchema } from './arb-contracts';
+import { readLatestGroundTruth, loadDatasetEvents } from './arb-ground-truth';
+import { universeCacheKey, fitUniverse, universeFitBytes, loadPinnedUniverse, UNIVERSE_FRESH_MS } from './arb-universe';
 import type { Repository } from './storage';
 import { moverInputSchema } from './movers';
 import { DiscoveryRegistry } from './discovery-registry';
 import { discoveryV3InputSchema, moversV2InputSchema, registryInputSchema, watchlistInputSchema, v8Enabled } from './v8-contracts';
-import { evmSnapshotSchema } from './evm';
-import { planSchema } from './simulation';
+import { evmSnapshotSchema, EvmReader } from './evm';
+import { planSchema, quoteCycle } from './simulation';
 import type { XrplSnapshot } from './xrpl';
 import { xrplHolderReport } from './xrpl-holder-report';
 import { ResearchEngine, type ComputeAdapter } from './engine';
@@ -93,7 +94,7 @@ export class PublicResearch {
     const hit = await this.repo.readSharedLatest('arb_universe', key);
     const built = hit ? Date.parse(hit.created_at) : NaN, now = this.clock();
     if (hit && now - built < UNIVERSE_FRESH_MS) {
-      const payload = fitUniverse(arbUniversePayloadSchema.parse(hit.data), PUBLIC_LIMITS.envelope_bytes - 4096);
+      const payload = fitUniverse(arbUniversePayloadSchema.parse(hit.data), universeFitBytes());
       return this.response(UNIVERSE_OPERATION, this.proofs.sign('evm_universe', payload, new Date(built + UNIVERSE_FRESH_MS).toISOString()));
     }
     const job = await this.repo.enqueueShared(UNIVERSE_OPERATION, { ...input }, key); // returns the queued/running job for this key
@@ -110,6 +111,20 @@ export class PublicResearch {
   }
   private async execute(operation: PublicOperation, raw: unknown, signal: AbortSignal): Promise<unknown> {
     switch (operation) {
+      case QUOTE_CYCLE_OPERATION: {
+        // PRD-D (file 11 §D): one computation slot, data only; universe and GT evidence come from shared artifacts.
+        const input = quoteCycleInputSchema.parse(raw), registry = this.engine.options.discoveryRegistry, repo = this.repo, { deployments } = this.engine.options;
+        if (!registry) throw new ResearchError('PUBLIC_UNCONFIGURED', 'The cycle quote needs the reviewed discovery registry.');
+        if ('cycle_id' in input.cycle && !repo) throw new ResearchError('PUBLIC_UNCONFIGURED', 'A universe cycle quote needs shared storage.');
+        const budget = new RoundBudget({ maxRpcCalls: 200, maxEvaluations: 0, deadlineMs: PUBLIC_LIMITS.operation_ms }, signal);
+        try {
+          const universe = 'cycle_id' in input.cycle ? await loadPinnedUniverse(repo!, registry, deployments, input.network, input.cycle.universe_input, input.cycle.universe_content_hash) : null;
+          const gt = repo ? await readLatestGroundTruth(repo, registry, deployments, input.network) : null;
+          const quote = await quoteCycle({ reader: new EvmReader(this.engine.withBudget(budget).rpc(input.network), input.network, deployments), signal: budget.signal, registry, universe, groundTruth: gt?.document ?? null,
+            datasetEvents: gt && repo ? (block) => loadDatasetEvents(repo, gt.document, block) : undefined }, input);
+          return this.proofs.sign('evm_cycle_quote', arbCycleQuotePayloadSchema.parse({ schema_version: 'flashloan.arb.cycle_quote.v1', network: input.network, chain_id: CHAINS[input.network], quote }));
+        } finally { budget.dispose(); }
+      }
       case 'flashloan_resolve_pool_inventory_v1':
       case 'flashloan_research_candidates_v2': {
         const input = operation === 'flashloan_resolve_pool_inventory_v1' ? validateIntegration<ResolutionRequest>('PoolResolutionRequest', raw) : validateIntegration<CandidateRequestV2>('CandidateRequestV2', raw);

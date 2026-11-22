@@ -1,8 +1,10 @@
 import { keccak256, type Hex } from 'viem';
 import type { z } from 'zod';
-import { ResearchError, UNIVERSE_OPERATION, universeInputSchema, type PoolRef, type LenderProvider } from './contracts';
-import { arbCacheKey, arbCycleId, arbUniversePayloadSchema, deploymentsVersion, universePoolSchema, universePoolToPool, type cycleSchema, type CycleHop, type UniversePool, type ArbGroundTruthDocument } from './arb-contracts';
-import { depthBands, enumerateClosedRoutes, lenderRoutablePools, poolQuoteCapability, type Pool } from './math';
+import { ResearchError, UNIVERSE_OPERATION, universeInputSchema, poolRef, hash, type PoolRef, type LenderProvider } from './contracts';
+import { PUBLIC_LIMITS } from './public-contracts';
+import type { Repository } from './storage';
+import { arbCacheKey, arbCycleId, assetAddress, arbUniversePayloadSchema, deploymentsVersion, universePoolSchema, universePoolToPool, type cycleSchema, type CycleHop, type UniversePool, type ArbGroundTruthDocument } from './arb-contracts';
+import { depthBands, enumerateClosedRoutes, lenderRoutablePools, poolQuoteCapability, type Pool, type Route } from './math';
 import { InventoryReaderV3, decimalRaw, decimalString, venueQuoteCapability } from './inventory-v3';
 import { inventory as readInventory } from './discovery-v8';
 import { assetId, type InventoryPoolV3, type InventoryV3 } from './v8-contracts';
@@ -21,7 +23,7 @@ import type { RoundBudget } from './transport';
 export type UniverseInput = z.infer<typeof universeInputSchema>;
 type Network = UniverseInput['network'];
 type RegistryLender = ReturnType<DiscoveryRegistry['network']>['lenders'][number];
-type CycleLender = { lender_id: string; provider: LenderProvider; address: string; fee_bps: number; capacity_raw: string };
+export type CycleLender = { lender_id: string; provider: LenderProvider; address: string; fee_bps: number; capacity_raw: string };
 const ZERO = '0x' + '0'.repeat(40);
 /** Pools with the most reported liquidity get their ticks loaded (word_range 1) within this bound. */
 export const UNIVERSE_HYDRATION = { top_k: 48, word_range: 1, max_ticks: 2000 } as const;
@@ -129,7 +131,7 @@ function universePool(network: Network, state: InventoryV3, pool: InventoryPoolV
 }
 
 /** Live lender fee and capacity per funding asset at the pinned block; failures are counted, never guessed. */
-async function liveLenders(reader: EvmReader, block: Header, lenders: RegistryLender[], network: Network, assets: string[], signal: AbortSignal, counts: Record<string, number>) {
+export async function liveLenders(reader: EvmReader, block: Header, lenders: RegistryLender[], network: Network, assets: string[], signal: AbortSignal, counts: Record<string, number>) {
   const live = new Map<string, CycleLender[]>();
   const pin = { blockHash: block.hash, requireCanonical: true };
   for (const lender of lenders) {
@@ -170,8 +172,8 @@ async function liveLenders(reader: EvmReader, block: Header, lenders: RegistryLe
 }
 
 /** A directed hop signature: pool plus whether token0 is sold. Rotation-insensitive so any funding asset matches. */
-const directed = (hops: Array<{ pool: string; sells0: boolean }>) => hops.map((h) => h.pool.toLowerCase() + (h.sells0 ? ':0' : ':1'));
-function sameCycle(a: string[], b: string[]) { return a.length === b.length && a.some((_, shift) => a.every((x, i) => x === b[(i + shift) % b.length])); }
+export const directed = (hops: Array<{ pool: string; sells0: boolean }>) => hops.map((h) => h.pool.toLowerCase() + (h.sells0 ? ':0' : ':1'));
+export function sameCycle(a: string[], b: string[]) { return a.length === b.length && a.some((_, shift) => a.every((x, i) => x === b[(i + shift) % b.length])); }
 type Realized = NonNullable<z.infer<typeof cycleSchema>['realized']>;
 
 /** Verified-realized arbs (file 11 #14) in the latest GT window within 24 h of the universe block. */
@@ -282,4 +284,37 @@ export function fitUniverse(payload: z.infer<typeof arbUniversePayloadSchema>, m
   const used = () => new Set(payload.cycles.flatMap((c) => c.hops.map((h) => h.pool_ref)));
   while (size() > maxBytes && payload.pools.length) { const keep = used(), at = payload.pools.findLastIndex((p) => !keep.has(p.pool_ref)); payload.pools.splice(at === -1 ? payload.pools.length - 1 : at, 1); mark(); }
   return payload;
+}
+
+/** Byte budget of the public universe envelope; the signed content hash is over the fitted payload. */
+export const universeFitBytes = () => PUBLIC_LIMITS.envelope_bytes - 4096;
+export type UniversePayload = z.infer<typeof arbUniversePayloadSchema>;
+/**
+ * The latest shared universe for a build input, pinned by the content hash the caller saw (either the stored artifact's
+ * or the fitted public envelope's). A different latest build is a mismatch, never silently substituted.
+ */
+export async function loadPinnedUniverse(repo: Repository, registry: DiscoveryRegistry, deployments: Deployment[], network: Network, selector: Partial<Omit<UniverseInput, 'network'>> | undefined, contentHash: string): Promise<UniversePayload> {
+  const hit = await repo.readSharedLatest('arb_universe', universeCacheKey(registry, deployments, { ...selector, network } as UniverseInput));
+  if (!hit) throw new ResearchError('UNIVERSE_NOT_FOUND', 'No shared universe for this input; call flashloan_get_arb_universe_v1 first.', true);
+  const payload = arbUniversePayloadSchema.parse(hit.data);
+  if (hit.content_hash !== contentHash && hash(fitUniverse(structuredClone(payload), universeFitBytes())) !== contentHash) throw new ResearchError('UNIVERSE_PINNED_MISMATCH', 'The pinned universe is no longer the latest build for this input; refetch the universe.', true);
+  return payload;
+}
+/** EvmReader reference to re-read a universe pool at another block (word_range 1, as hydrated). */
+export function universePoolRef(p: UniversePool): PoolRef {
+  const s = p.state;
+  if (s.kind === 'v4') return poolRef.parse({ address: p.pool_ref, adapter: 'UNISWAP_V4', manager: s.manager, pool_key: s.key, word_range: UNIVERSE_HYDRATION.word_range });
+  const adapter = p.family === 'V2' ? 'UNISWAP_V2' : p.family === 'SOLIDLY_VOLATILE' ? 'AERODROME_VOLATILE' : p.family === 'SOLIDLY_STABLE' ? 'AERODROME_STABLE' : p.family === 'ALGEBRA' ? 'ALGEBRA'
+    : p.family === 'V3' ? (/^slipstream/i.test(p.adapter_version) ? 'AERODROME_CLMM' : 'UNISWAP_V3') : undefined;
+  if (!adapter) throw new ResearchError('QUOTE_UNSUPPORTED', 'Universe pool family has no state adapter.');
+  return poolRef.parse({ address: p.pool_ref, adapter, word_range: UNIVERSE_HYDRATION.word_range });
+}
+/** S3 cycle → the solver's ordered route over pool refs and token addresses. */
+export function cycleRoute(cycle: { cycle_id: string; hops: CycleHop[] }): Route {
+  return { id: cycle.cycle_id, hops: cycle.hops.map((h) => ({ pool: h.pool_ref.toLowerCase(), token_in: assetAddress(h.token_in), token_out: assetAddress(h.token_out) })) };
+}
+/** Directed signature of a route given its pools (sells0 = token_in is token0), and of the same pools in the opposite direction. */
+export function routeSignatures(route: Route, pools: Map<string, Pool>) {
+  const hops = route.hops.map((h) => ({ pool: h.pool, sells0: h.token_in === pools.get(h.pool)?.token0 }));
+  return { forward: directed(hops), reverse: directed([...hops].reverse().map((h) => ({ pool: h.pool, sells0: !h.sells0 }))) };
 }

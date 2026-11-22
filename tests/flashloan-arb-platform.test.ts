@@ -31,7 +31,7 @@ const hops: CycleHop[] = [{ pool_ref: P1, token_in: WETH, token_out: USDC }, { p
 const cycle = { cycle_id: arbCycleId(WETH, hops), funding_asset: WETH, hops, fee_floor_bps_approx: 15, lenders: [{ lender_id: 'morpho', provider: 'MORPHO_BLUE', address: P3, fee_bps: 0, capacity_raw: '10' }], realized: null, rank: 0 };
 const record = { tier: 'swap_surplus_candidate', tx: H('a'), block: '100', tx_index: 3, to: P2, from: P3, hops: [{ pool_ref: P1, venue_id: 'uniswap-v3', delta: ['-100', '250'] }], net_by_asset: { [WETH]: '7', [USDC]: '0' }, gross_usd: '0.02', gas_usd: null, net_usd: null, priority_gwei: '0.01', express_lane: null, trigger: { tx: H('d'), tx_index: 2, shared_pools: [P1] }, cycle_id: null, price_sources: ['chainlink:0x639f@100'] };
 const gas = { gas_units: '300000', base_fee_wei: '10000000', priority_bid_wei: '1', gas_price_wei: '10000001', cost_in_borrow_raw: '50', eth_usd: '3000' };
-const quote = { cycle_id: cycle.cycle_id, block: BLOCK, mode: 'historical', pre_swaps_applied: 1, principal_raw: '1000', expected_out_raw: '1200', lender: { lender_id: 'morpho', provider: 'MORPHO_BLUE', fee_raw: '0' }, gross_raw: '200', gas, net_raw: '150', net_usd: '0.45', margin_raw: '10', min_profit_raw: '60', outcome: 'PROFITABLE', reason: null, fidelity: { quote_capability: 'exact', tick_words_loaded: 3, crossed_unloaded_tick: false, hooks: false }, route_payload: null };
+const quote = { cycle_id: cycle.cycle_id, block: BLOCK, mode: 'historical', pre_swaps_applied: 1, principal_raw: '1000', expected_out_raw: '1200', lender: { lender_id: 'morpho', provider: 'MORPHO_BLUE', fee_raw: '0' }, gross_raw: '200', gas, net_raw: '150', net_usd: '0.45', margin_raw: '10', executor_threshold_raw: '60', outcome: 'PROFITABLE', reason: null, fidelity: { quote_capability: 'exact', tick_words_loaded: 3, crossed_unloaded_tick: false, hooks: false } };
 const replay = { trigger_tx: H('d'), block: '100', tx_index: 2, trigger_pool: P1, trigger_usd: '50000', best_cycle_id: cycle.cycle_id, our_net_usd: '-0.1', taken_by: { tx: H('a'), to: P2, tx_index: 3, match: 'same_directed_cycle', net_usd: null }, latency_ms_to_winner: null, fidelity: 'TICK_APPROX', reason: null };
 const coverage = { ...emptyCoverage(), archive: 'available', nodes_visited: 9, max_nodes_visited: 5000, pools_hydrated: 3, unauthenticated_emitters: 0, unsupported_emitters: 0, unpriced: 0 };
 
@@ -88,10 +88,10 @@ describe('M5a arb contracts S1–S6', () => {
     expect(ok(cycleQuoteSchema, { ...quote, outcome: 'UNPROFITABLE' })).toBe(false);
     expect(ok(cycleQuoteSchema, { ...quote, net_raw: '5' })).toBe(false);
     expect(ok(cycleQuoteSchema, { ...quote, net_raw: '5', outcome: 'UNPROFITABLE' })).toBe(true);
-    expect(ok(cycleQuoteSchema, { ...quote, min_profit_raw: '10' })).toBe(false); // threshold = gas + margin
+    expect(ok(cycleQuoteSchema, { ...quote, executor_threshold_raw: '10' })).toBe(false); // threshold = gas + margin
     expect(ok(cycleQuoteSchema, { ...quote, gas: { ...gas, eth_usd: null } })).toBe(false);
     expect(ok(cycleQuoteSchema, { ...quote, fidelity: { ...quote.fidelity, quote_capability: 'estimate' } })).toBe(false);
-    expect(ok(cycleQuoteSchema, { ...quote, gas: { ...gas, cost_in_borrow_raw: '0' }, margin_raw: '0', min_profit_raw: '0' })).toBe(false); // ZERO_COST_POLICY
+    expect(ok(cycleQuoteSchema, { ...quote, gas: { ...gas, cost_in_borrow_raw: '0' }, margin_raw: '0', executor_threshold_raw: '0' })).toBe(false); // ZERO_COST_POLICY
     expect(ok(cycleQuoteSchema, { ...quote, gas: { ...gas, eth_usd: null }, outcome: 'INCONCLUSIVE', reason: 'ETH_PRICE_MISSING' })).toBe(true);
     expect(ok(cycleQuoteSchema, { ...quote, outcome: 'INCONCLUSIVE', reason: null })).toBe(false);
   });

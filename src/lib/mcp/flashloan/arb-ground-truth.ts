@@ -1,13 +1,15 @@
-import { decodeEventLog, keccak256, parseAbi, toEventSelector, toFunctionSelector, toHex, type AbiEvent, type Hex } from 'viem';
-import { CHAINS, ResearchError, hash, type groundTruthInputSchema } from './contracts';
+import { keccak256, toFunctionSelector, toHex, type Hex } from 'viem';
+import { decodePoolEvent, POOL_EVENT_TOPICS, type DecodedPoolEvent } from './math';
+import { CHAINS, ResearchError, hash, GROUND_TRUTH_OPERATION, arbQuoteCycleEnabled, type groundTruthInputSchema } from './contracts';
+import { directed } from './arb-universe';
 import type { z } from 'zod';
 import { EvmReader, words, type Deployment, type EmitterAuth, type Header } from './evm';
 import { boundedTopicLogs, delay, type JsonClient, type RoundBudget, type TopicLog, type TopicScan } from './transport';
 import { resolveV4PoolKeys, type InitializationLocator } from './pool-resolution';
-import type { V4InitializeIndex } from './storage';
+import { SHARED_OWNER, type Repository, type V4InitializeIndex } from './storage';
 import type { DiscoveryRegistry } from './discovery-registry';
 import { assetId, emptyCoverage } from './v8-contracts';
-import { ARB_DATASET_PAGE_EVENTS, arbEventDatasetPageSchema, arbGroundTruthDocumentSchema, arbRecordSchema, type ArbDatasetEvent, type ArbGroundTruthDocument, type ArbRecord, ARB_EVENT_KINDS } from './arb-contracts';
+import { arbCacheKey, deploymentsVersion, ARB_DATASET_PAGE_EVENTS, arbEventDatasetPageSchema, arbGroundTruthDocumentSchema, arbRecordSchema, type ArbDatasetEvent, type ArbGroundTruthDocument, type ArbRecord, ARB_EVENT_KINDS } from './arb-contracts';
 
 /**
  * PRD-C `flashloan_arb_ground_truth_v1` (amended by file 11 §C #14–#17): what closed-loop DEX arbs actually landed in a
@@ -20,29 +22,17 @@ export type GroundTruthInput = z.infer<typeof groundTruthInputSchema>;
 type EventKind = typeof ARB_EVENT_KINDS[number];
 
 const topic = (signature: string) => keccak256(toHex(signature));
-const EVENT_ABIS: Record<EventKind, string> = {
-  swap_v3: 'event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)',
-  swap_pancake: 'event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint128 protocolFeesToken0,uint128 protocolFeesToken1)',
-  swap_v2: 'event Swap(address indexed sender,uint256 amount0In,uint256 amount1In,uint256 amount0Out,uint256 amount1Out,address indexed to)',
-  swap_v4: 'event Swap(bytes32 indexed id,address indexed sender,int128 amount0,int128 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint24 fee)',
-  sync: 'event Sync(uint112 reserve0,uint112 reserve1)',
-  mint_v3: 'event Mint(address sender,address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)',
-  burn_v3: 'event Burn(address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)',
-  mint_v2: 'event Mint(address indexed sender,uint256 amount0,uint256 amount1)',
-  burn_v2: 'event Burn(address indexed sender,uint256 amount0,uint256 amount1,address indexed to)',
-  modify_liquidity_v4: 'event ModifyLiquidity(bytes32 indexed id,address indexed sender,int24 tickLower,int24 tickUpper,int256 liquidityDelta,bytes32 salt)',
-};
-const abiOf = Object.fromEntries(ARB_EVENT_KINDS.map((k) => [k, parseAbi([EVENT_ABIS[k]] as string[]) as readonly AbiEvent[]])) as unknown as Record<EventKind, readonly AbiEvent[]>;
-/** topic0 → event kind (Algebra v1 and Slipstream share the V3 signatures; V4 events are emitted by the PoolManager). */
-export const GT_TOPICS = Object.fromEntries(ARB_EVENT_KINDS.map((k) => [k, toEventSelector(abiOf[k][0])])) as Record<EventKind, Hex>;
+/** topic0 → event kind for the GT scan (dataset kinds only; the decoder table lives in math.ts). Algebra v1 and Slipstream share the V3 signatures; V4 events are emitted by the PoolManager. */
+export const GT_TOPICS = Object.fromEntries(ARB_EVENT_KINDS.map((k) => [k, POOL_EVENT_TOPICS[k]])) as Record<EventKind, Hex>;
 const KIND_BY_TOPIC = new Map(Object.entries(GT_TOPICS).map(([k, t]) => [t, k as EventKind]));
 const V4_KINDS = new Set<EventKind>(['swap_v4', 'modify_liquidity_v4']);
-const SWAP_KINDS = new Set<EventKind>(['swap_v3', 'swap_pancake', 'swap_v2', 'swap_v4']);
+const SWAP_KINDS = new Set<string>(['swap_v3', 'swap_pancake', 'swap_v2', 'swap_v4']);
 const TRANSFER = topic('Transfer(address,address,uint256)');
 const WETH9_DEPOSIT = topic('Deposit(address,uint256)'), WETH9_WITHDRAWAL = topic('Withdrawal(address,uint256)');
 const AAVE_FLASH = topic('FlashLoan(address,address,address,uint256,uint8,uint256,uint16)'), BALANCER_FLASH = topic('FlashLoan(address,address,uint256,uint256)'), V3_FLASH = topic('Flash(address,address,uint256,uint256,uint256,uint256)');
 const MULTICALL3 = '0xca11bde05977b3631167028862be2a173976ca11';
 const ZERO = '0x' + '0'.repeat(40);
+const gasUsedEnabled = () => arbQuoteCycleEnabled();
 const LATEST_LAG = 32n; // latest windows end a little behind head so receipts and logs are settled
 const hex = (n: bigint) => '0x' + n.toString(16);
 const addr = (word: string) => ('0x' + word.slice(-40)).toLowerCase();
@@ -67,20 +57,69 @@ const PRICES: Partial<Record<GtNetwork, { feeds: Record<'ETH' | 'BTC', string>; 
   },
 };
 const FEED_MAX_AGE_S = 86_400n;
+type UnitPrices = Map<Unit, bigint>; // Chainlink 8-decimal USD per unit; USD = 1
+/** Chainlink ETH/BTC USD at one canonical block; stale or failed feeds are listed as reasons, never guessed. */
+export async function chainlinkUnitPrices(rpc: JsonClient, network: GtNetwork, header: Header, signal: AbortSignal) {
+  const unitPrice: UnitPrices = new Map([['USD', 100_000_000n]]), prices: ArbGroundTruthDocument['prices'] = [], failures: string[] = [];
+  const config = PRICES[network];
+  if (config) for (const [unit, feed] of Object.entries(config.feeds) as Array<['ETH' | 'BTC', string]>) {
+    try {
+      const w = words(await rpc.rpc<string>('eth_call', [{ to: feed, data: toFunctionSelector('latestRoundData()') }, { blockHash: header.hash, requireCanonical: true }], signal));
+      const answer = BigInt.asIntN(256, w[1]), updatedAt = w[3];
+      if (answer <= 0n || updatedAt + FEED_MAX_AGE_S < BigInt(header.timestamp)) { failures.push('PRICE_FEED_STALE: ' + unit); continue; }
+      unitPrice.set(unit, answer);
+      prices.push({ asset: assetId(network, Object.entries(config.assets).find(([, a]) => a.unit === unit)![0]), usd: formatUsd(answer / 100n), source: 'chainlink:' + feed + '@' + BigInt(header.number) });
+    } catch (e) { if (TERMINAL.has(errorCode(e))) throw e; failures.push('PRICE_FEED_UNAVAILABLE: ' + unit + ' ' + errorCode(e)); }
+  }
+  return { unitPrice, prices, failures };
+}
+/** Unit prices recorded in a GT document (the window's end-block Chainlink reads), for pure replays without RPC. */
+export function documentUnitPrices(network: GtNetwork, doc: ArbGroundTruthDocument): UnitPrices {
+  const unitPrice: UnitPrices = new Map([['USD', 100_000_000n]]), config = PRICES[network];
+  for (const p of doc.prices) {
+    const unit = config?.assets[p.asset.slice(p.asset.indexOf(':0x') + 1)]?.unit;
+    if (unit && unit !== 'USD') unitPrice.set(unit, decimalScaled(p.usd, 8));
+  }
+  return unitPrice;
+}
+const decimalScaled = (value: string, decimals: number) => { const [i, f = ''] = value.replace(/^-/, '').split('.'); const v = BigInt(i) * 10n ** BigInt(decimals) + BigInt((f + '0'.repeat(decimals)).slice(0, decimals) || '0'); return value.startsWith('-') ? -v : v; };
+/** Raw token amount → USD micro; null when the token has no reviewed unit or its feed is missing. */
+export function usdValuer(network: GtNetwork, unitPrice: UnitPrices) {
+  const config = PRICES[network];
+  return (token: string, raw: bigint): bigint | null => {
+    const a = config?.assets[token.toLowerCase()]; const p = a && unitPrice.get(a.unit);
+    return a && p !== undefined ? raw * p * MICRO / (10n ** BigInt(a.decimals) * 100_000_000n) : null;
+  };
+}
+/** USD micro → raw token amount (floor); null when unpriced. */
+export function rawForUsd(network: GtNetwork, unitPrice: UnitPrices, token: string, micro: bigint): bigint | null {
+  const a = PRICES[network]?.assets[token.toLowerCase()]; const p = a && unitPrice.get(a.unit);
+  return a && p ? micro * 10n ** BigInt(a.decimals) * 100_000_000n / (MICRO * p) : null;
+}
+/** Native wei → raw borrow-asset units through ETH/USD and the borrow asset's unit price; null when either is missing. */
+export function weiToBorrowRaw(network: GtNetwork, unitPrice: UnitPrices, token: string, wei: bigint): bigint | null {
+  const eth = unitPrice.get('ETH'), a = PRICES[network]?.assets[token.toLowerCase()], p = a && unitPrice.get(a.unit);
+  if (eth === undefined || !a || !p) return null;
+  return wei * eth * 10n ** BigInt(a.decimals) / (10n ** 18n * p);
+}
+export const gweiToWei = (gwei: string) => decimalScaled(gwei, 9);
+/** Directed signature of a GT record (swapper sold token0 when its token0 delta is negative). */
+export const recordSignature = (r: ArbRecord) => directed(r.hops.map((h) => ({ pool: h.pool_ref, sells0: BigInt(h.delta[0]) < 0n })));
+/**
+ * Historical gas evidence (file 11 #11): gas units = median receipt gasUsed of GT arbs with the same hop count; the
+ * priority bid = p75 of priority_gwei over the given records. Missing evidence is null, never a default.
+ */
+export function gasEvidence(doc: ArbGroundTruthDocument | null, hopCount: number, priorityRecords?: ArbRecord[]) {
+  const sorted = (xs: bigint[]) => xs.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+  const units = sorted((doc?.records ?? []).filter((r) => r.hops.length === hopCount && r.gas_used !== undefined).map((r) => BigInt(r.gas_used!)));
+  const bids = sorted((priorityRecords ?? doc?.records ?? []).filter((r) => r.priority_gwei !== null).map((r) => gweiToWei(r.priority_gwei!)));
+  return { gas_units: units.length ? units[Math.floor((units.length - 1) / 2)] : null, priority_p75_wei: bids.length ? bids[Math.min(bids.length - 1, Math.ceil(bids.length * 0.75) - 1)] : null, samples: units.length };
+}
 
 // ---------------- pure helpers (exported for fixtures) ----------------
 export type GtLog = TopicLog & { transactionIndex: string };
-export type DecodedEvent = { kind: EventKind; fields: Record<string, string> };
-/** Decodes one pool event by topic0; undefined when the topic is not a dataset event or the log is malformed. */
-export function decodePoolEvent(log: TopicLog): DecodedEvent | undefined {
-  const kind = KIND_BY_TOPIC.get(String(log.topics?.[0]).toLowerCase() as Hex);
-  if (!kind) return undefined;
-  try {
-    const { args } = decodeEventLog({ abi: abiOf[kind], data: log.data as Hex, topics: log.topics as [Hex, ...Hex[]], strict: true });
-    const fields = Object.fromEntries(Object.entries(args as unknown as Record<string, unknown>).map(([k, v]) => [k, typeof v === 'string' ? v.toLowerCase() : String(v)]));
-    return { kind, fields };
-  } catch { return undefined; /* counted by the caller as MALFORMED_LOG */ }
-}
+export type DecodedEvent = DecodedPoolEvent;
+export { decodePoolEvent };
 /**
  * Swapper-view [token0, token1] deltas. V2/V3-family events report the pool's view (positive = pool received), so the
  * swapper is the negation; V4 Swap amounts are already the swapper's BalanceDelta (negative = paid in), so the sign is kept.
@@ -169,6 +208,43 @@ async function settledBatch<T>(rpc: JsonClient, calls: Array<{ method: string; p
       for (const i of ids) { const row = rows.find((x) => x?.id === i); if (row && !row.error && row.result !== undefined && row.result !== null) out[i] = row.result; else failed.push(i); }
     }
     pending = failed;
+  }
+  return out;
+}
+
+/** Archive capability probe at one canonical header (file 11 #17): null when historical state is served, else the error code. */
+export async function probeArchive(rpc: JsonClient, header: Header, signal: AbortSignal): Promise<string | null> {
+  try { words(await rpc.rpc<string>('eth_call', [{ to: MULTICALL3, data: toFunctionSelector('getBlockNumber()') }, { blockHash: header.hash, requireCanonical: true }], signal)); return null; }
+  catch (e) { if (TERMINAL.has(errorCode(e))) throw e; return errorCode(e); }
+}
+
+// ---------------- shared GT artifacts (worker job, public quote, replay) ----------------
+/** Pointer to the latest non-INCONCLUSIVE GT document per network (published by the GT job with the universe flag on). */
+export const GT_LATEST_KIND = 'arb_ground_truth_latest';
+export function groundTruthCacheKey(registry: DiscoveryRegistry, deployments: Deployment[], network: GtNetwork, inputs: Record<string, unknown>) {
+  return arbCacheKey({ op: GROUND_TRUTH_OPERATION, network, registry, deployments_version: deploymentsVersion(deployments.filter((d) => d.network === network)), inputs });
+}
+/** Latest GT document for a network; null (stated by the caller) when none is published. */
+export async function readLatestGroundTruth(repo: Repository, registry: DiscoveryRegistry, deployments: Deployment[], network: GtNetwork) {
+  const pointer = await repo.readSharedLatest(GT_LATEST_KIND, groundTruthCacheKey(registry, deployments, network, { latest_pointer: true }));
+  if (!pointer) return null;
+  const doc = await repo.readSharedLatest('arb_ground_truth', (pointer.data as { cache_key: string }).cache_key);
+  return doc ? { artifact: doc, document: arbGroundTruthDocumentSchema.parse(doc.data) } : null;
+}
+/**
+ * The GT document's ordered event dataset (optionally one block). Null when the dataset is incomplete or a page does
+ * not match the content hash the document recorded, so callers fall back to receipts or report INCONCLUSIVE.
+ */
+export async function loadDatasetEvents(repo: Repository, doc: ArbGroundTruthDocument, block?: bigint): Promise<ArbDatasetEvent[] | null> {
+  if (!doc.dataset.complete) return null;
+  if (block !== undefined && (block < BigInt(doc.window.from_block) || block > BigInt(doc.window.to_block))) return null;
+  const out: ArbDatasetEvent[] = [];
+  for (const ref of doc.dataset.pages) {
+    const artifact = await repo.artifact(SHARED_OWNER, ref.artifact_id);
+    if (artifact.content_hash !== ref.content_hash) return null;
+    const page = arbEventDatasetPageSchema.parse(artifact.data);
+    for (const e of page.events) if (block === undefined || BigInt(e.block) === block) out.push(e);
+    if (block !== undefined && page.events.length && BigInt(page.events[page.events.length - 1].block) > block) break;
   }
   return out;
 }
@@ -266,7 +342,7 @@ export async function measureArbGroundTruth(deps: GroundTruthDeps, input: Ground
       const d = decodePoolEvent(e.log);
       if (!d) { bump(excluded, 'MALFORMED_LOG'); if (SWAP_KINDS.has(e.kind)) badTx.add(e.log.transactionHash.toLowerCase()); continue; }
       decoded.set(e, d);
-      dataset.push({ block: e.block.toString(), tx_index: e.txIndex, log_index: e.logIndex, tx: e.log.transactionHash.toLowerCase(), block_hash: e.log.blockHash.toLowerCase(), emitter: e.log.address.toLowerCase(), pool_ref: poolRefOf(e), venue_id: a.venue_id, kind: d.kind, fields: d.fields });
+      dataset.push({ block: e.block.toString(), tx_index: e.txIndex, log_index: e.logIndex, tx: e.log.transactionHash.toLowerCase(), block_hash: e.log.blockHash.toLowerCase(), emitter: e.log.address.toLowerCase(), pool_ref: poolRefOf(e), venue_id: a.venue_id, kind: d.kind as EventKind, fields: d.fields });
     }
     dataset.sort((a, b) => a.block === b.block ? a.tx_index - b.tx_index || a.log_index - b.log_index : BigInt(a.block) < BigInt(b.block) ? -1 : 1);
     coverage.pools_watched = new Set(dataset.map((d) => d.pool_ref)).size;
@@ -278,20 +354,9 @@ export async function measureArbGroundTruth(deps: GroundTruthDeps, input: Ground
     if (!config) stop('PRICE_FEEDS_UNCONFIGURED');
     // Prices first: candidate gross needs them and the min_gross_usd filter avoids receipt reads for dropped candidates.
     phase = 'PRICE_FEED_UNAVAILABLE';
-    const unitPrice = new Map<Unit, bigint>([['USD', 100_000_000n]]);
-    if (config) for (const [unit, feed] of Object.entries(config.feeds) as Array<['ETH' | 'BTC', string]>) {
-      try {
-        const w = words(await rpc.rpc<string>('eth_call', [{ to: feed, data: toFunctionSelector('latestRoundData()') }, { blockHash: toHeader.hash, requireCanonical: true }], signal));
-        const answer = BigInt.asIntN(256, w[1]), updatedAt = w[3];
-        if (answer <= 0n || updatedAt + FEED_MAX_AGE_S < BigInt(toHeader.timestamp)) { stop('PRICE_FEED_STALE: ' + unit); continue; }
-        unitPrice.set(unit, answer);
-        prices.push({ asset: assetId(network, Object.entries(config.assets).find(([, a]) => a.unit === unit)![0]), usd: formatUsd(answer / 100n), source: 'chainlink:' + feed + '@' + to });
-      } catch (e) { if (TERMINAL.has(errorCode(e))) throw e; stop('PRICE_FEED_UNAVAILABLE: ' + unit + ' ' + errorCode(e)); }
-    }
-    const valueMicro = (token: string, raw: bigint): bigint | null => {
-      const a = config?.assets[token]; const p = a && unitPrice.get(a.unit);
-      return a && p !== undefined ? raw * p * MICRO / (10n ** BigInt(a.decimals) * 100_000_000n) : null;
-    };
+    const feeds = await chainlinkUnitPrices(rpc, network, toHeader, signal);
+    feeds.failures.forEach(stop); prices.push(...feeds.prices);
+    const unitPrice = feeds.unitPrice, valueMicro = usdValuer(network, unitPrice);
     const candidates: Candidate[] = [];
     // Multi-pool is judged on every Swap emitter in the tx, so a loop through an unauthenticated pool is excluded, not shortened.
     const allRefs = new Map<string, Set<string>>();
@@ -360,6 +425,7 @@ export async function measureArbGroundTruth(deps: GroundTruthDeps, input: Ground
         priority_gwei: fee === undefined ? null : formatGwei(BigInt(r.effectiveGasPrice) - fee > 0n ? BigInt(r.effectiveGasPrice) - fee : 0n), express_lane: null,
         trigger: triggerEvents.length ? { tx: triggerEvents[0].tx, tx_index: triggerIndex, shared_pools: [...new Set(triggerEvents.map((d) => d.pool_ref))].slice(0, 16) } : null,
         cycle_id: null, price_sources: [...[...units].map((u) => u === 'USD' ? 'stable:1' : 'chainlink:' + u + '-usd@' + to), ...(c.unpriced ? ['unpriced-assets-excluded'] : [])].slice(0, 8),
+        ...(gasUsedEnabled() ? { gas_used: BigInt(r.gasUsed).toString() } : {}),
       });
       records.push({ record, surplusMicro: c.grossMicro, grossMicro: gross, gasMicro, netMicro: gasMicro === null ? null : gross - gasMicro, verified: Boolean(verifiedNet) });
     });

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { decodeEventLog, parseAbi, toEventSelector, type AbiEvent, type Hex } from 'viem';
 import { address, uint, v4KeySchema, ResearchError, hash, type RiskPolicy } from './contracts';
 import { bytes32 } from './networks';
 
@@ -143,6 +144,84 @@ export function quotePool(pool: Pool, tokenIn: string, amount: bigint): Quote {
   return { amount_out: output, spot_out: spot, pool: { ...pool, sqrt_price_x96: price.toString(), liquidity: liquidity.toString(), tick } };
 }
 
+// ---- Versioned pool-event decoders (file 11 #7): ABI + topic per family; one table for the GT scan and the quote replay ----
+export const POOL_EVENT_DECODER_VERSION = 'pool-events/1';
+export const POOL_EVENT_ABIS = {
+  // Uniswap V3 and Slipstream; Algebra v1 emits Swap(sender, recipient, amount0, amount1, price, liquidity, tick) — same field order and topic.
+  swap_v3: 'event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick)',
+  swap_pancake: 'event Swap(address indexed sender,address indexed recipient,int256 amount0,int256 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint128 protocolFeesToken0,uint128 protocolFeesToken1)',
+  swap_v2: 'event Swap(address indexed sender,uint256 amount0In,uint256 amount1In,uint256 amount0Out,uint256 amount1Out,address indexed to)',
+  swap_v4: 'event Swap(bytes32 indexed id,address indexed sender,int128 amount0,int128 amount1,uint160 sqrtPriceX96,uint128 liquidity,int24 tick,uint24 fee)',
+  sync: 'event Sync(uint112 reserve0,uint112 reserve1)',
+  mint_v3: 'event Mint(address sender,address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)',
+  burn_v3: 'event Burn(address indexed owner,int24 indexed tickLower,int24 indexed tickUpper,uint128 amount,uint256 amount0,uint256 amount1)',
+  mint_v2: 'event Mint(address indexed sender,uint256 amount0,uint256 amount1)',
+  burn_v2: 'event Burn(address indexed sender,uint256 amount0,uint256 amount1,address indexed to)',
+  modify_liquidity_v4: 'event ModifyLiquidity(bytes32 indexed id,address indexed sender,int24 tickLower,int24 tickUpper,int256 liquidityDelta,bytes32 salt)',
+  // Fee-change events: state stays representable but the quote model drops to the estimate tier.
+  fee_algebra: 'event Fee(uint16 fee)',
+  protocol_fee_v4: 'event ProtocolFeeUpdated(bytes32 indexed id,uint24 protocolFee)',
+} as const;
+export type PoolEventKind = keyof typeof POOL_EVENT_ABIS;
+export const POOL_EVENT_KINDS = Object.keys(POOL_EVENT_ABIS) as PoolEventKind[];
+const poolEventAbi = Object.fromEntries(POOL_EVENT_KINDS.map((k) => [k, parseAbi([POOL_EVENT_ABIS[k]] as string[]) as readonly AbiEvent[]])) as Record<PoolEventKind, readonly AbiEvent[]>;
+export const POOL_EVENT_TOPICS = Object.fromEntries(POOL_EVENT_KINDS.map((k) => [k, toEventSelector(poolEventAbi[k][0])])) as Record<PoolEventKind, Hex>;
+const poolEventKindByTopic = new Map(POOL_EVENT_KINDS.map((k) => [POOL_EVENT_TOPICS[k], k]));
+export type DecodedPoolEvent = { kind: PoolEventKind; fields: Record<string, string> };
+/** Decodes one pool event by topic0; undefined when the topic is unknown or the log is malformed (the caller counts it). */
+export function decodePoolEvent(log: { topics: readonly string[]; data: string }): DecodedPoolEvent | undefined {
+  const kind = poolEventKindByTopic.get(String(log.topics?.[0]).toLowerCase() as Hex);
+  if (!kind) return undefined;
+  try {
+    const { args } = decodeEventLog({ abi: poolEventAbi[kind], data: log.data as Hex, topics: log.topics as [Hex, ...Hex[]], strict: true });
+    return { kind, fields: Object.fromEntries(Object.entries(args as unknown as Record<string, unknown>).map(([k, v]) => [k, typeof v === 'string' ? v.toLowerCase() : String(v)])) };
+  } catch { return undefined; }
+}
+export type EventApplication = { pool: Pool; exact: boolean; reason: string | null };
+/** Mint/Burn/ModifyLiquidity: tick liquidity_net at both bounds (inside the loaded words) and active liquidity when in range. */
+function applyLiquidityDelta(pool: Extract<Pool, { kind: 'clmm' }>, lower: number, upper: number, delta: bigint): Pool {
+  if (delta === 0n) return pool;
+  const lowEdge = pool.word_min * 256 * pool.tick_spacing, highEdge = (pool.word_max + 1) * 256 * pool.tick_spacing;
+  const ticks = pool.ticks.map((t) => ({ ...t }));
+  const bump = (tick: number, by: bigint) => {
+    if (tick < lowEdge || tick >= highEdge) return; // beyond the loaded words: never crossed by a quote (it stops at the edge)
+    const at = ticks.find((t) => t.tick === tick);
+    if (at) at.liquidity_net = (BigInt(at.liquidity_net) + by).toString(); else ticks.push({ tick, liquidity_net: by.toString() });
+  };
+  bump(lower, delta); bump(upper, -delta);
+  ticks.sort((a, b) => a.tick - b.tick);
+  let liquidity = BigInt(pool.liquidity);
+  if (lower <= pool.tick && pool.tick < upper) liquidity += delta;
+  if (liquidity < 0n || liquidity >= 1n << 128n) throw new ResearchError('INVALID_LIQUIDITY', 'Liquidity event produced invalid active liquidity.');
+  return { ...pool, liquidity: liquidity.toString(), ticks };
+}
+/**
+ * Maps one decoded pool event into `Pool` state (file 11 #7). Swap events carry the full post-swap price, liquidity and
+ * tick; V2 Sync carries reserves (its Swap/Mint/Burn are no-ops because Sync always accompanies them); liquidity events
+ * update tick liquidity_net. A fee change, an unknown event or an event that does not fit the pool is not exact.
+ */
+export function applyEventState(pool: Pool, event: DecodedPoolEvent): EventApplication {
+  const f = (k: string) => { const v = event.fields[k]; if (v === undefined || !/^-?[0-9]+$/.test(v)) throw new ResearchError('MALFORMED_EVENT', 'Decoded event field ' + k + ' is missing.'); return BigInt(v); };
+  const approx = (reason: string): EventApplication => ({ pool, exact: false, reason });
+  const v4Event = event.kind === 'swap_v4' || event.kind === 'modify_liquidity_v4';
+  switch (event.kind) {
+    case 'swap_v3': case 'swap_pancake': case 'swap_v4': {
+      if (pool.kind !== 'clmm' || Boolean(pool.v4) !== v4Event) return approx('EVENT_POOL_MISMATCH');
+      if (pool.v4 && pool.v4.protocol_fee === 0 && Number(f('fee')) !== pool.fee_pips) return approx('FEE_CHANGED');
+      return { pool: { ...pool, sqrt_price_x96: f('sqrtPriceX96').toString(), liquidity: f('liquidity').toString(), tick: Number(f('tick')) }, exact: true, reason: null };
+    }
+    case 'sync': return pool.kind === 'v2' ? { pool: { ...pool, reserve0: f('reserve0').toString(), reserve1: f('reserve1').toString() }, exact: true, reason: null } : approx('EVENT_POOL_MISMATCH');
+    case 'swap_v2': case 'mint_v2': case 'burn_v2': return pool.kind === 'v2' ? { pool, exact: true, reason: null } : approx('EVENT_POOL_MISMATCH');
+    case 'mint_v3': case 'burn_v3': case 'modify_liquidity_v4': {
+      if (pool.kind !== 'clmm' || Boolean(pool.v4) !== v4Event) return approx('EVENT_POOL_MISMATCH');
+      const delta = event.kind === 'modify_liquidity_v4' ? f('liquidityDelta') : event.kind === 'mint_v3' ? f('amount') : -f('amount');
+      return { pool: applyLiquidityDelta(pool, Number(f('tickLower')), Number(f('tickUpper')), delta), exact: true, reason: null };
+    }
+    case 'fee_algebra': case 'protocol_fee_v4': return approx('FEE_CHANGED');
+    default: return approx('UNSUPPORTED_EVENT');
+  }
+}
+
 export type Route = { id: string; hops: Array<{ pool: string; token_in: string; token_out: string }> };
 export function closedRoutes(pools: Pool[], asset: string): Route[] { return enumerateClosedRoutes(pools, asset, { maxHops: 4, maxRoutes: 64 }).routes; }
 /**
@@ -224,6 +303,81 @@ export function depthBands(pool: Pool, bands: readonly number[] = DEPTH_BANDS_BP
     const lo = walk(start * factor(bps, false) / S, true), hi = walk(start * factor(bps, true) / S, false);
     return { bps, amount0_in: lo.amount, amount1_in: hi.amount, complete: lo.complete && hi.complete };
   });
+}
+export type CycleLender = { capacity: string; fee_numerator: string; fee_denominator: string; address: string; provider?: string };
+export type CycleSizingPolicy = { min_principal: string; max_principal: string; max_price_impact_bps: number; max_evaluations: number; network_cost: string };
+export type CycleSizing = {
+  status: 'SIZED' | 'INCONCLUSIVE'; reason: string | null; quote_capability: 'exact' | 'estimate'; evaluations: number; crossed_unloaded_tick: boolean;
+  principal: bigint | null; expected_out: bigint | null; lender_fee: bigint | null; gross: bigint | null; net: bigint | null;
+  /** Pool state after our hypothetical fill at the chosen principal (sequential replay). */
+  state: Map<string, Pool> | null; rejected: Record<string, number>;
+};
+/**
+ * Pure single-cycle sizer (file 11 #10): fixed ordered route, a log-spaced principal grid from `min_principal` (≈ $1) to
+ * the cap (min of lender capacity and max_principal), then golden-section refinement around the best grid point.
+ * `net = out − principal − lender fee − network_cost`. Never returns null: a missing answer is INCONCLUSIVE with a reason.
+ * Capability `none` is refused; `estimate` is sized but labelled INCONCLUSIVE.
+ */
+export function sizeCycle(route: Route, state: Map<string, Pool>, lender: CycleLender, policy: CycleSizingPolicy): CycleSizing {
+  const rejected: Record<string, number> = {};
+  const empty = (reason: string, capability: 'exact' | 'estimate' = 'exact', evaluations = 0, crossed = false): CycleSizing => ({ status: 'INCONCLUSIVE', reason, quote_capability: capability, evaluations, crossed_unloaded_tick: crossed, principal: null, expected_out: null, lender_fee: null, gross: null, net: null, state: null, rejected });
+  const pools = route.hops.map((h) => state.get(h.pool));
+  if (pools.some((p) => !p)) return empty('UNKNOWN_POOL');
+  const caps = (pools as Pool[]).map(poolQuoteCapability);
+  if (caps.includes('none')) throw new ResearchError('QUOTE_UNSUPPORTED', 'Sizing refuses discovery-only pools (quote capability none).');
+  const capability = caps.includes('estimate') ? 'estimate' as const : 'exact' as const;
+  if (lenderRoutablePools(pools as Pool[], lender).length !== pools.length) return empty('LENDER_POOL_LOCK', capability);
+  const min = BigInt(policy.min_principal) > 0n ? BigInt(policy.min_principal) : 1n;
+  const cap = BigInt(lender.capacity) < BigInt(policy.max_principal) ? BigInt(lender.capacity) : BigInt(policy.max_principal);
+  if (cap < min) return empty('CAP_BELOW_MIN_PRINCIPAL', capability);
+  const cost = BigInt(policy.network_cost), num = BigInt(lender.fee_numerator), den = BigInt(lender.fee_denominator);
+  let evaluations = 0, coverageMiss = false;
+  type Point = { principal: bigint; out: bigint; fee: bigint; net: bigint; state: Map<string, Pool> };
+  const seen = new Map<bigint, Point | null>();
+  const evaluate = (principal: bigint): Point | null => {
+    if (seen.has(principal)) return seen.get(principal)!;
+    if (evaluations >= policy.max_evaluations) return null;
+    evaluations++;
+    let point: Point | null = null;
+    try {
+      const q = quoteRoute(route, state, principal, policy.max_price_impact_bps), fee = ceilDiv(principal * num, den);
+      point = { principal, out: q.output, fee, net: q.output - principal - fee - cost, state: q.state };
+    } catch (e) {
+      if (!(e instanceof ResearchError)) throw e;
+      rejected[e.code] = (rejected[e.code] ?? 0) + 1;
+      if (e.code === 'INSUFFICIENT_TICK_COVERAGE') coverageMiss = true;
+    }
+    seen.set(principal, point);
+    return point;
+  };
+  const n = Math.max(2, Math.min(16, Math.floor(policy.max_evaluations / 2)));
+  const ratio = Number(cap) / Number(min), grid: bigint[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = i === n - 1 ? cap : BigInt(Math.floor(Number(min) * ratio ** (i / (n - 1))));
+    const clamped = p < min ? min : p > cap ? cap : p;
+    if (!grid.includes(clamped)) grid.push(clamped);
+  }
+  const points = grid.map(evaluate);
+  let bestIndex = -1;
+  points.forEach((p, i) => { if (p && (bestIndex < 0 || p.net > points[bestIndex]!.net)) bestIndex = i; });
+  if (bestIndex < 0) {
+    const top = Object.entries(rejected).sort((a, b) => b[1] - a[1])[0]?.[0];
+    return empty(top ?? 'NO_EVALUATION', capability, evaluations, coverageMiss);
+  }
+  let best = points[bestIndex]!;
+  // Golden-section refinement inside the bracket around the best grid point; invalid points rank last.
+  let lo = grid[bestIndex - 1] ?? min, hi = grid[bestIndex + 1] ?? cap;
+  const score = (p: bigint) => { const r = evaluate(p); if (r && r.net > best.net) best = r; return r ? r.net : null; };
+  const better = (a: bigint | null, b: bigint | null) => a !== null && (b === null || a >= b);
+  while (hi - lo > 2n && evaluations + 2 <= policy.max_evaluations) {
+    const span = hi - lo, c = hi - span * 618n / 1000n, d = lo + span * 618n / 1000n;
+    if (c >= d) break;
+    if (better(score(c), score(d))) hi = d; else lo = c;
+  }
+  // A coverage miss only matters when no evaluated principal above the optimum proved the optimum is interior.
+  const crossed = coverageMiss && ![...seen.values()].some((p) => p && p.principal > best.principal);
+  const reason = crossed ? 'INSUFFICIENT_TICK_COVERAGE' : capability === 'estimate' ? 'ESTIMATE_QUOTE_MODEL' : null;
+  return { status: reason ? 'INCONCLUSIVE' : 'SIZED', reason, quote_capability: capability, evaluations, crossed_unloaded_tick: crossed, principal: best.principal, expected_out: best.out, lender_fee: best.fee, gross: best.net + cost, net: best.net, state: best.state, rejected };
 }
 export type SearchOptions = { targets: string[]; deadline_ms: number; refine?: boolean };
 export function solve(allPools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string; provider?: string }, policy: RiskPolicy, options?: SearchOptions) {

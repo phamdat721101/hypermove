@@ -58,7 +58,7 @@ export const universePoolSchema = z.object({
 });
 export type UniversePool = z.infer<typeof universePoolSchema>;
 
-const assetAddress = (asset: string) => asset.endsWith('/slip44:60') ? '0x' + '0'.repeat(40) : asset.slice(asset.indexOf(':0x') + 1);
+export const assetAddress = (asset: string) => asset.endsWith('/slip44:60') ? '0x' + '0'.repeat(40) : asset.slice(asset.indexOf(':0x') + 1);
 /** Converts a universe pool to the solver's `Pool` (math.ts), validated by `poolSchema`. */
 export function universePoolToPool(p: UniversePool): Pool {
   const base = { address: p.pool_ref, token0: assetAddress(p.tokens[0]), token1: assetAddress(p.tokens[1]), decimals0: p.decimals[0], decimals1: p.decimals[1], fee_pips: p.fee_pips, code_hash: p.code_hash, adapter_version: p.adapter_version, ...(p.quote_capability === 'estimate' ? { quote_capability: 'estimate' as const } : {}), ...(p.canonicality ? { canonicality: p.canonicality } : {}) };
@@ -99,6 +99,7 @@ export const arbRecordSchema = z.object({
   trigger: z.object({ tx: bytes32, tx_index: count, shared_pools: z.array(poolRefSchema).max(16) }).strict().nullable(),
   cycle_id: digest.nullable(),
   price_sources: z.array(z.string().max(256)).max(8),
+  gas_used: uint.optional(), // receipt gasUsed; written only with the quote layer on (gas-unit evidence)
 }).strict().superRefine((r, ctx) => {
   const nets = Object.entries(r.net_by_asset);
   for (const [asset, net] of nets) if (BigInt(net) < 0n) ctx.addIssue({ code: 'custom', path: ['net_by_asset', asset], message: 'A closed-loop arb never ends net-negative in any asset.' });
@@ -107,28 +108,27 @@ export const arbRecordSchema = z.object({
 });
 export type ArbRecord = z.infer<typeof arbRecordSchema>;
 
-// ---- S5 Cycle quote (file 11 #9, #11): missing gas or a non-exact model makes the quote INCONCLUSIVE ----
+// ---- S5 Cycle quote (file 11 #9, #11): data only — no calldata or executor payload; missing gas or a non-exact model makes the quote INCONCLUSIVE ----
 const nullableWei = uint.nullable();
 export const cycleQuoteSchema = z.object({
   cycle_id: digest, block: blockV8Schema, mode: z.enum(['historical', 'live']), pre_swaps_applied: count,
   principal_raw: uint, expected_out_raw: nullableWei,
-  lender: z.object({ lender_id: z.string().min(1).max(128), provider: z.enum(LENDER_PROVIDERS), fee_raw: uint }).strict(),
+  lender: z.object({ lender_id: z.string().min(1).max(128), provider: z.enum(LENDER_PROVIDERS), fee_raw: uint }).strict().nullable(), // null only when INCONCLUSIVE before a lender was read
   gross_raw: signedInt.nullable(),
   gas: z.object({ gas_units: nullableWei, base_fee_wei: nullableWei, priority_bid_wei: nullableWei, gas_price_wei: nullableWei, cost_in_borrow_raw: nullableWei, eth_usd: usdSchema.nullable() }).strict(),
   net_raw: signedInt.nullable(), net_usd: signedUsd.nullable(),
   margin_raw: uint,
-  min_profit_raw: nullableWei, // executor threshold = gas cost in borrow units + margin
+  executor_threshold_raw: nullableWei, // informational only: gas cost in borrow units + margin
   outcome: z.enum(['PROFITABLE', 'UNPROFITABLE', 'INCONCLUSIVE']), reason: z.string().min(1).max(128).nullable(),
   fidelity: z.object({ quote_capability: quoteCapabilitySchema, tick_words_loaded: count, crossed_unloaded_tick: z.boolean(), hooks: z.boolean() }).strict(),
-  route_payload: z.object({ executor: address, calldata_unsigned: z.string().regex(/^0x(?:[0-9a-f]{2})*$/) }).strict().nullable(),
 }).strict().superRefine((q, ctx) => {
   const issue = (path: string, message: string) => ctx.addIssue({ code: 'custom', path: [path], message });
   if ((q.outcome === 'INCONCLUSIVE') !== (q.reason !== null)) issue('reason', 'Exactly the INCONCLUSIVE outcome carries a reason.');
   if (q.outcome === 'INCONCLUSIVE') return;
   const g = q.gas;
-  if (Object.values(g).some((v) => v === null) || q.expected_out_raw === null || q.gross_raw === null || q.net_raw === null || q.min_profit_raw === null) return issue('gas', 'A decided quote needs every gas component and the full net.');
+  if (Object.values(g).some((v) => v === null) || q.expected_out_raw === null || q.gross_raw === null || q.net_raw === null || q.executor_threshold_raw === null || q.lender === null) return issue('gas', 'A decided quote needs every gas component and the full net.');
   if (q.fidelity.quote_capability !== 'exact' || q.fidelity.crossed_unloaded_tick) issue('fidelity', 'Only an exact quote over loaded ticks can be decided.');
-  if (BigInt(q.min_profit_raw) !== BigInt(g.cost_in_borrow_raw!) + BigInt(q.margin_raw)) issue('min_profit_raw', 'min_profit_raw must equal gas cost plus margin.');
+  if (BigInt(q.executor_threshold_raw) !== BigInt(g.cost_in_borrow_raw!) + BigInt(q.margin_raw)) issue('executor_threshold_raw', 'executor_threshold_raw must equal gas cost plus margin.');
   if (BigInt(g.cost_in_borrow_raw!) + BigInt(q.margin_raw) === 0n) issue('outcome', 'Zero gas and zero margin is INCONCLUSIVE (ZERO_COST_POLICY).');
   if ((q.outcome === 'PROFITABLE') !== (BigInt(q.net_raw) >= BigInt(q.margin_raw))) issue('outcome', 'PROFITABLE iff net_raw >= margin_raw.');
 });

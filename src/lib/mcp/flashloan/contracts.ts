@@ -44,6 +44,23 @@ export const arbUniverseEnabled = () => process.env.FLASHLOAN_ARB_UNIVERSE_V1 ==
 export const universeInputSchema = z.object({ network: z.enum(['arbitrum', 'base', 'ethereum']), seed_tokens: z.array(address).max(30).default([]), min_depth_usd: z.number().finite().min(0).max(1e12).default(25_000),
   max_hops: z.number().int().min(2).max(4).default(3), max_cycles: z.number().int().min(1).max(512).default(256), max_nodes_visited: z.number().int().min(1).max(200_000).default(50_000),
   include_research: z.boolean().default(false), include_v4: z.boolean().default(true) }).strict();
+/** A pinned universe: its build input (defaults when omitted) plus the content hash the caller saw. */
+const universeSelector = universeInputSchema.omit({ network: true }).strict();
+/** PRD-D cycle quote (file 11 §D): public, synchronous and data only (no calldata, no executor estimateGas) behind FLASHLOAN_QUOTE_CYCLE_V1. */
+export const QUOTE_CYCLE_OPERATION = 'flashloan_quote_cycle_v1';
+export const arbQuoteCycleEnabled = () => process.env.FLASHLOAN_QUOTE_CYCLE_V1 === 'true';
+export const cyclePolicySchema = z.object({ max_principal: uint, max_price_impact_bps: z.number().int().min(1).max(5000).default(100), margin_bps: z.number().min(0).max(1000).default(10), margin_raw: uint.default('0'), max_evaluations: z.number().int().min(1).max(500).default(300) }).strict();
+export const quoteCycleInputSchema = z.object({
+  network: z.enum(['arbitrum', 'base', 'ethereum']),
+  cycle: z.union([
+    z.object({ cycle_id: digest, universe_content_hash: digest, universe_input: universeSelector.optional() }).strict(),
+    z.object({ funding_asset: address, hops: z.array(z.object({ pool: poolRef.extend({ word_range: z.number().int().min(0).max(1).default(1) }).strict(), token_in: address, token_out: address }).strict()).min(2).max(4) }).strict(),
+  ]),
+  block: uint.optional(),
+  pre_swaps: z.array(z.union([z.object({ tx_hash: bytes32 }).strict(), z.object({ pool_ref: z.union([address, bytes32]), token_in: address, amount_in_raw: uint }).strict()])).max(4).default([]),
+  priority_bid_wei: uint.optional(),
+  policy: cyclePolicySchema,
+}).strict();
 export const operationEnabled = (name: string) => name === UNIVERSE_OPERATION ? false : name !== GROUND_TRUTH_OPERATION || arbGtEnabled();
 export const groundTruthInputSchema = z.object({ ...start, network: z.enum(['arbitrum', 'base', 'ethereum']), from_block: uint.optional(), to_block: uint.optional(),
   window_blocks: z.number().int().min(100).max(20_000).default(14_400), include_v4: z.boolean().default(true), min_gross_usd: z.number().finite().min(0).max(1e12).default(0) }).strict()
