@@ -1,6 +1,6 @@
 import { z } from 'zod';
 import type { ToolDef } from '../tools';
-import { operationSchemas, type Operation } from './contracts';
+import { operationSchemas, operationEnabled, type Operation } from './contracts';
 import { researchRequest } from './client';
 
 const descriptions: Record<Operation, string> = {
@@ -14,10 +14,11 @@ const descriptions: Record<Operation, string> = {
   xrpl_discover_arbitrage_routes: 'Read native XRPL AMMs and funded order books at one validated ledger; distinguish account-backed and hypothetical funding.',
   xrpl_simulate_arbitrage_route: 'Estimate native XRPL routes or dry-run one supported unsigned native transaction. Does not assert cross-transaction atomicity.',
   nim_memory_sync_flashloan_lesson: 'Retrieve cited research context or propose, validate and commit report evidence. Never approves generated procedures.',
+  flashloan_arb_ground_truth_v1: 'Measure closed-loop DEX arbs that landed in a block window: swap-surplus candidates and receipt-verified realized profit, with gas, triggers and an ordered event dataset. Returns a shared job; poll it and read its artifacts with flashloan_research_job.',
   flashloan_research_job: 'Get/cancel an owned job, read an owned artifact, or inspect research capabilities.',
 };
 export function getFlashloanTools(): ToolDef[] {
-  return (Object.keys(operationSchemas) as Operation[]).map((name) => {
+  return (Object.keys(operationSchemas) as Operation[]).filter(operationEnabled).map((name) => {
     const schema = operationSchemas[name];
     return { name, description: descriptions[name], tier: 't1_read', nativeInputSchema: schema, requiresAuthentication: true,
       inputSchema: z.toJSONSchema(schema, { io: 'input', target: 'draft-7' }),

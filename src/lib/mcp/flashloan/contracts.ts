@@ -35,6 +35,15 @@ export const lendersV1Enabled = () => process.env.FLASHLOAN_ARB_LENDERS_V1 === '
 const ingestSchema = <P extends readonly [string, ...string[]]>(providers: P) => z.object({ ...start, network: evmNetwork, pools: z.array(poolRef).min(1).max(20), lender: z.object({ provider: z.enum(providers), address, asset: address }).strict() }).strict();
 const ingestLegacy = ingestSchema(['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH'] as const);
 const ingestLendersV1 = ingestSchema(LENDER_PROVIDERS);
+/** PRD-C ground truth (file 11 §C): authenticated shared job, admitted only behind FLASHLOAN_ARB_GT_V1 so the flag-off tool list stays byte-identical. */
+export const GROUND_TRUTH_OPERATION = 'flashloan_arb_ground_truth_v1';
+export const arbGtEnabled = () => process.env.FLASHLOAN_ARB_GT_V1 === 'true';
+export const operationEnabled = (name: string) => name !== GROUND_TRUTH_OPERATION || arbGtEnabled();
+export const groundTruthInputSchema = z.object({ ...start, network: z.enum(['arbitrum', 'base', 'ethereum']), from_block: uint.optional(), to_block: uint.optional(),
+  window_blocks: z.number().int().min(100).max(20_000).default(14_400), include_v4: z.boolean().default(true), min_gross_usd: z.number().finite().min(0).max(1e12).default(0) }).strict()
+  .superRefine((v, ctx) => {
+    if (v.from_block !== undefined && v.to_block !== undefined && (BigInt(v.to_block) < BigInt(v.from_block) || BigInt(v.to_block) - BigInt(v.from_block) >= 20_000n)) ctx.addIssue({ code: 'custom', path: ['to_block'], message: 'Window must be 1..20000 blocks.' });
+  });
 export const operationSchemas = {
   ...suiOperations,
   flashloan_discover_arbitrage_pools: discoveryRequestSchema.superRefine(validateDiscoveryTokens),
@@ -44,6 +53,7 @@ export const operationSchemas = {
   xrpl_discover_arbitrage_routes: z.object({ ...start, network: z.literal('xrpl'), assets: z.array(xrplAsset).min(2).max(10), funding: z.discriminatedUnion('mode', [z.object({ mode: z.literal('account'), account: xrplAccount }).strict(), z.object({ mode: z.literal('hypothetical'), balances: z.array(z.object({ asset: xrplAsset, amount: z.string().regex(/^(0|[1-9][0-9]*)(\.[0-9]+)?$/) }).strict()).min(1).max(10) }).strict()]) }).strict(),
   xrpl_simulate_arbitrage_route: z.object({ ...start, route_id: digest, transaction: z.record(z.string(), z.unknown()).optional() }).strict(),
   nim_memory_sync_flashloan_lesson: z.object({ ...start, operation: z.enum(['RETRIEVE', 'PROPOSE', 'VALIDATE', 'COMMIT']), query: z.string().min(3).max(8000).optional(), report_id: digest.optional(), proposal_id: z.string().min(1).max(128).optional() }).strict(),
+  flashloan_arb_ground_truth_v1: groundTruthInputSchema,
   flashloan_research_job: z.object({ operation: z.enum(['get', 'cancel', 'artifact', 'capabilities']), job_id: z.string().uuid().optional(), artifact_id: digest.optional(), offset: z.number().int().min(0).max(8_000_000).default(0), limit: z.number().int().min(1).max(100000).default(100000) }).strict(),
 };
 export type Operation = keyof typeof operationSchemas;

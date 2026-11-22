@@ -12,7 +12,7 @@ export type Artifact = { schema_version: 1; id: string; owner_id: string; create
 /** Owner of shared (cache-keyed, any-caller) artifacts and jobs; `@` cannot appear in an authenticated owner id. */
 export const SHARED_OWNER = '@shared';
 /** Per-kind artifact retention (file 11 #20); existing kinds keep report 7 d, everything else 24 h. */
-const RETENTION_HOURS: Record<string, number> = { report: 168, arb_universe: 24, arb_ground_truth: 168, backrun_replay: 168 };
+const RETENTION_HOURS: Record<string, number> = { report: 168, arb_universe: 24, arb_ground_truth: 168, arb_event_dataset: 168, backrun_replay: 168 };
 export const retentionHours = (kind: string) => RETENTION_HOURS[kind] ?? 24;
 const retention = (kind: string) => retentionHours(kind) + ' hours';
 const sharedKey = (cacheKey: string) => 'shared:' + digest.parse(cacheKey) + ':' + randomUUID();
@@ -32,6 +32,8 @@ export interface Repository {
   readSharedLatest(kind: string, cacheKey: string): Promise<Artifact | null>;
   /** Returns the QUEUED/RUNNING job with this cache key, or enqueues one (atomic dedupe). */
   enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string): Promise<Job>;
+  /** Any-caller poll of a shared (`@shared`) job by its unguessable id; private jobs are never visible here. */
+  getShared(id: string): Promise<Job>;
 }
 /** Private paths never accept a reserved owner id (`@` prefix, e.g. `@shared`); shared paths use their own methods. */
 export function privateOwner(owner: string) { if (typeof owner !== 'string' || !owner || owner.startsWith('@')) throw new ResearchError('INVALID_OWNER', 'Owner ids starting with @ are reserved.'); return owner; }
@@ -65,6 +67,7 @@ export class MemoryRepository implements Repository {
   async claim() { const j = [...this.jobs.values()].find((v) => v.state === 'QUEUED'); if (!j) return null; j.state = 'RUNNING'; return structuredClone(j); }
   private owned(owner: string, id: string) { const job = this.jobs.get(id); if (!job || job.owner !== owner) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return job; }
   async get(owner: string, id: string) { return publicJob(this.owned(privateOwner(owner), id)); }
+  async getShared(id: string) { return publicJob(this.owned(SHARED_OWNER, id)); }
   async cancel(owner: string, id: string) { const j = this.owned(privateOwner(owner), id); if (['QUEUED', 'RUNNING'].includes(j.state)) j.state = 'CANCELLED'; return publicJob(j); }
   async finish(id: string, result: string | { code: string; message: string; retryable: boolean }) {
     const j = this.jobs.get(id); if (j?.state !== 'RUNNING') return false;
@@ -148,6 +151,7 @@ export class PostgresRepository implements Repository {
     return r.rows[0] ? this.row(r.rows[0]) : null;
   }
   async get(owner: string, id: string) { privateOwner(owner); const r = await this.query('SELECT * FROM flashloan_jobs WHERE id=$1 AND owner_id=$2 AND created_at>now()-interval \'7 days\'', [id, owner]); if (!r.rows[0]) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return publicJob(this.row(r.rows[0])); }
+  async getShared(id: string) { const r = await this.query('SELECT * FROM flashloan_jobs WHERE id=$1 AND owner_id=$2 AND created_at>now()-interval \'7 days\'', [id, SHARED_OWNER]); if (!r.rows[0]) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return publicJob(this.row(r.rows[0])); }
   async cancel(owner: string, id: string) { privateOwner(owner); await this.query(`UPDATE flashloan_jobs SET state='CANCELLED',updated_at=now() WHERE id=$1 AND owner_id=$2 AND state IN ('QUEUED','RUNNING')`, [id, owner]); return this.get(owner, id); }
   async finish(id: string, result: string | { code: string; message: string; retryable: boolean }) { const r = await this.query(`UPDATE flashloan_jobs SET state=$2,result_id=$3,error=$4,updated_at=now() WHERE id=$1 AND state='RUNNING' RETURNING id`, [id, typeof result === 'string' ? 'SUCCEEDED' : 'FAILED', typeof result === 'string' ? result : null, typeof result === 'string' ? null : JSON.stringify(result)]); return r.rowCount === 1; }
   async recover() { await this.query(`UPDATE flashloan_jobs SET state='FAILED',error=$1,updated_at=now() WHERE state='RUNNING'`, [JSON.stringify({ code: 'WORKER_RESTARTED', message: 'Worker restarted; refresh state and create a new job.', retryable: true })]); }

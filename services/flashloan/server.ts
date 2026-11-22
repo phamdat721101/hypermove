@@ -65,7 +65,7 @@ async function readBody(request: IncomingMessage, maxBytes: number, strict = fal
 export async function startResearchServer() {
   const root = resolve(process.env.FLASHLOAN_DATA_DIR ?? 'services/flashloan/data');
   const deployments = z.array(deploymentSchema).parse(JSON.parse(process.env.FLASHLOAN_DEPLOYMENTS ?? '[]'));
-  const discoveryRegistry = (v8Enabled('INVENTORY_V3') || v8Enabled('MOVERS_V2') || v8Enabled('REGISTRY_V1') || process.env.FLASHLOAN_POOL_RESOLUTION_V1 === 'true') ? parseDiscoveryRegistry(process.env.FLASHLOAN_DISCOVERY_REGISTRY) : undefined;
+  const discoveryRegistry = (v8Enabled('INVENTORY_V3') || v8Enabled('MOVERS_V2') || v8Enabled('REGISTRY_V1') || process.env.FLASHLOAN_POOL_RESOLUTION_V1 === 'true' || process.env.FLASHLOAN_ARB_GT_V1 === 'true') ? parseDiscoveryRegistry(process.env.FLASHLOAN_DISCOVERY_REGISTRY) : undefined;
   if (discoveryRegistry) for (const [network, config] of Object.entries(discoveryRegistry.config.networks)) for (const venue of config.venues.filter((v) => v.family === 'V4' && v.status === 'reviewed')) {
     if (!deployments.some((d) => d.network === network && d.address === venue.factory)) deployments.push(deploymentSchema.parse({ network, address: venue.factory, adapter: 'UNISWAP_V4', code_hash: venue.factory_code_hash, state_view: venue.state_view, state_view_code_hash: venue.state_view_code_hash, initialization_block: venue.initialization_block, version: discoveryRegistry.version }));
   }
@@ -96,7 +96,10 @@ export async function startResearchServer() {
   await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(Number(process.env.FLASHLOAN_WORKER_PORT ?? 3012), '127.0.0.1', done); });
   const timer = setInterval(() => { void worker.tick().catch(() => console.error(JSON.stringify({ event: 'flashloan.worker_queue_error' }))); }, 100);
   const maintenance = setInterval(() => { void repo.prune().catch(() => console.error(JSON.stringify({ event: 'flashloan.worker_maintenance_error' }))); }, 3600000);
-  const shutdown = () => { clearInterval(timer); clearInterval(maintenance); worker.stop(); server.close(); void closeResearchPool(); };
+  // PRD-C hourly public refresh: last-hour shared ground-truth job per configured network; nothing runs unless both flags are on.
+  const groundTruthSchedule = process.env.FLASHLOAN_ARB_GT_V1 === 'true' && process.env.FLASHLOAN_GT_SCHEDULE === '1'
+    ? setInterval(() => { void worker.scheduleGroundTruth().catch(() => console.error(JSON.stringify({ event: 'flashloan.gt_schedule_error' }))); }, 3600000) : undefined;
+  const shutdown = () => { clearInterval(timer); clearInterval(maintenance); if (groundTruthSchedule) clearInterval(groundTruthSchedule); worker.stop(); server.close(); void closeResearchPool(); };
   process.once('SIGTERM', shutdown); process.once('SIGINT', shutdown);
   console.log(JSON.stringify({ event: 'flashloan.worker_started', version: worker.capabilities().version, signing: false }));
   return { server, worker, shutdown };

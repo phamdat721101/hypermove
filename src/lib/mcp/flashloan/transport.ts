@@ -141,8 +141,8 @@ function mergeRanges<T extends BlockRange>(ranges: T[], same: (a: T, b: T) => bo
  * checked against canonical headers: a log whose blockHash differs marks its whole block failed (BLOCK_REORG).
  * `removed:true` logs are dropped; logs outside the page or not matching the topic filter are provider noise and ignored.
  */
-export async function boundedTopicLogs<T extends TopicLog = TopicLog>(rpc: JsonClient, filter: { topics: Array<string | string[] | null>; from: bigint; to: bigint }, budget: RoundBudget, options: { pageBlocks?: number; maxLogsPerPage?: number } = {}): Promise<TopicScan<T>> {
-  const initial = BigInt(options.pageBlocks ?? 2000), maxLogs = options.maxLogsPerPage ?? 2000;
+export async function boundedTopicLogs<T extends TopicLog = TopicLog>(rpc: JsonClient, filter: { topics: Array<string | string[] | null>; from: bigint; to: bigint }, budget: RoundBudget, options: { pageBlocks?: number; maxLogsPerPage?: number; headerBatch?: number } = {}): Promise<TopicScan<T>> {
+  const initial = BigInt(options.pageBlocks ?? 2000), maxLogs = options.maxLogsPerPage ?? 2000, headerBatch = Math.min(32, Math.max(1, options.headerBatch ?? 32));
   if (filter.from < 0n || filter.to < filter.from || initial < 1n) throw new ResearchError('INVALID_INPUT', 'Topic scan needs a non-empty block range and a positive page size.');
   const scan: TopicScan<T> = { requested_ranges: [{ from: filter.from.toString(), to: filter.to.toString() }], completed_ranges: [], failed_ranges: [], logs: [], complete: false };
   const wanted = filter.topics.map((t) => t === null ? null : new Set((Array.isArray(t) ? t : [t]).map((v) => v.toLowerCase())));
@@ -150,8 +150,8 @@ export async function boundedTopicLogs<T extends TopicLog = TopicLog>(rpc: JsonC
   const canonical = new Map<bigint, string>();
   const headers = async (numbers: bigint[]) => {
     const missing = numbers.filter((n) => !canonical.has(n));
-    for (let at = 0; at < missing.length; at += 32) {
-      const chunk = missing.slice(at, at + 32);
+    for (let at = 0; at < missing.length; at += headerBatch) {
+      const chunk = missing.slice(at, at + headerBatch);
       const rows = chunk.length === 1 ? [await rpc.rpc<{ hash?: string } | null>('eth_getBlockByNumber', [hex(chunk[0]), false], budget.signal)]
         : await rpc.batch<{ hash?: string } | null>(chunk.map((n) => ({ method: 'eth_getBlockByNumber', params: [hex(n), false] })), budget.signal);
       chunk.forEach((n, i) => { const h = rows[i]?.hash; if (typeof h !== 'string') throw new ResearchError('HEADER_UNAVAILABLE', 'Canonical header missing for block ' + n + '.'); canonical.set(n, h.toLowerCase()); });

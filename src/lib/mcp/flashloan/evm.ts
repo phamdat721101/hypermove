@@ -55,7 +55,7 @@ export function venueLookup(venue: Venue): FactoryLookup {
 }
 export type EmitterProof = { kind: 'create2' | 'factory_membership' | 'v4_manager'; factory: string; code_hash?: string; lookup?: FactoryLookup; deployer?: string; init_code_hash?: string; salt_kind?: SaltKind; salt?: string; salt_args?: string[]; adapter_version?: string };
 /** File 11 #15: a Swap log counts only when its emitter authenticates; every rejection carries a reason code. */
-export type EmitterAuth = { ok: true; venue_id: string; family: Venue['family']; proof: EmitterProof } | { ok: false; reason: 'INVALID_ADDRESS' | 'NOT_A_POOL' | 'UNREVIEWED_FACTORY' | 'FACTORY_CODE_MISMATCH' | 'PARAM_UNAVAILABLE' | 'DEPLOYMENT_MISMATCH' | 'MULTICALL_MEMBER_FAILED' | 'CREATE2_MISMATCH' | 'INVALID_POOL' };
+export type EmitterAuth = { ok: true; venue_id: string; family: Venue['family']; proof: EmitterProof; /** Pool tokens read during authentication (absent for a V4 manager). */ tokens?: [string, string] } | { ok: false; reason: 'INVALID_ADDRESS' | 'NOT_A_POOL' | 'UNREVIEWED_FACTORY' | 'FACTORY_CODE_MISMATCH' | 'PARAM_UNAVAILABLE' | 'DEPLOYMENT_MISMATCH' | 'MULTICALL_MEMBER_FAILED' | 'CREATE2_MISMATCH' | 'INVALID_POOL' };
 /** Bounded process-level LRU of positive proofs only (pool identity is immutable; rejections may change, e.g. a later deploy). */
 class Lru<V> {
   private readonly map = new Map<string, V>();
@@ -181,9 +181,9 @@ export class EvmReader {
     claims.forEach(({ emitter, venue, claim, template, saltParam }, i) => {
       const member = membership[i];
       if (!member.ok) { settle(emitter, { ok: false, reason: member.code }); return; }
-      if (!template) { settle(emitter, { ok: true, venue_id: venue.id, family: venue.family, proof: { kind: 'factory_membership', factory: claim.factory, code_hash: venue.factory_code_hash, lookup: claim.lookup } }); return; }
+      if (!template) { settle(emitter, { ok: true, venue_id: venue.id, family: venue.family, tokens: [claim.token0, claim.token1], proof: { kind: 'factory_membership', factory: claim.factory, code_hash: venue.factory_code_hash, lookup: claim.lookup } }); return; }
       const derivation = verifyCreate2Derivation({ deployer: template.deployer!, init_code_hash: template.init_code_hash!, salt_kind: template.salt_kind! }, emitter, claim.token0, claim.token1, saltParam);
-      settle(emitter, !derivation.matches ? { ok: false, reason: 'CREATE2_MISMATCH' } : { ok: true, venue_id: venue.id, family: venue.family, proof: { kind: 'create2', factory: claim.factory, code_hash: venue.factory_code_hash, lookup: claim.lookup, deployer: template.deployer, init_code_hash: template.init_code_hash, salt_kind: template.salt_kind, salt: derivation.salt, salt_args: derivation.salt_args, adapter_version: template.adapter_version ?? template.version } });
+      settle(emitter, !derivation.matches ? { ok: false, reason: 'CREATE2_MISMATCH' } : { ok: true, venue_id: venue.id, family: venue.family, tokens: [claim.token0, claim.token1], proof: { kind: 'create2', factory: claim.factory, code_hash: venue.factory_code_hash, lookup: claim.lookup, deployer: template.deployer, init_code_hash: template.init_code_hash, salt_kind: template.salt_kind, salt: derivation.salt, salt_args: derivation.salt_args, adapter_version: template.adapter_version ?? template.version } });
     });
     return out;
   }

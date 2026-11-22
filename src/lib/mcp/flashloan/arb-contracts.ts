@@ -151,11 +151,37 @@ const windowSchema = z.object({ from_block: uint, to_block: uint, from_hash: byt
 export const arbUniversePayloadSchema = z.object({ schema_version: z.literal('flashloan.arb.universe.v1'), ...head, block: blockV8Schema, registry_version: digest, cache_key: digest, outcome: z.enum(['SUCCESS', 'EMPTY', 'PARTIAL']), pools: z.array(universePoolSchema).max(400), cycles: z.array(cycleSchema).max(4000), coverage: coverageArbSchema, warnings: z.array(z.string().max(512)).max(64) }).strict();
 export const arbCycleQuotePayloadSchema = z.object({ schema_version: z.literal('flashloan.arb.cycle_quote.v1'), ...head, quote: cycleQuoteSchema }).strict();
 export const arbGroundTruthSchema = z.object({ schema_version: z.literal('flashloan.arb.ground_truth.v1'), ...head, window: windowSchema, records: z.array(arbRecordSchema).max(20000), coverage: coverageArbSchema, warnings: z.array(z.string().max(512)).max(64) }).strict();
+// ---- PRD-C ground truth (file 11 #14, #17): two tiers plus the complete ordered event dataset M8/M9 replay from ----
+export const ARB_EVENT_KINDS = ['swap_v3', 'swap_pancake', 'swap_v2', 'swap_v4', 'sync', 'mint_v3', 'burn_v3', 'mint_v2', 'burn_v2', 'modify_liquidity_v4'] as const;
+export const ARB_DATASET_PAGE_EVENTS = 10_000;
+/** One authenticated pool event; `fields` are the decoded raw event arguments (decimal integers, lowercase hex for addresses/bytes32). */
+export const arbDatasetEventSchema = z.object({ block: uint, tx_index: count, log_index: count, tx: bytes32, block_hash: bytes32, emitter: address, pool_ref: poolRefSchema, venue_id: z.string().max(128), kind: z.enum(ARB_EVENT_KINDS), fields: z.record(z.string().max(32), z.string().max(80)) }).strict();
+export type ArbDatasetEvent = z.infer<typeof arbDatasetEventSchema>;
+export const arbEventDatasetPageSchema = z.object({ schema_version: z.literal('flashloan.arb.event_dataset.v1'), ...head, window: windowSchema, ordering: z.literal('block,tx_index,log_index'), page: count, pages: z.number().int().positive(), events: z.array(arbDatasetEventSchema).max(ARB_DATASET_PAGE_EVENTS) }).strict();
+const datasetRefSchema = z.object({ complete: z.boolean(), total_events: count, by_kind: z.record(z.string(), count), pages: z.array(z.object({ artifact_id: digest, cache_key: digest, content_hash: digest, events: count }).strict()).max(256) }).strict();
+const bucketSchema = z.object({ '<0.05': count, '0.05-0.5': count, '0.5-5': count, '>5': count }).strict();
+export const arbGroundTruthDocumentSchema = arbGroundTruthSchema.extend({
+  cache_key: digest, registry_version: digest, outcome: z.enum(['SUCCESS', 'EMPTY', 'INCONCLUSIVE']), reason: z.string().min(1).max(160).nullable(),
+  inputs: z.object({ include_v4: z.boolean(), min_gross_usd: z.number().finite().nonnegative() }).strict(),
+  totals: z.object({ events: count, swaps: count, multi_pool_txs: count, candidates: count, candidates_priced: count, verified: count, candidate_gross_usd: usdSchema, verified_gross_usd: usdSchema, gas_usd: usdSchema, verified_net_usd: signedUsd, receipts_missing: count, receipts_rejected: count }).strict(),
+  by_bot: z.array(z.object({ to: address, arbs: count, verified: count, gross_usd: usdSchema, net_usd: signedUsd.nullable() }).strict()).max(50),
+  by_bucket: bucketSchema,
+  tx_index: z.object({ p50: z.number().nonnegative().nullable(), share_le_3: z.number().min(0).max(1).nullable() }).strict(),
+  prices: z.array(z.object({ asset: assetIdSchema, usd: usdSchema, source: z.string().max(256) }).strict()).max(32),
+  unverified_reasons: z.record(z.string(), count),
+  dataset: datasetRefSchema,
+}).strict().superRefine((d, ctx) => {
+  if ((d.outcome === 'INCONCLUSIVE') !== (d.reason !== null)) ctx.addIssue({ code: 'custom', path: ['reason'], message: 'Exactly the INCONCLUSIVE outcome carries a reason.' });
+  if (d.outcome === 'EMPTY' && d.records.length) ctx.addIssue({ code: 'custom', path: ['records'], message: 'EMPTY carries no records.' });
+});
+export type ArbGroundTruthDocument = z.infer<typeof arbGroundTruthDocumentSchema>;
+/** Job result: the full document is a shared artifact, so any caller reads the same bytes. */
+export const arbGroundTruthRefSchema = z.object({ schema_version: z.literal('flashloan.arb.ground_truth_ref.v1'), network: evmNetwork, artifact_id: digest, cache_key: digest, content_hash: digest, outcome: z.enum(['SUCCESS', 'EMPTY', 'INCONCLUSIVE']), reason: z.string().max(160).nullable(), reused: z.boolean() }).strict();
 export const backrunReplaySchema = z.object({ schema_version: z.literal('flashloan.arb.backrun_replay.v1'), ...head, window: windowSchema, events: z.array(replayEventSchema).max(20000), independent_upper_bound_usd: signedUsd, sequential_strategy_pnl_usd: signedUsd.nullable(), verdict: z.enum(['GO', 'NO_GO', 'INCONCLUSIVE']), coverage: coverageArbSchema, warnings: z.array(z.string().max(512)).max(64) }).strict();
 /** Envelope kind → payload schema (public-contracts.ts ARB_PROOF_KINDS). */
 export const arbEnvelopePayloads = { evm_universe: arbUniversePayloadSchema, evm_cycle_quote: arbCycleQuotePayloadSchema } as const;
 /** Shared artifact kind → document schema (storage.ts retention). */
-export const arbArtifactDocuments = { arb_universe: arbUniversePayloadSchema, arb_ground_truth: arbGroundTruthSchema, backrun_replay: backrunReplaySchema } as const;
+export const arbArtifactDocuments = { arb_universe: arbUniversePayloadSchema, arb_ground_truth: arbGroundTruthDocumentSchema, arb_event_dataset: arbEventDatasetPageSchema, backrun_replay: backrunReplaySchema } as const;
 
 // ---- Cache identity (file 11 #21): registry_version excludes seeds and weights, so the full config is hashed ----
 const normalizeInput = (value: unknown): unknown => {
@@ -172,5 +198,5 @@ export const deploymentsVersion = (deployments: unknown[]) => hash(deployments.m
 /** JSON-schema export (same pattern as v8DocumentSchemas). */
 export function arbDocumentSchemas() {
   const json = (s: z.ZodType) => z.toJSONSchema(s, { io: 'input', unrepresentable: 'any' });
-  return { universe: json(arbUniversePayloadSchema), cycle_quote: json(arbCycleQuotePayloadSchema), ground_truth: json(arbGroundTruthSchema), backrun_replay: json(backrunReplaySchema) };
+  return { universe: json(arbUniversePayloadSchema), cycle_quote: json(arbCycleQuotePayloadSchema), ground_truth: json(arbGroundTruthDocumentSchema), backrun_replay: json(backrunReplaySchema) };
 }
