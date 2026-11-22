@@ -1,0 +1,1526 @@
+[
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0xf1fdc83c3a336bdbdc9fb06e318b08eaddc82ff4",
+    "pairAddress": "0xf1Fdc83c3A336bdbDC9fB06e318B08EadDC82FF4",
+    "labels": [
+      "v3"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "name": "USD Coin",
+      "symbol": "USDC"
+    },
+    "priceNative": "0.01819",
+    "priceUsd": "0.01819",
+    "txns": {
+      "m5": {
+        "buys": 1,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 10,
+        "sells": 7
+      },
+      "h6": {
+        "buys": 48,
+        "sells": 67
+      },
+      "h24": {
+        "buys": 175,
+        "sells": 212
+      }
+    },
+    "volume": {
+      "h24": 3036.62,
+      "h6": 875.61,
+      "h1": 129.95,
+      "m5": 11.79
+    },
+    "priceChange": {
+      "m5": 0.1,
+      "h1": 0.48,
+      "h6": -1.07,
+      "h24": -2.85
+    },
+    "liquidity": {
+      "usd": 272122.73,
+      "base": 13305714,
+      "quote": 29972
+    },
+    "fdv": 18105428,
+    "marketCap": 18105428,
+    "pairCreatedAt": 1732036823000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x7464850cc1cfb54a2223229b77b1bca2f888d946",
+    "pairAddress": "0x7464850CC1cFb54A2223229b77B1BCA2f888D946",
+    "labels": [
+      "v2"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "name": "Virtual Protocol",
+      "symbol": "VIRTUAL"
+    },
+    "priceNative": "0.02978",
+    "priceUsd": "0.01829",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 1,
+        "sells": 2
+      },
+      "h6": {
+        "buys": 1,
+        "sells": 8
+      },
+      "h24": {
+        "buys": 1,
+        "sells": 58
+      }
+    },
+    "volume": {
+      "h24": 2016.65,
+      "h6": 285.5,
+      "h1": 278.49,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": -0.54,
+      "h6": -1.93,
+      "h24": -2.81
+    },
+    "liquidity": {
+      "usd": 800554.01,
+      "base": 21880826,
+      "quote": 651646
+    },
+    "fdv": 18199458,
+    "marketCap": 18199458,
+    "pairCreatedAt": 1730525195000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x6f93d1f8cdaddc61214c59a2741f2f0271cf6e2c",
+    "pairAddress": "0x6F93d1f8cDAdDc61214c59A2741F2F0271CF6E2C",
+    "labels": [
+      "v2"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x22aF33FE49fD1Fa80c7149773dDe5890D3c76F3b",
+      "name": "BankrCoin",
+      "symbol": "BNKR"
+    },
+    "priceNative": "56.6778",
+    "priceUsd": "0.01801",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 1,
+        "sells": 1
+      },
+      "h6": {
+        "buys": 1,
+        "sells": 5
+      },
+      "h24": {
+        "buys": 24,
+        "sells": 32
+      }
+    },
+    "volume": {
+      "h24": 520.15,
+      "h6": 47.16,
+      "h1": 7.64,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": -1.09,
+      "h6": -1.7,
+      "h24": -3.43
+    },
+    "liquidity": {
+      "usd": 25017.03,
+      "base": 694156,
+      "quote": 39343285
+    },
+    "fdv": 17927095,
+    "marketCap": 17927095,
+    "pairCreatedAt": 1750901215000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x3da7a82535f18772dad2f9e7d9c58e30e4241088",
+    "pairAddress": "0x3dA7a82535f18772daD2f9e7D9C58e30E4241088",
+    "labels": [
+      "v2"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x7300B37DfdfAb110d83290A29DfB31B1740219fE",
+      "name": "Mamo",
+      "symbol": "MAMO"
+    },
+    "priceNative": "2.7283",
+    "priceUsd": "0.01810",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 1,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 11,
+        "sells": 6
+      },
+      "h24": {
+        "buys": 81,
+        "sells": 116
+      }
+    },
+    "volume": {
+      "h24": 1279.35,
+      "h6": 84.38,
+      "h1": 2.89,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": 0.02,
+      "h6": -1.49,
+      "h24": -2.94
+    },
+    "liquidity": {
+      "usd": 7686.41,
+      "base": 212255,
+      "quote": 579110
+    },
+    "fdv": 18013461,
+    "marketCap": 18013461,
+    "pairCreatedAt": 1750901011000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "aerodrome",
+    "url": "https://dexscreener.com/base/0x22a52bb644f855ebd5ca2edb643ff70222d70c31",
+    "pairAddress": "0x22A52bB644f855ebD5ca2edB643FF70222D70C31",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x4200000000000000000000000000000000000006",
+      "name": "Wrapped Ether",
+      "symbol": "WETH"
+    },
+    "priceNative": "0.000007859",
+    "priceUsd": "0.01816",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 4,
+        "sells": 5
+      },
+      "h24": {
+        "buys": 31,
+        "sells": 35
+      }
+    },
+    "volume": {
+      "h24": 300.91,
+      "h6": 44.19,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h6": -0.82,
+      "h24": -2.22
+    },
+    "liquidity": {
+      "usd": 7746.56,
+      "base": 371467,
+      "quote": 0.4319
+    },
+    "fdv": 18073048,
+    "marketCap": 18073048,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "aerodrome",
+    "url": "https://dexscreener.com/base/0xf3e7e359b75a7223ba9d71065c57ddd4f5d8747e",
+    "pairAddress": "0xF3E7E359b75a7223BA9D71065C57DDd4F5D8747e",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x4200000000000000000000000000000000000006",
+      "name": "Wrapped Ether",
+      "symbol": "WETH"
+    },
+    "priceNative": "0.000007864",
+    "priceUsd": "0.01822",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 1
+      },
+      "h6": {
+        "buys": 1,
+        "sells": 1
+      },
+      "h24": {
+        "buys": 15,
+        "sells": 9
+      }
+    },
+    "volume": {
+      "h24": 84.57,
+      "h6": 4.87,
+      "h1": 2.9,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": 0.38,
+      "h6": -1.31,
+      "h24": -1.88
+    },
+    "liquidity": {
+      "usd": 4093.37,
+      "base": 112274,
+      "quote": 0.8829
+    },
+    "fdv": 18135592,
+    "marketCap": 18135592,
+    "pairCreatedAt": 1731739173000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x47808ddbc91646b21b307fefbaf7ee200b004ccc",
+    "pairAddress": "0x47808DdBC91646b21B307FeFBaF7ee200B004CcC",
+    "labels": [
+      "v3"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x4200000000000000000000000000000000000006",
+      "name": "Wrapped Ether",
+      "symbol": "WETH"
+    },
+    "priceNative": "0.000007855",
+    "priceUsd": "0.01813",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 1
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 1
+      },
+      "h24": {
+        "buys": 1,
+        "sells": 12
+      }
+    },
+    "volume": {
+      "h24": 53.86,
+      "h6": 0.01,
+      "h1": 0.01,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": -1.38,
+      "h6": -1.38,
+      "h24": -2.43
+    },
+    "liquidity": {
+      "usd": 4132.5,
+      "base": 124738,
+      "quote": 0.8105
+    },
+    "fdv": 18038557,
+    "marketCap": 18038557,
+    "pairCreatedAt": 1730525637000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0xedbc10c4a80a85b14c6ab4fa1b3d26f1e315c103",
+    "pairAddress": "0xEdbC10C4A80A85b14c6ab4fA1B3d26f1e315C103",
+    "labels": [
+      "v3"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "name": "Virtual Protocol",
+      "symbol": "VIRTUAL"
+    },
+    "priceNative": "0.02955",
+    "priceUsd": "0.01811",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 6,
+        "sells": 3
+      },
+      "h24": {
+        "buys": 17,
+        "sells": 19
+      }
+    },
+    "volume": {
+      "h24": 137.88,
+      "h6": 28.43,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h6": -2,
+      "h24": -3.02
+    },
+    "liquidity": {
+      "usd": 3491.9,
+      "base": 154643,
+      "quote": 1125.9015
+    },
+    "fdv": 18023866,
+    "marketCap": 18023866,
+    "pairCreatedAt": 1731707605000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "pancakeswap",
+    "url": "https://dexscreener.com/base/0xc68efca6375b31cdc9b85de345e0f2e968d8a5fb",
+    "pairAddress": "0xc68EfcA6375b31cDc9b85De345E0F2E968d8A5Fb",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "name": "Virtual Protocol",
+      "symbol": "VIRTUAL"
+    },
+    "priceNative": "0.02959",
+    "priceUsd": "0.01812",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 7,
+        "sells": 6
+      },
+      "h24": {
+        "buys": 63,
+        "sells": 62
+      }
+    },
+    "volume": {
+      "h24": 364.53,
+      "h6": 35.94,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h6": -0.81,
+      "h24": -2.65
+    },
+    "liquidity": {
+      "usd": 2468.48,
+      "base": 117637,
+      "quote": 549.6009
+    },
+    "fdv": 18029769,
+    "marketCap": 18029769,
+    "pairCreatedAt": 1735117193000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "aerodrome",
+    "url": "https://dexscreener.com/base/0xedbb53445b0ff73852ab86c3605b3426cf9123c7",
+    "pairAddress": "0xEdBB53445B0Ff73852AB86C3605b3426CF9123c7",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+      "name": "Aerodrome",
+      "symbol": "AERO"
+    },
+    "priceNative": "0.02718",
+    "priceUsd": "0.01803",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 1,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 2,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 12,
+        "sells": 10
+      }
+    },
+    "volume": {
+      "h24": 35.92,
+      "h6": 3.45,
+      "h1": 1.55,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": -2.01,
+      "h6": -2.64,
+      "h24": -2.73
+    },
+    "liquidity": {
+      "usd": 1041.1,
+      "base": 28862,
+      "quote": 784.6574
+    },
+    "fdv": 17942850,
+    "marketCap": 17942850,
+    "pairCreatedAt": 1732650363000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "aerodrome",
+    "url": "https://dexscreener.com/base/0xeb3458046d3aa2fdbbbf4fee58c755744ec42ce2",
+    "pairAddress": "0xeb3458046d3aA2fdbBbF4FEe58C755744ec42ce2",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "name": "Virtual Protocol",
+      "symbol": "VIRTUAL"
+    },
+    "priceNative": "0.02957",
+    "priceUsd": "0.01824",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 0,
+        "sells": 1
+      }
+    },
+    "volume": {
+      "h24": 1.14,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {},
+    "liquidity": {
+      "usd": 712.52,
+      "base": 19527,
+      "quote": 577.5504
+    },
+    "fdv": 18150175,
+    "marketCap": 18150175,
+    "pairCreatedAt": 1733500441000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "pancakeswap",
+    "url": "https://dexscreener.com/base/0x9e377b50f31531e3b79988ab225c41c8aa6877e5",
+    "pairAddress": "0x9e377B50F31531E3B79988AB225c41c8AA6877e5",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "name": "USD Coin",
+      "symbol": "USDC"
+    },
+    "priceNative": "0.01909",
+    "priceUsd": "0.01909",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 0,
+        "sells": 1
+      }
+    },
+    "volume": {
+      "h24": 0,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {},
+    "liquidity": {
+      "usd": 357.93,
+      "base": 17641,
+      "quote": 21.162
+    },
+    "fdv": 18991942,
+    "marketCap": 18991942,
+    "pairCreatedAt": 1732704181000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0xd9a8fd24d62c73792190447151b2257556e30e92da84f2e47af24b50404fac25",
+    "pairAddress": "0xd9a8fd24d62c73792190447151b2257556e30e92da84f2e47af24b50404fac25",
+    "labels": [
+      "v4"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "name": "USD Coin",
+      "symbol": "USDC"
+    },
+    "priceNative": "0.01797",
+    "priceUsd": "0.01797",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 1
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 1
+      },
+      "h24": {
+        "buys": 0,
+        "sells": 3
+      }
+    },
+    "volume": {
+      "h24": 0.78,
+      "h6": 0.5,
+      "h1": 0.5,
+      "m5": 0
+    },
+    "priceChange": {
+      "h1": -2.64,
+      "h6": -2.64,
+      "h24": -3.47
+    },
+    "liquidity": {
+      "usd": 125.33,
+      "base": 4885.4078,
+      "quote": 37.5443
+    },
+    "fdv": 17878401,
+    "marketCap": 17878401,
+    "pairCreatedAt": 1738253391000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x5ee3f08e4ee46b6011e1fcf1fbfd48ddfbdad486",
+    "pairAddress": "0x5Ee3f08E4Ee46b6011E1fCf1FBFd48DDFBDad486",
+    "labels": [
+      "v2"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "name": "USD Coin",
+      "symbol": "USDC"
+    },
+    "priceNative": "0.01823",
+    "priceUsd": "0.01823",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 0,
+        "sells": 5
+      }
+    },
+    "volume": {
+      "h24": 0.15,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h24": -0.95
+    },
+    "liquidity": {
+      "usd": 36.35,
+      "base": 996.7814,
+      "quote": 18.1771
+    },
+    "fdv": 18142117,
+    "marketCap": 18142117,
+    "pairCreatedAt": 1739558497000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "solidlycom",
+    "url": "https://dexscreener.com/base/0xaf984cefe990f70fbd4b127b0d09ae4d5c0ce222",
+    "pairAddress": "0xaf984Cefe990f70FBD4b127b0D09aE4D5C0ce222",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x4200000000000000000000000000000000000006",
+      "name": "Wrapped Ether",
+      "symbol": "WETH"
+    },
+    "priceNative": "0.000007880",
+    "priceUsd": "0.01841",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 1,
+        "sells": 2
+      }
+    },
+    "volume": {
+      "h24": 2.09,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h24": 1.28
+    },
+    "liquidity": {
+      "usd": 32.64,
+      "base": 953.09642,
+      "quote": 0.006458
+    },
+    "fdv": 18322313,
+    "marketCap": 18322313,
+    "pairCreatedAt": 1736422629000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x3251acbe35007de492aa16f8cb57c850a48f406ee0b2854c7b0e959f823f6ef9",
+    "pairAddress": "0x3251acbe35007de492aa16f8cb57c850a48f406ee0b2854c7b0e959f823f6ef9",
+    "labels": [
+      "v4"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x0b3e328455c4059EEb9e3f84b5543F74E24e7E1b",
+      "name": "Virtual Protocol",
+      "symbol": "VIRTUAL"
+    },
+    "priceNative": "0.02990",
+    "priceUsd": "0.01879",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 0,
+        "sells": 1
+      }
+    },
+    "volume": {
+      "h24": 0,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {},
+    "liquidity": {
+      "usd": 43.57,
+      "base": 1158.9247,
+      "quote": 34.6636
+    },
+    "fdv": 18700259,
+    "marketCap": 18700259,
+    "pairCreatedAt": 1739144555000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "baseswap",
+    "url": "https://dexscreener.com/base/0x90ebe10bbdf4aaf8ac846122a92c182d3d07a5cf",
+    "pairAddress": "0x90EbE10bBDF4AaF8Ac846122a92c182D3d07a5cF",
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x940181a94A35A4569E4529A3CDfB74e38FD98631",
+      "name": "Aerodrome",
+      "symbol": "AERO"
+    },
+    "priceNative": "0.05223",
+    "priceUsd": "0.03567",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 0,
+        "sells": 1
+      }
+    },
+    "volume": {
+      "h24": 0,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {},
+    "liquidity": {
+      "usd": 0,
+      "base": 0.000001339,
+      "quote": 6.995e-8
+    },
+    "fdv": 35496094,
+    "marketCap": 35496094,
+    "pairCreatedAt": 1740030063000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0x0e555c9c62a08fb21e93cb8f7b71ffa52aa5e5cb",
+    "pairAddress": "0x0e555c9c62A08Fb21E93CB8F7b71ffA52aa5E5cb",
+    "labels": [
+      "v2"
+    ],
+    "baseToken": {
+      "address": "0x1F015712aa2a48085eC93F87d643bB625b668B07",
+      "name": "indexy",
+      "symbol": "i"
+    },
+    "quoteToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "priceNative": "0.00003333",
+    "priceUsd": "0.0000006051",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 2,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 11,
+        "sells": 4
+      }
+    },
+    "volume": {
+      "h24": 29.67,
+      "h6": 4.88,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h6": 0.08,
+      "h24": -0.42
+    },
+    "liquidity": {
+      "usd": 2441.22,
+      "base": 2016960226,
+      "quote": 67230
+    },
+    "fdv": 60122,
+    "marketCap": 60122,
+    "pairCreatedAt": 1750900935000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/64086adb8584cec4665cac70b5ed68b69f5617d8c9c4503e9a578a666f6d1eaf?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/0bbd5cc0ec16b188bd15b73b77e7eb92223b1f8d76807024790472a1e0617e46?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x1f015712aa2a48085ec93f87d643bb625b668b07?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://indexy.xyz",
+          "label": "Website"
+        },
+        {
+          "url": "https://docs.indexy.xyz",
+          "label": "Docs"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/indexy_xyz",
+          "type": "twitter"
+        },
+        {
+          "url": "https://discord.gg/FZ8BgJYdsy",
+          "type": "discord"
+        }
+      ]
+    }
+  },
+  {
+    "chainId": "base",
+    "dexId": "aerodrome",
+    "url": "https://dexscreener.com/base/0xa39a6dcf59124cecc11865bcae8693187a669258",
+    "pairAddress": "0xa39a6dcF59124cecc11865BCaE8693187A669258",
+    "baseToken": {
+      "address": "0xB3B32F9f8827D4634fE7d973Fa1034Ec9fdDB3B3",
+      "name": "B3",
+      "symbol": "B3"
+    },
+    "quoteToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "priceNative": "0.03569",
+    "priceUsd": "0.0006608",
+    "txns": {
+      "m5": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h6": {
+        "buys": 0,
+        "sells": 0
+      },
+      "h24": {
+        "buys": 2,
+        "sells": 0
+      }
+    },
+    "volume": {
+      "h24": 0,
+      "h6": 0,
+      "h1": 0,
+      "m5": 0
+    },
+    "priceChange": {
+      "h24": -0.25
+    },
+    "liquidity": {
+      "usd": 0.49,
+      "base": 373.6016,
+      "quote": 13.3359
+    },
+    "fdv": 66083077,
+    "marketCap": 30683425,
+    "pairCreatedAt": 1743582343000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/890b36eb021c67aeba88b91c5675594cfbad65ec0e4f8aac726c79cd83b8d81d?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/f8df44f93a3a4f81f9e1d9822884539e5a40a60e2e209aba84d782eb595e6445?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0xb3b32f9f8827d4634fe7d973fa1034ec9fddb3b3?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://b3.fun",
+          "label": "Website"
+        },
+        {
+          "url": "https://docs.b3.fun",
+          "label": "Docs"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/b3dotfun",
+          "type": "twitter"
+        },
+        {
+          "url": "https://discord.com/invite/b3dotfun",
+          "type": "discord"
+        }
+      ]
+    }
+  }
+]

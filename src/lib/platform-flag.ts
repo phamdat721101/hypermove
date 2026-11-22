@@ -47,6 +47,17 @@ export function isMcpFlashloanEnabled(): boolean {
   return isMcpGatewayEnabled() && process.env.FEATURE_MCP_FLASHLOAN === 'true';
 }
 
+/** Finance mode (AI-FINANCE-UPGRADE-PRD): opt-in, read-only at stage r1. */
+export function isMcpFinanceEnabled(): boolean {
+  return isMcpGatewayEnabled() && process.env.FEATURE_MCP_FINANCE_V1 === 'true';
+}
+export function financeStage(): 'r1' | 'r2' {
+  return process.env.FINANCE_STAGE === 'r2' ? 'r2' : 'r1';
+}
+export function isFinanceRatesEnabled(): boolean {
+  return isMcpFinanceEnabled() && process.env.FINANCE_RATES_V1 !== 'false';
+}
+
 function subFlag(name: string): boolean {
   return isMcpGatewayEnabled() && process.env[name] !== 'false';
 }

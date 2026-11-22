@@ -1,0 +1,9 @@
+[package]
+name = "flashloan_research_fixture"
+edition = "2024.beta"
+
+[dependencies]
+Sui = { git = "https://github.com/MystenLabs/sui.git", subdir = "crates/sui-framework/packages/sui-framework", rev = "3b96ab72dd5db2fb800837d6067bf45839178b62" }
+
+[addresses]
+research_fixture = "0x0"

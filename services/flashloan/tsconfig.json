@@ -8,8 +8,26 @@
     "target": "ES2022",
     "outDir": "dist",
     "rootDir": "../..",
-    "plugins": []
+    "plugins": [],
+    "paths": {
+      "@/*": [
+        "../../src/*"
+      ],
+      "@mysten/sui/transactions": [
+        "../../node_modules/@mysten/sui/dist/transactions/index.d.mts"
+      ],
+      "@mysten/sui/grpc": [
+        "../../node_modules/@mysten/sui/dist/grpc/index.d.mts"
+      ]
+    }
   },
-  "include": ["server.ts"],
-  "exclude": ["dist", "target", "node_modules"]
+  "include": [
+    "server.ts",
+    "compute-thread.ts"
+  ],
+  "exclude": [
+    "dist",
+    "target",
+    "node_modules"
+  ]
 }

@@ -13,7 +13,9 @@
       "mode": "strict"
     },
     "monitor": {
-      "exporters": ["file"],
+      "exporters": [
+        "file"
+      ],
       "traceFile": ".nim/traces.jsonl",
       "tokenAccounting": true
     },
@@ -30,7 +32,16 @@
     "logCompact": {
       "maxLines": 40,
       "strategy": "errors-only",
-      "escalateOnEmpty": true
+      "escalateOnEmpty": true,
+      "artifactDir": ".nim/log-artifacts"
+    },
+    "knowledge": {
+      "root": ".nim-memory",
+      "projectId": "hypermove-app",
+      "captureEpisodes": true
+    },
+    "errorHandler": {
+      "retries": 0
     }
   },
   "workrule": {

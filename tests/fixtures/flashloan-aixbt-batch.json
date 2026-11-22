@@ -1,0 +1,86 @@
+[
+  {
+    "chainId": "base",
+    "dexId": "uniswap",
+    "url": "https://dexscreener.com/base/0xf1fdc83c3a336bdbdc9fb06e318b08eaddc82ff4",
+    "pairAddress": "0xf1Fdc83c3A336bdbDC9fB06e318B08EadDC82FF4",
+    "labels": [
+      "v3"
+    ],
+    "baseToken": {
+      "address": "0x4F9Fd6Be4a90f2620860d680c0d4d5Fb53d1A825",
+      "name": "aixbt by Virtuals",
+      "symbol": "AIXBT"
+    },
+    "quoteToken": {
+      "address": "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+      "name": "USD Coin",
+      "symbol": "USDC"
+    },
+    "priceNative": "0.01819",
+    "priceUsd": "0.01819",
+    "txns": {
+      "m5": {
+        "buys": 1,
+        "sells": 0
+      },
+      "h1": {
+        "buys": 10,
+        "sells": 7
+      },
+      "h6": {
+        "buys": 48,
+        "sells": 67
+      },
+      "h24": {
+        "buys": 175,
+        "sells": 212
+      }
+    },
+    "volume": {
+      "h24": 3036.62,
+      "h6": 875.61,
+      "h1": 129.95,
+      "m5": 11.79
+    },
+    "priceChange": {
+      "m5": 0.1,
+      "h1": 0.48,
+      "h6": -1.07,
+      "h24": -2.85
+    },
+    "liquidity": {
+      "usd": 272122.73,
+      "base": 13305714,
+      "quote": 29972
+    },
+    "fdv": 18105428,
+    "marketCap": 18105428,
+    "pairCreatedAt": 1732036823000,
+    "info": {
+      "imageUrl": "https://cdn.dexscreener.com/cms/images/4a055ebd1f663f2b8564b0f02790d2e7a707facd1b5f0199c41e4ce680772354?width=800&height=800&quality=95&format=auto",
+      "header": "https://cdn.dexscreener.com/cms/images/d922d14cb643bcea28f9c9995f0e8cc00b4cd573e017d0f2d006ff33cad20604?width=1500&height=500&quality=95&format=auto",
+      "openGraph": "https://cdn.dexscreener.com/token-images/og/base/0x4f9fd6be4a90f2620860d680c0d4d5fb53d1a825?timestamp=1792989300000",
+      "websites": [
+        {
+          "url": "https://aixbt.tech",
+          "label": "Website"
+        },
+        {
+          "url": "https://app.virtuals.io/virtuals/1199",
+          "label": "Virtuals"
+        }
+      ],
+      "socials": [
+        {
+          "url": "https://x.com/aixbt_agent",
+          "type": "twitter"
+        },
+        {
+          "url": "https://t.me/aixbt_tech",
+          "type": "telegram"
+        }
+      ]
+    }
+  }
+]

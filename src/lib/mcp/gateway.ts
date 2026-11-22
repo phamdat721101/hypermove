@@ -72,6 +72,11 @@ export async function callTool(input: {
     if (!parsed.success) return { error: { code: -32602, message: 'invalid tool arguments', data: { issues: parsed.error.issues.map(({ path, code }) => ({ path, code })) } } };
     args = parsed.data;
   }
+  if (tool.inputValidator) {
+    const checked = tool.inputValidator(args);
+    if (!checked.ok) return { error: { code: -32602, message: 'invalid tool arguments', data: { issues: checked.issues } } };
+    args = checked.value;
+  }
 
   const started = Date.now();
   let sessionId: string | undefined;

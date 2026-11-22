@@ -20,8 +20,9 @@ import { getSkillTools } from '../skills';
 import type { McpSession } from './auth';
 import type { OutputEnforceConfig } from '../harness/types';
 import type { z } from 'zod';
-import { isMcpFlashloanEnabled } from '../platform-flag';
+import { isMcpFlashloanEnabled, isMcpFinanceEnabled } from '../platform-flag';
 import { getFlashloanTools } from './flashloan/tools';
+import { getFinanceTools } from './flashloan/finance/tools';
 
 /** Per-call context injected by the gateway (never from client args). */
 export interface ToolContext {
@@ -38,6 +39,13 @@ export interface ToolDef {
   nativeInputSchema?: z.ZodObject;
   requiresAuthentication?: boolean;
   handler: (args: Record<string, unknown>, ctx?: ToolContext) => Promise<unknown>;
+  /**
+   * Opt-in pure validator run by the gateway after auth and before guardians/
+   * metering. Omitted on every legacy tool (their behavior is unchanged).
+   */
+  inputValidator?: (raw: Record<string, unknown>) => { ok: true; value: Record<string, unknown> } | { ok: false; issues: unknown[] };
+  /** Optional deterministic, non-authoritative text rendering added after the JSON content block. */
+  summarize?: (result: unknown) => string;
   /** Skip free-tier metering (e.g. payments.* — metering them would deadlock). */
   unmetered?: boolean;
   /** Require payment before dispatch; bypasses the ordinary free-call allowance. */
@@ -498,7 +506,7 @@ const xrplLendingStatusTool: ToolDef = {
 
 const xrplYieldCompareTool: ToolDef = {
   name: 'xrpl.yield.compare',
-  description: 'Compare live XRP/RLUSD yield venues (Soil, Flare-Monarq, Doppler) by rate, lock-up, model, and bridge requirement. Source-labeled, not investment advice.',
+  description: 'Compare curated, dated XRP/RLUSD yield venues (Soil, Flare-Monarq, Doppler) by rate, lock-up, model, and bridge requirement. Source-labeled, not investment advice.',
   tier: 't2_realtime',
   inputSchema: {
     type: 'object',
@@ -1087,6 +1095,7 @@ export function getTools(): ToolDef[] {
     xrplToolkitListTool, // N3 — canonical toolkit directory, always available (pure reference data)
   ];
   if (isMcpFlashloanEnabled()) tools.push(...getFlashloanTools());
+  if (isMcpFinanceEnabled()) tools.push(...getFinanceTools());
   if (isMcpNewsEnabled()) tools.push(newsSearchTool, newsDigestTool, newsInsightTool);
   if (isMcpAgenticEnabled()) tools.push(roadmapTool, ideasTool, skillifyTool);
   if (isMcpSkillsEnabled()) tools.push(...getSkillTools());

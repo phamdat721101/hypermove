@@ -17,6 +17,11 @@ jspm_packages/
 /docs/features/*
 !/docs/features/flashloan-research.md
 !/docs/features/flashloan-research-map.md
+!/docs/features/flashloan-public-stateless.md
+!/docs/features/flashloan-public-stateless-map.md
+!/docs/features/flashloan-pool-coverage.md
+!/docs/features/flashloan-pool-coverage-map.md
+!/docs/features/flashloan-mcp-v7.md
 !/docs/prd/
 /docs/prd/*
 !/docs/prd/flashloan-research-implementation.md
@@ -147,3 +152,8 @@ node_repl_history
 # Host-specific deployment evidence/configuration stays local.
 services/flashloan/certs/
 services/flashloan/deployment-*.json
+
+# Test-only Sui Move build artifacts
+/services/flashloan/sui/build/
+/services/flashloan/sui/.trace
+services/flashloan/sui/build/

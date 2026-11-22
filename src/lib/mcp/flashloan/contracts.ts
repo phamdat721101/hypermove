@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { suiOperations } from './sui-contracts';
+import { evmNetwork, discoveryNetwork, address, coinType, bytes32, CHAINS } from './networks';
+export { evmNetwork, address, CHAINS } from './networks';
 
-export const VERSION = 'flashloan-research/1';
-export const evmNetwork = z.enum(['ethereum', 'arbitrum', 'base']);
-export const network = z.enum(['ethereum', 'arbitrum', 'base', 'xrpl']);
-export const address = z.string().regex(/^0x[0-9a-fA-F]{40}$/).transform((s) => s.toLowerCase());
+export const VERSION = 'flashloan-research/2';
+export const network = z.enum(['ethereum', 'arbitrum', 'base', 'robinhood', 'sui', 'xrpl']);
 export const uint = z.string().regex(/^(0|[1-9][0-9]{0,77})$/).refine((value) => /^(0|[1-9][0-9]{0,77})$/.test(value) && BigInt(value) < 1n << 256n, 'Amount exceeds uint256.');
 export const hex = z.string().regex(/^0x(?:[0-9a-fA-F]{2})*$/);
 export const digest = z.string().regex(/^[a-f0-9]{64}$/);
@@ -13,7 +14,8 @@ export const xrplAsset = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('xrp') }).strict(),
   z.object({ kind: z.literal('issued'), currency: z.string().regex(/^(?!XRP$)(?:[\x21-\x7E]{3}|[A-Fa-f0-9]{40})$/), issuer: xrplAccount }).strict(),
 ]);
-export const poolRef = z.object({ address, adapter: z.enum(['UNISWAP_V2', 'UNISWAP_V3', 'ALGEBRA', 'AERODROME_VOLATILE', 'AERODROME_STABLE', 'AERODROME_CLMM']), word_range: z.number().int().min(0).max(16).default(3) }).strict();
+export const v4KeySchema = z.object({ currency0: address, currency1: address, fee: z.number().int().min(0).max(999999), tickSpacing: z.number().int().positive().max(32767), hooks: address }).strict();
+export const poolRef = z.object({ address: z.union([address, bytes32]), pool_key: v4KeySchema.optional(), manager: address.optional(), adapter: z.enum(['UNISWAP_V2', 'UNISWAP_V3', 'UNISWAP_V4', 'ALGEBRA', 'AERODROME_VOLATILE', 'AERODROME_STABLE', 'AERODROME_CLMM']), word_range: z.number().int().min(0).max(16).default(3) }).strict();
 export const riskPolicy = z.object({
   max_principal: uint, min_profit: uint.default('0'), max_price_impact_bps: z.number().int().min(1).max(5000).default(100),
   max_routes: z.number().int().min(1).max(5).default(5), max_evaluations: z.number().int().min(1).max(10000).default(1000),
@@ -21,8 +23,14 @@ export const riskPolicy = z.object({
   min_deployment_bps: z.number().int().min(0).max(10000).default(0),
 }).strict();
 const start = { idempotency_key: z.string().min(1).max(128) };
+export const discoveryRequestSchema = z.object({ ...start, network: discoveryNetwork, tokens: z.array(z.string().min(1).max(1024)).min(1).max(300), native_cursors: z.partialRecord(z.enum(['CETUS_CLMM', 'DEEPBOOK_V3']), z.string().max(4096)).default({}), native_page_size: z.number().int().min(1).max(100).default(50), native_max_pages: z.number().int().min(1).max(5).default(2), min_liquidity_usd: z.number().finite().min(0).default(15000), exclude_tokens: z.array(z.string().min(1).max(1024)).max(300).default([]) }).strict();
+export const validateDiscoveryTokens = (input: { network: string; tokens: string[]; exclude_tokens: string[] }, ctx: z.RefinementCtx) => {
+    const schema = input.network === 'sui' ? coinType : address;
+    for (const key of ['tokens', 'exclude_tokens'] as const) input[key].forEach((token, i) => { if (!schema.safeParse(token).success) ctx.addIssue({ code: 'custom', path: [key, i], message: 'Invalid token identifier for network.' }); });
+  };
 export const operationSchemas = {
-  flashloan_discover_arbitrage_pools: z.object({ ...start, network: evmNetwork, tokens: z.array(address).min(1).max(300), min_liquidity_usd: z.number().finite().min(0).default(15000), exclude_tokens: z.array(address).max(300).default([]) }).strict(),
+  ...suiOperations,
+  flashloan_discover_arbitrage_pools: discoveryRequestSchema.superRefine(validateDiscoveryTokens),
   flashloan_ingest_l2_tickmap_and_reserves: z.object({ ...start, network: evmNetwork, pools: z.array(poolRef).min(1).max(20), lender: z.object({ provider: z.enum(['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH']), address, asset: address }).strict() }).strict(),
   flashloan_solve_dynamic_route_split: z.object({ ...start, snapshot_id: digest, borrow_asset: address, policy: riskPolicy }).strict(),
   flashloan_simulate_atomic_revm: z.object({ ...start, plan_id: digest, caller: address, executor_mode: z.enum(['existing', 'fixture']), executor: address }).strict(),
@@ -53,7 +61,6 @@ export function errorResult(error: unknown): { code: string; message: string; re
   return error instanceof ResearchError ? { code: error.code, message: error.message, retryable: error.retryable }
     : { code: 'RESEARCH_FAILED', message: 'Research failed; inspect the worker trace using the job ID.', retryable: false };
 }
-export const CHAINS = { ethereum: 1, arbitrum: 42161, base: 8453 } as const;
 /** Secret-free delivery boundary markers; never log raw RPC URLs or payloads. */
 export function boundaryEvent(edge: 'EDGE-01' | 'EDGE-02' | 'EDGE-03' | 'EDGE-04' | 'EDGE-05', code: string): void {
   console.warn(JSON.stringify({ event: 'flashloan.' + edge, code }));

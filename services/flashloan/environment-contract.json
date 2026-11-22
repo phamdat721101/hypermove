@@ -1,9 +1,57 @@
 {
-  "secrets": [{ "key": "FLASHLOAN_WORKER_TOKEN", "required": true }, { "key": "DATABASE_URL", "required": true }],
-  "tls": [{ "target": "market-rpc", "ssl": true, "verification": "hostname" }],
+  "secrets": [
+    {
+      "key": "FLASHLOAN_WORKER_TOKEN",
+      "required": true
+    },
+    {
+      "key": "DATABASE_URL",
+      "required": true
+    },
+    {
+      "key": "FLASHLOAN_PUBLIC_ARTIFACT_KEY",
+      "required": false
+    }
+  ],
+  "tls": [
+    {
+      "target": "market-rpc",
+      "ssl": true,
+      "verification": "hostname"
+    }
+  ],
   "collateral": [
-    { "dependency": "PostgreSQL", "behavior": "Creates flashloan_jobs and flashloan_artifacts; never signs or submits transactions." },
-    { "dependency": "nim-skill", "behavior": "Writes owner-scoped knowledge and harness evidence only for explicitly enabled research jobs." },
-    { "dependency": "RPC", "behavior": "Read calls and unsigned dry-runs only." }
+    {
+      "dependency": "DexScreener public API",
+      "behavior": "Public-only mover discovery reads bounded official HTTPS feeds/search/token batches; no API key, SQL, knowledge or filesystem writes; shares provider limits with inventory and discloses partial non-exhaustive coverage."
+    },
+    {
+      "dependency": "PostgreSQL",
+      "behavior": "Creates flashloan_jobs and flashloan_artifacts; never signs or submits transactions."
+    },
+    {
+      "dependency": "nim-skill",
+      "behavior": "Writes owner-scoped knowledge and harness evidence only for explicitly enabled research jobs."
+    },
+    {
+      "dependency": "RPC",
+      "behavior": "Read calls and unsigned dry-runs only."
+    },
+    {
+      "dependency": "Public stateless adapter",
+      "behavior": "No identity lookup or repository/knowledge writes. Separate integrity key is required only when its feature flag is enabled; ephemeral admission counters are bounded."
+    },
+    {
+      "dependency": "@mysten/sui",
+      "behavior": "Loads only for configured native Sui research on Node 22.12+; GraphQL/gRPC reads and unsigned simulation only. No signers or transaction submission."
+    },
+    {
+      "dependency": "Optional MCP v7 resolution/composition",
+      "behavior": "Flags default off. Server-owned initialization locators only select canonical RPC reads; bounded cache stores no caller identity. Shared deadline and counters cover retries. New schema/code fingerprints rotate proofs; positive local-client compatibility remains a release gate."
+    },
+    {
+      "dependency": "Optional MCP v8 discovery",
+      "behavior": "Default-off inventory v3, movers v2, watchlist and discovery registry. FLASHLOAN_DISCOVERY_REGISTRY contains public reviewed metadata only; per-network RPC keys remain existing bindings. Verified TLS, bounded read-only providers/RPC, shared 25s deadline and exact MCP wire cap; no signing, SQL, knowledge or filesystem writes in public calls. Native Anvil proof uses local fixture state only; optional pinned fork is separate evidence."
+    }
   ]
 }

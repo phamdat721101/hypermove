@@ -29,3 +29,51 @@ describe('canonical contracts and XRPL amounts', () => {
   it('quotes funded book depth and refuses uncovered amounts', () => { const edge = { id: 'book', kind: 'book' as const, from: 'A', to: 'B', offers: [{ input: '2', output: '3' }], restrictions: [] }; expect(quoteXrpl(edge, '1')).toBe('1.5'); expect(() => quoteXrpl(edge, '3')).toThrow('depth'); });
   it('enumerates closed native cycles without reusing the same physical venue', () => { const result = xrplCycles({ network: 'xrpl', ledger_hash: 'ledger', ledger_index: 1, funding: { mode: 'hypothetical', balances: [] }, balances: { A: '10' }, edges: [{ id: 'ab', venue: 'one', kind: 'book', from: 'A', to: 'B', offers: [{ input: '10', output: '20' }], restrictions: [] }, { id: 'ba', venue: 'two', kind: 'book', from: 'B', to: 'A', offers: [{ input: '20', output: '12' }], restrictions: [] }], warnings: [], estimate_only: true }); expect(result.routes).toHaveLength(1); expect(result.routes[0].estimated_profit).toBe('0.2'); expect(result.routes[0].status).toBe('ESTIMATE_ONLY'); });
 });
+
+
+describe('candidate allocation search', () => {
+  it('preserves legacy results and bounds target search including failed quotes', () => {
+    const pools = [v2('3'), v2('4', '1000000', '1000000')];
+    const lender = { capacity: '10000', fee_numerator: '9', fee_denominator: '10000', address: '0x' + '9'.repeat(40) };
+    const policy = riskPolicy.parse({ max_principal: '10000', network_cost: '0', max_price_impact_bps: 5000, max_evaluations: 4 });
+    const legacy = solve(pools, A, lender, policy);
+    expect(legacy).not.toHaveProperty('route_catalog');
+    const result = solve(pools, A, lender, policy, { targets: [B], deadline_ms: 1000 });
+    expect(result.evaluations).toBeLessThanOrEqual(4);
+    expect(result.evaluated_route_ids!.length).toBeGreaterThan(0);
+    expect(result.route_catalog!.every((r) => r.hops.some((h) => h.token_in === B || h.token_out === B))).toBe(true);
+    expect(result.search.global_optimum_proven).toBe(false);
+    if (result.solution) expect(result.solution.allocations.reduce((n, a) => n + BigInt(a.amount), BigInt(result.solution.unused))).toBe(BigInt(result.solution.principal));
+  });
+});
+
+it('finds unequal allocation that beats equal and singles against an independent V2 oracle', () => {
+  const C = '0x' + '5'.repeat(40);
+  const pools = [v2('3', '100000', '200000'), v2('4', '100000', '100000'), { ...v2('6', '300000', '600000'), token1: C }, { ...v2('7', '300000', '300000'), token1: C }];
+  const lender = { capacity: '10000', fee_numerator: '0', fee_denominator: '10000', address: '0x' + '9'.repeat(40) };
+  const policy = riskPolicy.parse({ max_principal: '10000', network_cost: '0', max_price_impact_bps: 5000, max_evaluations: 10000, max_routes: 2 });
+  const result = solve(pools, A, lender, policy, { targets: [B, C], deadline_ms: 5000 });
+  const swap = (amount: bigint, rin: bigint, rout: bigint) => amount * 997000n * rout / (rin * 1000000n + amount * 997000n);
+  const cycle = (amount: bigint, scale: bigint) => swap(swap(amount, 100000n * scale, 200000n * scale), 100000n * scale, 100000n * scale);
+  const oracle = (a: bigint) => cycle(a, 1n) + cycle(10000n - a, 3n) - 10000n;
+  expect(oracle(2500n)).toBeGreaterThan(oracle(5000n));
+  expect(oracle(2500n)).toBeGreaterThan(oracle(0n));
+  expect(oracle(2500n)).toBeGreaterThan(oracle(10000n));
+  expect(BigInt(result.solution!.expected_profit)).toBe(oracle(2500n));
+  expect(result.solution!.allocations.map((a) => a.amount).sort()).toEqual(['2500', '7500']);
+  console.log(JSON.stringify({ event: 'flashloan.candidate_research.edge', edge: 'EDGE-02', passed: true }));
+});
+
+
+it('applies shared-pool branch state in order against independently calculated outputs', () => {
+  const pools = [v2('3', '100000', '200000'), v2('4', '100000', '170000'), v2('5', '300000', '300000')];
+  const route = (sell: string) => ({ id: sell, hops: [{ pool: pools[0].address, token_in: A, token_out: B }, { pool: '0x' + sell.repeat(40), token_in: B, token_out: A }] });
+  const initial = new Map(pools.map((p) => [p.address, p]));
+  const first = quoteRoute(route('4'), initial, 2500n, 5000);
+  const second = quoteRoute(route('5'), first.state, 7500n, 5000);
+  const reverseFirst = quoteRoute(route('5'), initial, 7500n, 5000);
+  const reverseSecond = quoteRoute(route('4'), reverseFirst.state, 2500n, 5000);
+  expect(first.output + second.output).toBe(15440n);
+  expect(reverseFirst.output + reverseSecond.output).toBe(15671n);
+  expect(pools[0].kind === 'v2' && pools[0].reserve0).toBe('100000');
+});

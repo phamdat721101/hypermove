@@ -1,0 +1,964 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:openx:finance-rates:1",
+  "$defs": {
+    "Network": {
+      "enum": [
+        "arbitrum",
+        "base",
+        "flare",
+        "xrpl"
+      ]
+    },
+    "Digest": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 64,
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "Uint": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 78,
+      "pattern": "^(0|[1-9][0-9]{0,77})$"
+    },
+    "Decimal": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^-?(0|[1-9][0-9]*)(\\.[0-9]+)?$"
+    },
+    "Timestamp": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}\\.[0-9]{3}Z$"
+    },
+    "EvmAddress": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 42,
+      "pattern": "^0x[a-fA-F0-9]{40}$"
+    },
+    "XrplAddress": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 35,
+      "pattern": "^r[1-9A-HJ-NP-Za-km-z]{24,34}$"
+    },
+    "Quantity": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "atomic"
+            },
+            "value": {
+              "$ref": "#/$defs/Uint"
+            }
+          },
+          "required": [
+            "kind",
+            "value"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "issued-decimal"
+            },
+            "coefficient": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 17,
+              "pattern": "^-?(0|[1-9][0-9]{0,15})$"
+            },
+            "exponent": {
+              "type": "integer",
+              "minimum": -96,
+              "maximum": 80
+            }
+          },
+          "required": [
+            "kind",
+            "coefficient",
+            "exponent"
+          ]
+        }
+      ]
+    },
+    "Amount": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "asset": {
+          "$ref": "#/$defs/Asset"
+        },
+        "quantity": {
+          "$ref": "#/$defs/Quantity"
+        }
+      },
+      "required": [
+        "asset",
+        "quantity"
+      ]
+    },
+    "EvidenceRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/Digest"
+        },
+        "contentHash": {
+          "$ref": "#/$defs/Digest"
+        },
+        "expiresAt": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Timestamp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "id",
+        "contentHash",
+        "expiresAt"
+      ]
+    },
+    "Observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "network": {
+          "$ref": "#/$defs/Network"
+        },
+        "networkIdentityHash": {
+          "$ref": "#/$defs/Digest"
+        },
+        "point": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "evm-block"
+                },
+                "number": {
+                  "$ref": "#/$defs/Uint"
+                },
+                "hash": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 66,
+                  "pattern": "^0x[a-fA-F0-9]{64}$"
+                },
+                "finality": {
+                  "enum": [
+                    "included",
+                    "safe",
+                    "finalized"
+                  ]
+                }
+              },
+              "required": [
+                "kind",
+                "number",
+                "hash",
+                "finality"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "kind": {
+                  "const": "xrpl-ledger"
+                },
+                "index": {
+                  "$ref": "#/$defs/Uint"
+                },
+                "hash": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 64,
+                  "pattern": "^[A-Fa-f0-9]{64}$"
+                },
+                "validated": {
+                  "const": true
+                }
+              },
+              "required": [
+                "kind",
+                "index",
+                "hash",
+                "validated"
+              ]
+            }
+          ]
+        },
+        "observedAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "expiresAt": {
+          "$ref": "#/$defs/Timestamp"
+        },
+        "consistency": {
+          "enum": [
+            "pinned",
+            "best-effort"
+          ]
+        },
+        "fidelity": {
+          "enum": [
+            "fixture",
+            "chain-read",
+            "native-simulation"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/EvidenceRef"
+          },
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "network",
+        "networkIdentityHash",
+        "point",
+        "observedAt",
+        "expiresAt",
+        "consistency",
+        "fidelity",
+        "sources"
+      ]
+    },
+    "Coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "complete": {
+          "type": "boolean"
+        },
+        "missing": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "capability": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              },
+              "reasonCode": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 256
+              }
+            },
+            "required": [
+              "capability",
+              "reasonCode"
+            ]
+          },
+          "maxItems": 100
+        },
+        "cursor": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "complete",
+        "missing",
+        "cursor"
+      ]
+    },
+    "Error": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "recovery": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1200
+        }
+      },
+      "required": [
+        "code",
+        "retryable",
+        "recovery"
+      ]
+    },
+    "Asset": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "evm-native"
+            },
+            "network": {
+              "enum": [
+                "arbitrum",
+                "base",
+                "flare"
+              ]
+            },
+            "decimals": {
+              "const": 18
+            }
+          },
+          "required": [
+            "kind",
+            "network",
+            "decimals"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "erc20"
+            },
+            "network": {
+              "enum": [
+                "arbitrum",
+                "base",
+                "flare"
+              ]
+            },
+            "address": {
+              "$ref": "#/$defs/EvmAddress"
+            },
+            "decimals": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 36
+            }
+          },
+          "required": [
+            "kind",
+            "network",
+            "address",
+            "decimals"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "xrp"
+            },
+            "network": {
+              "const": "xrpl"
+            },
+            "decimals": {
+              "const": 6
+            }
+          },
+          "required": [
+            "kind",
+            "network",
+            "decimals"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "xrpl-issued"
+            },
+            "network": {
+              "const": "xrpl"
+            },
+            "currency": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 40,
+              "pattern": "^(?!XRP$)([!-~]{3}|[A-Fa-f0-9]{40})$"
+            },
+            "issuer": {
+              "$ref": "#/$defs/XrplAddress"
+            }
+          },
+          "required": [
+            "kind",
+            "network",
+            "currency",
+            "issuer"
+          ]
+        }
+      ]
+    },
+    "Point": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "evm-block"
+            },
+            "number": {
+              "$ref": "#/$defs/Uint"
+            },
+            "hash": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 66,
+              "pattern": "^0x[a-fA-F0-9]{64}$"
+            },
+            "finality": {
+              "enum": [
+                "included",
+                "safe",
+                "finalized"
+              ]
+            }
+          },
+          "required": [
+            "kind",
+            "number",
+            "hash",
+            "finality"
+          ]
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "kind": {
+              "const": "xrpl-ledger"
+            },
+            "index": {
+              "$ref": "#/$defs/Uint"
+            },
+            "hash": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 64,
+              "pattern": "^[A-Fa-f0-9]{64}$"
+            },
+            "validated": {
+              "const": true
+            }
+          },
+          "required": [
+            "kind",
+            "index",
+            "hash",
+            "validated"
+          ]
+        }
+      ]
+    },
+    "DocumentedSource": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "fidelity": {
+          "const": "documented"
+        },
+        "sourceUrl": {
+          "type": "string",
+          "format": "uri",
+          "maxLength": 512
+        },
+        "sourceDate": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 10,
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+        },
+        "observedAt": {
+          "$ref": "#/$defs/Timestamp"
+        }
+      },
+      "required": [
+        "fidelity",
+        "sourceUrl",
+        "sourceDate",
+        "observedAt"
+      ]
+    },
+    "MarketRate": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "marketId": {
+          "$ref": "#/$defs/Digest"
+        },
+        "network": {
+          "$ref": "#/$defs/Network"
+        },
+        "venue": {
+          "enum": [
+            "aave-v3",
+            "morpho-blue",
+            "kinetic",
+            "erc4626-vault",
+            "yield-token",
+            "xrpl-vault",
+            "xrpl-loanbroker",
+            "documented"
+          ]
+        },
+        "venueName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "venueRef": {
+          "oneOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "address": {
+                  "$ref": "#/$defs/EvmAddress"
+                }
+              },
+              "required": [
+                "address"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "marketKey": {
+                  "$ref": "#/$defs/Digest"
+                },
+                "address": {
+                  "$ref": "#/$defs/EvmAddress"
+                }
+              },
+              "required": [
+                "marketKey",
+                "address"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "ledgerObjectId": {
+                  "type": "string",
+                  "minLength": 64,
+                  "maxLength": 64,
+                  "pattern": "^[A-F0-9]{64}$"
+                }
+              },
+              "required": [
+                "ledgerObjectId"
+              ]
+            },
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "format": "uri",
+                  "maxLength": 512
+                }
+              },
+              "required": [
+                "url"
+              ]
+            }
+          ]
+        },
+        "asset": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Asset"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "assetLabel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 40
+        },
+        "requiresBridge": {
+          "type": "boolean"
+        },
+        "rateKind": {
+          "enum": [
+            "posted-variable",
+            "observed-loan-range",
+            "realized-trailing",
+            "documented-headline"
+          ]
+        },
+        "supplyApr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "borrowApr": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "supplyApy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "borrowApy": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "range": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "min": {
+                  "$ref": "#/$defs/Decimal"
+                },
+                "median": {
+                  "$ref": "#/$defs/Decimal"
+                },
+                "max": {
+                  "$ref": "#/$defs/Decimal"
+                },
+                "sampleSize": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                }
+              },
+              "required": [
+                "min",
+                "median",
+                "max",
+                "sampleSize"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "window": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fromPoint": {
+                  "$ref": "#/$defs/Point"
+                },
+                "toPoint": {
+                  "$ref": "#/$defs/Point"
+                },
+                "seconds": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 31536000
+                }
+              },
+              "required": [
+                "fromPoint",
+                "toPoint",
+                "seconds"
+              ]
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "utilization": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Decimal"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "totalSupplied": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Amount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "totalBorrowed": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Amount"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "observation": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/Observation"
+            },
+            {
+              "$ref": "#/$defs/DocumentedSource"
+            }
+          ]
+        },
+        "caveats": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 300
+          },
+          "maxItems": 10
+        }
+      },
+      "required": [
+        "marketId",
+        "network",
+        "venue",
+        "venueName",
+        "venueRef",
+        "asset",
+        "assetLabel",
+        "requiresBridge",
+        "rateKind",
+        "supplyApr",
+        "borrowApr",
+        "supplyApy",
+        "borrowApy",
+        "range",
+        "window",
+        "utilization",
+        "totalSupplied",
+        "totalBorrowed",
+        "observation",
+        "caveats"
+      ]
+    },
+    "RatesRequest": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "finance.rates.request/1"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$"
+        },
+        "ratesContractDigest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "networks": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Network"
+          },
+          "minItems": 1,
+          "maxItems": 4,
+          "uniqueItems": true
+        },
+        "assets": {
+          "anyOf": [
+            {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 20,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "symbol": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 12,
+                    "pattern": "^[A-Z0-9.]{1,12}$"
+                  }
+                },
+                "required": [
+                  "symbol"
+                ]
+              }
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "side": {
+          "enum": [
+            "supply",
+            "borrow",
+            "both"
+          ]
+        },
+        "includeDocumented": {
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "requestId",
+        "ratesContractDigest",
+        "networks",
+        "assets",
+        "side",
+        "includeDocumented"
+      ]
+    },
+    "RatesResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "schemaVersion": {
+          "const": "finance.rates.response/1"
+        },
+        "ratesContractDigest": {
+          "$ref": "#/$defs/Digest"
+        },
+        "requestId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "execution": {
+          "const": false
+        },
+        "status": {
+          "enum": [
+            "success",
+            "partial",
+            "error"
+          ]
+        },
+        "kind": {
+          "const": "lending-rates"
+        },
+        "data": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "markets": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/MarketRate"
+              },
+              "maxItems": 200
+            }
+          },
+          "required": [
+            "markets"
+          ]
+        },
+        "coverage": {
+          "$ref": "#/$defs/Coverage"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1200
+          },
+          "maxItems": 20
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Error"
+          },
+          "maxItems": 20
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "ratesContractDigest",
+        "requestId",
+        "execution",
+        "status",
+        "kind",
+        "data",
+        "coverage",
+        "warnings",
+        "errors"
+      ]
+    }
+  },
+  "oneOf": [
+    {
+      "$ref": "#/$defs/RatesRequest"
+    },
+    {
+      "$ref": "#/$defs/RatesResponse"
+    }
+  ]
+}

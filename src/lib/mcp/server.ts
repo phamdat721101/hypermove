@@ -120,7 +120,7 @@ export function registerTool(server: Parameters<Parameters<typeof createMcpHandl
     const result = outcome.result;
     const structured = result && typeof result === 'object' && !Array.isArray(result) ? (result as Record<string, unknown>) : undefined;
     return {
-      content: [{ type: 'text' as const, text: JSON.stringify(result) }],
+      content: [{ type: 'text' as const, text: JSON.stringify(result) }, ...(tool.summarize ? [{ type: 'text' as const, text: tool.summarize(result) }] : [])],
       ...(structured ? { structuredContent: structured } : {}),
     };
   };

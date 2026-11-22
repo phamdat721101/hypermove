@@ -31,7 +31,7 @@ cd "$ROOT_DIR"
 VPS_HOST="${VPS_HOST:-13.212.193.69}"
 VPS_USER="${VPS_USER:-ubuntu}"
 VPS_SSH_KEY="${VPS_SSH_KEY:-}"
-APP_REMOTE_DIR="${APP_REMOTE_DIR:-/home/ubuntu/hypermove-flashloan-release}"
+APP_REMOTE_DIR="${APP_REMOTE_DIR:-/home/ubuntu/hypermove-public-release}"
 LLM_REMOTE_DIR="${LLM_REMOTE_DIR:-/home/ubuntu/llm-service}"
 PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-https://mcp.overguild.com}"
 
@@ -83,6 +83,7 @@ if [[ "$DEPLOY_APP" == "1" ]]; then
   # only pushes + rebuilds. Add/remove paths here as files change per PRD.
   rsync_to \
     src \
+    scripts/start-standalone.sh \
     package.json \
     pnpm-lock.yaml \
     pnpm-workspace.yaml \
@@ -111,7 +112,7 @@ fi
 if [[ "$DEPLOY_FLASHLOAN" == "1" ]]; then
   # Research remains opt-in. Build on the target OS/architecture; never copy a local binary.
   rsync_to src package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc patches
-  rsync_to services/flashloan/server.ts services/flashloan/tsconfig.json services/flashloan/start.sh services/flashloan/Cargo.toml services/flashloan/Cargo.lock services/flashloan/native services/flashloan/contracts services/flashloan/foundry.toml services/flashloan/environment-contract.json
+  rsync_to services/flashloan/server.ts services/flashloan/compute-thread.ts services/flashloan/tsconfig.json services/flashloan/start.sh services/flashloan/Cargo.toml services/flashloan/Cargo.lock services/flashloan/native services/flashloan/contracts services/flashloan/foundry.toml services/flashloan/environment-contract.json
   ssh_cmd "export PATH=\"\$HOME/.cargo/bin:\$HOME/.foundry/bin:\$PATH\"; cd '$APP_REMOTE_DIR' && command -v cargo && command -v forge && pnpm install --frozen-lockfile && pnpm flashloan:build"
   # Existing service .env must be provisioned separately; never transfer local credentials.
   ssh_cmd "cd '$APP_REMOTE_DIR' && test -f services/flashloan/.env && (pm2 describe flashloan-worker >/dev/null 2>&1 && pm2 restart flashloan-worker || pm2 start services/flashloan/start.sh --interpreter bash --name flashloan-worker)"

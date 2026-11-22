@@ -42,8 +42,8 @@ describe.skipIf(!live)('live read-only research capabilities (not full adapter p
       for (const pool of snapshot.pools) expect(quotePool(pool, fixtures.weth, 1000n).amount_out).toBeGreaterThanOrEqual(0n);
       const result = solve(snapshot.pools, fixtures.weth, snapshot.lender, riskPolicy.parse({ max_principal: '1000000000000000', network_cost: '0', max_evaluations: 64 }));
       expect(result.evaluations).toBeGreaterThan(0);
-      const discovery = await new DexScreener().discover({ idempotency_key: 'live-discovery', network, tokens: [fixtures.weth], min_liquidity_usd: 15000, exclude_tokens: [] }); expect(discovery.candidates.length + discovery.rejected.length).toBe(1);
-      console.log(JSON.stringify({ event: 'flashloan.live_market_pipeline', network, block_hash: snapshot.block.hash, pools, initialized_ticks: snapshot.pools.map((p) => p.kind === 'clmm' ? p.ticks.length : 0), lender_fee_numerator: snapshot.lender.fee_numerator, outcome: result.status, discovery_candidates: discovery.candidates.length, discovery_warnings: discovery.warnings, discovery_rejected: discovery.rejected, live_trade: false }));
+      const discovery = await new DexScreener().discover({ idempotency_key: 'live-discovery', network, tokens: [fixtures.weth], min_liquidity_usd: 15000, exclude_tokens: [] }); expect(discovery.token_results).toHaveLength(1);
+      console.log(JSON.stringify({ event: 'flashloan.live_market_pipeline', network, block_hash: snapshot.block.hash, pools, initialized_ticks: snapshot.pools.map((p) => p.kind === 'clmm' ? p.ticks.length : 0), lender_fee_numerator: snapshot.lender.fee_numerator, outcome: result.status, discovery_candidates: discovery.pools.length, discovery_warnings: discovery.warnings, discovery_coverage: discovery.coverage, live_trade: false }));
     }, 90000);
   }
   it('xrpl: validated ledger and native unsigned simulation capability', async () => {

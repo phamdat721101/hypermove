@@ -4,7 +4,10 @@ import { operationSchemas, type Operation } from './contracts';
 import { researchRequest } from './client';
 
 const descriptions: Record<Operation, string> = {
-  flashloan_discover_arbitrage_pools: 'Discover EVM multi-pool candidates using the official DexScreener API. Returns an owned asynchronous research job.',
+  sui_ingest_pool_state: 'Read reviewed shared Move pools at one checkpoint. Native research requires verified deployment evidence.',
+  sui_solve_arbitrage_routes: 'Search closed Sui routes with bounded native borrow/swap/repay PTB simulation. No signatures or broadcasts.',
+  sui_simulate_ptb: 'Recheck object versions and dry-run an unsigned PTB with native checks enabled; reports mocked gas explicitly.',
+  flashloan_discover_arbitrage_pools: 'List EVM or Sui pools with independent eligibility, capability and provider coverage labels. Returns an owned asynchronous research job.',
   flashloan_ingest_l2_tickmap_and_reserves: 'Read block-pinned pool reserves, initialized ticks and lender state. Unsupported or incomplete state is explicit.',
   flashloan_solve_dynamic_route_split: 'Evaluate closed routes and risk-bounded integer allocations against an owned immutable snapshot.',
   flashloan_simulate_atomic_revm: 'Dry-run a compiled flashloan plan. Returns fidelity, repayment evidence and injected assumptions; never signs or broadcasts.',

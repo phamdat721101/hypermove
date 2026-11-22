@@ -1,7 +1,8 @@
 import type { NextRequest } from 'next/server';
 import { wrapAgentEndpoint, wrapMcpTool, McpToolDenied } from '@/lib/observability';
 import { defaultSentinel } from '@/lib/sentinel';
-import { isMcpGatewayEnabled } from '@/lib/platform-flag';
+import { isMcpGatewayEnabled, isMcpFinanceEnabled } from '@/lib/platform-flag';
+import { guardFinanceBody } from '@/lib/mcp/flashloan/finance/tools';
 import { mcpHttpHandler } from '@/lib/mcp/server';
 import { guard } from '@/lib/security';
 
@@ -139,6 +140,10 @@ export async function POST(req: NextRequest): Promise<Response> {
       { jsonrpc: '2.0', id: null, error: { code: -32000, message: g.reason ?? 'request_denied' } },
       { status: g.status ?? 403 },
     );
+  }
+  if (isMcpGatewayEnabled() && isMcpFinanceEnabled()) {
+    const checked = await guardFinanceBody(req);
+    return checked instanceof Response ? checked : mcpHttpHandler()(checked);
   }
   if (isMcpGatewayEnabled()) return mcpHttpHandler()(req);
   return legacyPost(req);

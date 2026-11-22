@@ -1,0 +1,189 @@
+{
+  "source": "2026-10-29 historical MCP audit; discovery only",
+  "references": [
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x195b783d904a9bb242cfd6774c64717752c8d5ae478b40800820c760d583b101",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x74815e68a62a463c677f552543225456865518248dd030e3ac336aa455817285",
+      "assetIds": [
+        "eip155:4663/erc20:0xd463402e7678738886ae4bed5df3ee3a9b165e0f",
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xe851a627bd65ac5114f29af75e90b9788291d5c18546179c6a79fc4ae48683b2",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xa8e9a688e24e38eb5fedbeda69ac367ba4ef5b0ff16114fe60ec05eb67f6025f",
+      "assetIds": [
+        "eip155:4663/erc20:0x75607e2779962b959e8197e6927acf36b2a7536a",
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xbd827ac508b3bf758a376c9454ca1a1d94bcf25f4c14a1bf44e92bea7ed2dad8",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xa0af9ca137023fe1597761aeb96559631161a33d26325a7bb4e9a8289729b2f1",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x602b81a93624a617155788fa78bd1e6a10a5fba34ed10a60745aa1a82ce1b5a1",
+      "assetIds": [
+        "eip155:4663/erc20:0xfad17d7cc41d9c9ca4a459da798a4446dd217974",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x7c92e9444ded96ff942ca3f00e0b2e354082179b8a63cd95c0074e711a8490eb",
+      "assetIds": [
+        "eip155:4663/erc20:0xfad17d7cc41d9c9ca4a459da798a4446dd217974",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x04a1d31d60df0a45ee7fc0d47d39ad10e362cf1e966c321f52630ed1e5738522",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xacecaf3991fde9df314a91b0b9517f38144862572b901cfc18ba263e3f9e98a4",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xe4a827ae5c76c5da8ead56346cc99dd2be016b9174e7c7dffcb09be60b0a0d3b",
+      "assetIds": [
+        "eip155:4663/erc20:0x9c0a8921f790df59cecf1d101c6cb54cd7318d6a",
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xcb81e994e23d61fd71ee2e284d47d5a2ee6c7a4ddcee82a2f2da4420761db36a",
+      "assetIds": [
+        "eip155:4663/erc20:0xfad17d7cc41d9c9ca4a459da798a4446dd217974",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xf457236fdd27e640d273dcb445a34655661b260da0f71b37e60abe2e1150b308",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xdc0a25ab7351b6c349d16ea65446d3f88a8b182605e30fc8ea4f45ba18b77a3a",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xe7f41c400b335cc426dc1a3fa2816a9819b30b04a8294c828d288ba3308d561d",
+      "assetIds": [
+        "eip155:4663/erc20:0x46da6495b41e11d9b94ea75f9e8227f56c89db8e",
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xb84209116c4cb8f3d73208260a9e104773c847cc0a9664259f30d6a80218b569",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xd6a5bc05379b098c59fcc643bb17ce5bb1d8f3e2d417f5d00aa1bd98f88d4521",
+      "assetIds": [
+        "eip155:4663/erc20:0x2932b2f5761cadca5cb3e09d940092ca723d9ee2",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x32c50d83271c3af69696fe6b08def9c4f26d38b640da2cdb2a7c39acd8bbca5a",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xb680f7e1e9518f8d537c5f462b6371db53e3db5fcc199c3901f1664d3e5cccb4",
+      "assetIds": [
+        "eip155:4663/erc20:0x2932b2f5761cadca5cb3e09d940092ca723d9ee2",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xf972373d5ac6c3de3f9091a6e408e39f39ba49c8bd281fb94516577b1f531540",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x4e813d0cdfdf30875b580ad90f51b4f4207de0a9a6f142ff0878a3f071dedaba",
+      "assetIds": [
+        "eip155:4663/erc20:0x000de658153f47f23e92973c8eb1e89762703676",
+        "eip155:4663/erc20:0x5fc5360d0400a0fd4f2af552add042d716f1d168"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0x7d6436da4505ad6fc9c2876bedf2b40b465e3b6ebe6c39c3de31675a034d54d5",
+      "assetIds": [
+        "eip155:4663/erc20:0xfad17d7cc41d9c9ca4a459da798a4446dd217974",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    },
+    {
+      "provider": "dexscreener",
+      "providerPoolId": "0xbeb948495e25b4b84bc9bbade3eca6699b624f5da8cee56376a49cde17cc7cfd",
+      "assetIds": [
+        "eip155:4663/erc20:0x2932b2f5761cadca5cb3e09d940092ca723d9ee2",
+        "eip155:4663/erc20:0x0000000000000000000000000000000000000000"
+      ]
+    }
+  ]
+}

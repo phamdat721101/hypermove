@@ -1,5 +1,6 @@
 import { z } from 'zod';
-import { address, uint, ResearchError, hash, type RiskPolicy } from './contracts';
+import { address, uint, v4KeySchema, ResearchError, hash, type RiskPolicy } from './contracts';
+import { bytes32 } from './networks';
 
 export const Q96 = 1n << 96n;
 const MAX_UINT256 = (1n << 256n) - 1n;
@@ -29,10 +30,11 @@ export function initializedTicks(word: number, bitmap: bigint, spacing: number):
   for (let bit = 0; bit < 256; bit++) if (bitmap & (1n << BigInt(bit))) { const tick = (word * 256 + bit) * spacing; if (Math.abs(tick) <= 887272) out.push(tick); }
   return out;
 }
-const base = { address, token0: address, token1: address, decimals0: z.number().int().min(0).max(36), decimals1: z.number().int().min(0).max(36), fee_pips: z.number().int().min(0).max(999999), code_hash: z.string(), adapter_version: z.string() };
+const base = { address: z.union([address, bytes32]), token0: address, token1: address, decimals0: z.number().int().min(0).max(36), decimals1: z.number().int().min(0).max(36), fee_pips: z.number().int().min(0).max(999999), code_hash: z.string(), adapter_version: z.string() };
 export const poolSchema = z.discriminatedUnion('kind', [
+  z.object({ ...base, kind: z.literal('wrap'), wrapped_native: address, direction: z.enum(['wrap', 'unwrap']) }).strict(),
   z.object({ ...base, kind: z.literal('v2'), reserve0: uint, reserve1: uint, stable: z.boolean().default(false) }).strict(),
-  z.object({ ...base, kind: z.literal('clmm'), sqrt_price_x96: uint, tick: z.number().int().min(-887272).max(887272), liquidity: uint, tick_spacing: z.number().int().positive(), word_min: z.number().int(), word_max: z.number().int(), ticks: z.array(z.object({ tick: z.number().int(), liquidity_net: z.string().regex(/^-?[0-9]+$/) }).strict()).max(10000) }).strict(),
+  z.object({ ...base, kind: z.literal('clmm'), v4: z.object({ manager: address, key: v4KeySchema, protocol_fee: z.number().int().min(0).max(16777215) }).strict().optional(), sqrt_price_x96: uint, tick: z.number().int().min(-887272).max(887272), liquidity: uint, tick_spacing: z.number().int().positive(), word_min: z.number().int(), word_max: z.number().int(), ticks: z.array(z.object({ tick: z.number().int(), liquidity_net: z.string().regex(/^-?[0-9]+$/) }).strict()).max(10000) }).strict(),
 ]);
 export type Pool = z.infer<typeof poolSchema>;
 export type Quote = { amount_out: bigint; pool: Pool; spot_out: bigint };
@@ -43,7 +45,13 @@ export function quotePool(pool: Pool, tokenIn: string, amount: bigint): Quote {
   if (amount < 0n || amount > MAX_UINT256) throw new ResearchError('INVALID_AMOUNT', 'Input outside uint256.');
   const zero = tokenIn === pool.token0;
   if (!zero && tokenIn !== pool.token1) throw new ResearchError('INVALID_ROUTE', 'Input token is not in pool.');
-  const fee = BigInt(pool.fee_pips), net = amount * (1000000n - fee) / 1000000n;
+  const protocolFee = pool.kind === 'clmm' && pool.v4 ? (zero ? pool.v4.protocol_fee & 4095 : pool.v4.protocol_fee >> 12) : 0;
+  const combinedFee = pool.fee_pips + protocolFee - Math.floor(pool.fee_pips * protocolFee / 1000000);
+  if (pool.kind === 'wrap') {
+    if (zero !== (pool.direction === 'unwrap')) throw new ResearchError('INVALID_ROUTE', 'Wrapped-native edge has the wrong direction.');
+    return { amount_out: amount, spot_out: amount, pool };
+  }
+  const fee = BigInt(combinedFee), net = amount * (1000000n - fee) / 1000000n;
   if (pool.kind === 'v2') {
     const x = BigInt(zero ? pool.reserve0 : pool.reserve1), y = BigInt(zero ? pool.reserve1 : pool.reserve0);
     if (x <= 0n || y <= 0n) throw new ResearchError('INVALID_LIQUIDITY', 'Empty pool.');
@@ -107,7 +115,7 @@ export function closedRoutes(pools: Pool[], asset: string): Route[] {
     if (hops.length === 4 || routes.length >= 64) return;
     for (const p of pools) {
       if (routes.length >= 64) break;
-      if (used.has(p.address) || (p.token0 !== token && p.token1 !== token)) continue;
+      if (used.has(p.address) || (p.token0 !== token && p.token1 !== token) || p.kind === 'wrap' && (p.direction === 'unwrap' ? token !== p.token0 : token !== p.token1)) continue;
       const next = p.token0 === token ? p.token1 : p.token0;
       const step = [...hops, { pool: p.address, token_in: token, token_out: next }];
       if (next === asset && step.length >= 2) routes.push({ id: hash(step), hops: step });
@@ -127,23 +135,35 @@ export function quoteRoute(route: Route, initial: Map<string, Pool>, amount: big
   return { output, state };
 }
 
-export function solve(pools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string }, policy: RiskPolicy) {
-  const started = performance.now(), timeBudgetMs = 5000; let timeLimited = false;
-  const routes = closedRoutes(pools, asset); const initial = new Map(pools.map((p) => [p.address, p]));
+export type SearchOptions = { targets: string[]; deadline_ms: number; refine?: boolean };
+export function solve(pools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string }, policy: RiskPolicy, options?: SearchOptions) {
+  const started = performance.now(), timeBudgetMs = options ? Math.min(5000, options.deadline_ms) : 5000; let timeLimited = false;
+  const enumerated = closedRoutes(pools, asset);
+  const routes = options ? enumerated.filter((r) => r.hops.some((h) => options.targets.includes(h.token_in) || options.targets.includes(h.token_out))).sort((a, b) => a.id.localeCompare(b.id)) : enumerated;
+  const evaluatedRoutes = new Set<string>();
+  type Solution = { principal: string; allocations: Array<{ route: Route; amount: string }>; unused: string; expected_output: string; expected_profit: string; lender_fee: string };
+  const targetResults = new Map<string, { asset: string; net_raw: string; principal_raw: string; route_ids: string[]; solution?: Solution }>();
+  let phaseLimit = options?.refine ? Math.max(1, Math.floor(policy.max_evaluations * 0.75)) : policy.max_evaluations;
+  const initial = new Map(pools.map((p) => [p.address, p]));
   const cap = BigInt(lender.capacity) < BigInt(policy.max_principal) ? BigInt(lender.capacity) : BigInt(policy.max_principal);
   let evaluations = 0; let best: { principal: string; allocations: Array<{ route: Route; amount: string }>; unused: string; expected_output: string; expected_profit: string; lender_fee: string } | undefined;
   const rejected = new Map<string, number>();
   const evaluate = (principal: bigint, chosen: Route[], amounts: bigint[]) => {
     if (performance.now() - started >= timeBudgetMs) { timeLimited = true; return; }
-    if (evaluations >= policy.max_evaluations) return; evaluations++;
+    if (evaluations >= phaseLimit) return; evaluations++;
     const deployed = amounts.reduce((a, b) => a + b, 0n);
     if (principal === 0n || deployed > principal || deployed * 10000n < principal * BigInt(policy.min_deployment_bps) || amounts.some((v) => v <= 0n || v * 10000n < principal * BigInt(policy.min_weight_bps))) return;
     try {
       let state = initial, out = principal - deployed;
-      for (let i = 0; i < chosen.length; i++) { const q = quoteRoute(chosen[i], state, amounts[i], policy.max_price_impact_bps); out += q.output; state = q.state; }
+      for (let i = 0; i < chosen.length; i++) { if (options) evaluatedRoutes.add(chosen[i].id); const q = quoteRoute(chosen[i], state, amounts[i], policy.max_price_impact_bps); out += q.output; state = q.state; }
       const fee = ceilDiv(principal * BigInt(lender.fee_numerator), BigInt(lender.fee_denominator));
       const profit = out - principal - fee - BigInt(policy.network_cost);
-      if (profit <= BigInt(policy.min_profit) || best && profit <= BigInt(best.expected_profit)) return;
+      if (options) for (const target of options.targets) {
+        if (!chosen.some((r) => r.hops.some((h) => h.token_in === target || h.token_out === target))) continue;
+        const previous = targetResults.get(target);
+        if (!previous || profit > BigInt(previous.net_raw)) targetResults.set(target, { asset: target, net_raw: profit.toString(), principal_raw: principal.toString(), route_ids: chosen.map((r) => r.id), ...(options.refine ? { solution: { principal: principal.toString(), allocations: chosen.map((route, i) => ({ route, amount: amounts[i].toString() })), unused: (principal - deployed).toString(), expected_output: out.toString(), expected_profit: profit.toString(), lender_fee: fee.toString() } } : {}) });
+      }
+      if ((options ? profit < BigInt(policy.min_profit) : profit <= BigInt(policy.min_profit)) || best && profit <= BigInt(best.expected_profit)) return;
       best = { principal: principal.toString(), allocations: chosen.map((route, i) => ({ route, amount: amounts[i].toString() })), unused: (principal - deployed).toString(), expected_output: out.toString(), expected_profit: profit.toString(), lender_fee: fee.toString() };
     } catch (e) { if (!(e instanceof ResearchError)) throw e; rejected.set(e.code, (rejected.get(e.code) ?? 0) + 1); }
   };
@@ -151,19 +171,77 @@ export function solve(pools: Pool[], asset: string, lender: { capacity: string; 
   const subsets: Route[][] = [];
   const enumerate = (at: number, chosen: Route[]) => {
     if (chosen.length) subsets.push(chosen);
-    if (chosen.length >= policy.max_routes || subsets.length >= policy.max_evaluations) return;
-    for (let i = at; i < routes.length && subsets.length < policy.max_evaluations; i++) enumerate(i + 1, [...chosen, routes[i]]);
+    if (chosen.length >= policy.max_routes || subsets.length >= phaseLimit) return;
+    for (let i = at; i < routes.length && subsets.length < phaseLimit; i++) enumerate(i + 1, [...chosen, routes[i]]);
   };
   enumerate(0, []);
+  if (options) {
+    // Fair first pass: attempt a route through every target before refining allocations.
+    for (const target of options.targets) {
+      const route = routes.find((r) => r.hops.some((h) => h.token_in === target || h.token_out === target));
+      if (route) evaluate(cap / 32n || cap, [route], [cap / 32n || cap]);
+    }
+    const vectors = function* (n: number, remaining = 4, prefix: number[] = []): Generator<number[]> {
+      if (n === 1) { yield [...prefix, remaining]; return; }
+      for (let w = 0; w <= remaining; w++) yield* vectors(n - 1, remaining - w, [...prefix, w]);
+    };
+    const permutations = function* (indices: number[]): Generator<number[]> {
+      if (!indices.length) { yield []; return; }
+      for (const i of indices) for (const rest of permutations(indices.filter((j) => j !== i))) yield [i, ...rest];
+    };
+    const seen = new Set<string>();
+    for (let scale = 1; scale <= 32 && evaluations < phaseLimit && !timeLimited; scale++) {
+      const principal = cap * BigInt(scale) / 32n;
+      for (const subset of subsets) {
+        for (const weights of vectors(subset.length)) {
+          const active = subset.map((_, i) => i).filter((i) => weights[i] > 0);
+          const amounts = active.map((i) => principal * BigInt(weights[i]) / 4n);
+          amounts[amounts.length - 1] += principal - amounts.reduce((a, b) => a + b, 0n);
+          const poolsUsed = active.flatMap((i) => subset[i].hops.map((h) => h.pool));
+          const orders = new Set(poolsUsed).size < poolsUsed.length ? permutations(active.map((_, i) => i)) : [active.map((_, i) => i)];
+          for (const order of orders) {
+            if (evaluations >= phaseLimit || timeLimited) break;
+            const chosen = order.map((i) => subset[active[i]]), orderedAmounts = order.map((i) => amounts[i]);
+            const key = principal + ':' + chosen.map((r, i) => r.id + ':' + orderedAmounts[i]).join(',');
+            if (seen.has(key)) continue; seen.add(key);
+            evaluate(principal, chosen, orderedAmounts);
+          }
+          if (evaluations >= phaseLimit || timeLimited) break;
+        }
+        if (evaluations >= phaseLimit || timeLimited) break;
+      }
+    }
+  } else {
   // Interleave principal scales across subsets to avoid spending the entire budget on route 1.
-  for (let scale = 1; scale <= 32 && evaluations < policy.max_evaluations && !timeLimited; scale++) {
+  for (let scale = 1; scale <= 32 && evaluations < phaseLimit && !timeLimited; scale++) {
     const principal = cap * BigInt(scale) / 32n;
     for (const subset of subsets) {
-      if (evaluations >= policy.max_evaluations || timeLimited) break;
+      if (evaluations >= phaseLimit || timeLimited) break;
       const each = principal / BigInt(subset.length); const amounts = subset.map((_, i) => i === subset.length - 1 ? principal - each * BigInt(i) : each);
       evaluate(principal, subset, amounts);
-      if (subset.length > 1 && evaluations < policy.max_evaluations) evaluate(principal, [...subset].reverse(), [...amounts].reverse());
+      if (subset.length > 1 && evaluations < phaseLimit) evaluate(principal, [...subset].reverse(), [...amounts].reverse());
     }
   }
-  return { status: best ? 'FEASIBLE' : timeLimited || evaluations >= policy.max_evaluations || rejected.has('INSUFFICIENT_TICK_COVERAGE') ? 'INCONCLUSIVE' : 'NO_OPPORTUNITY', solution: best ?? null, routes_considered: routes.length, evaluations, rejected_evaluations: Object.fromEntries(rejected), search: { classification: 'BOUNDED_HEURISTIC', termination: timeLimited ? 'TIME_BUDGET' : evaluations >= policy.max_evaluations ? 'EVALUATION_BUDGET' : 'GRID_COMPLETE', time_budget_ms: timeBudgetMs, max_principal: cap.toString(), global_optimum_proven: false }, cost_assumptions: { network_cost: policy.network_cost }, policy_hash: hash(policy) };
+  }
+  const coarseLimited = Boolean(options?.refine && evaluations >= phaseLimit);
+  if (options?.refine) {
+    phaseLimit = policy.max_evaluations;
+    // Refine successful allocations with conserved one-way transfers at finer quanta.
+    // Every failed replay consumes the same evaluation counter as a coarse attempt.
+    for (const denominator of [16n, 64n, 256n, 1024n]) {
+      if (!best || evaluations >= phaseLimit || timeLimited) break;
+      const seed: Solution = best;
+      const principal = BigInt(seed.principal), step = principal / denominator || 1n;
+      for (let from = 0; from < seed.allocations.length; from++) {
+        for (let to = 0; to < seed.allocations.length; to++) {
+          if (from === to || evaluations >= phaseLimit || timeLimited) continue;
+          const amounts = seed.allocations.map((a) => BigInt(a.amount));
+          if (amounts[from] <= step) continue;
+          amounts[from] -= step; amounts[to] += step;
+          evaluate(principal, seed.allocations.map((a) => a.route), amounts);
+        }
+      }
+    }
+  }
+  return { ...(options ? { target_results: [...targetResults.values()], evaluated_route_ids: [...evaluatedRoutes], route_catalog: routes, route_enumeration_truncated: enumerated.length >= 64 } : {}), status: best ? 'FEASIBLE' : timeLimited || coarseLimited || evaluations >= policy.max_evaluations || rejected.has('INSUFFICIENT_TICK_COVERAGE') ? 'INCONCLUSIVE' : 'NO_OPPORTUNITY', solution: best ?? null, routes_considered: routes.length, evaluations, rejected_evaluations: Object.fromEntries(rejected), search: { classification: 'BOUNDED_HEURISTIC', termination: timeLimited ? 'TIME_BUDGET' : coarseLimited || evaluations >= policy.max_evaluations ? 'EVALUATION_BUDGET' : 'GRID_COMPLETE', time_budget_ms: timeBudgetMs, max_principal: cap.toString(), global_optimum_proven: false }, cost_assumptions: { network_cost: policy.network_cost }, policy_hash: hash(policy) };
 }

@@ -5,198 +5,228 @@
 
 Standalone Next.js 14 implementation of the HyperMove consolidation surface. The homepage IS the demo — an AI agent visiting the site reads `.well-known/webmcp.json`, hits a $0.01 `payment.x402` paywall, signs through n-payment, and renders a 200 OK — all in-page.
 
-## Latest upgrade: flashloan research MCP
+## Public flashloan research MCP
 
-HyperMove now exposes eight authenticated research tools for pool discovery,
-block-pinned reserves and tick maps, bounded route sizing, EVM simulation, native
-XRPL arbitrage research, and cited memory. Ethereum, Arbitrum and Base use an
-isolated worker; XRPL uses its native ledger APIs. There is no signing or
-transaction-broadcasting tool.
+Connect an MCP agent to **https://mcp.overguild.com** with **no authentication**.
+The canonical public path is `/api/mcp/flashloan`. No account, wallet signature,
+API key, Authorization header, cookie or MCP session ID is required.
 
-| Service | Public URL |
+This public API is stateless: tools return data directly. Send the returned inline
+snapshot or plan unchanged into the next tool. There are no public background
+jobs, stored private artifacts or research-memory writes. A server-generated
+integrity proof prevents tampering with snapshots and plans; it is automatic and
+is not a client credential.
+
+| Service | Endpoint |
 |---|---|
-| MCP, Streamable HTTP | **https://mcp.overguild.com** (alias: `/api/mcp`) |
-| Gateway health and advertised tools | https://mcp.overguild.com/api/mcp/health |
-| LLM API | https://mcp.overguild.com/llm |
+| Public stateless MCP | `https://mcp.overguild.com` or `/api/mcp/flashloan` |
+| Authenticated gateway and owned-job API | `https://mcp.overguild.com/api/mcp` |
+| Gateway health | `https://mcp.overguild.com/api/mcp/health` |
+| LLM API | Stopped on this VPS; `/llm/*` returns HTTP 410 |
 
-Deployment verification on **2026-10-25** passed public MCP initialization,
-all eight tool schemas, discovery, Base tick-map ingestion, sizing and owned
-artifact retrieval. The deployed Linux engine also passed local Anvil repayment,
-transfer-tax rejection and same-block cooldown rejection tests. The sampled live
-market returned `INCONCLUSIVE`; these checks establish functionality, not profit.
+The VPS runtime is focused on flashloan research. Dream Cycle tools and its
+scheduler are disabled, together with LLM-dependent news, agentic and builder
+brief tools. The separate LLM process is stopped, so UI scan and content
+generation are unavailable on this deployment. The UI and flashloan gateway
+remain online.
 
-**Current authentication limitation:** the existing application Supabase
-connection rejects its tenant/user, so normal wallet/device token persistence
-requires repairing that connection. Deployment verification used the server-held
-admin credential. Research jobs use a separate durable PostgreSQL database.
-Keep admin and worker credentials server-side; never place them in UI variables.
+The authenticated API retains its original ownership, payment and memory behavior.
+Its existing Supabase tenant/user binding needs repair for normal wallet/device
+sign-in; public flashloan calls do not consult that identity database. Root
+requests carrying Authorization or X-MCP-Admin-Token remain on the authenticated
+gateway for compatibility; omit those headers to use public root access.
 
-### Connect an MCP client
+### Connect and discover
 
-Configure a client that supports Streamable HTTP with URL
-`https://mcp.overguild.com` and header `Authorization: Bearer <your-token>`.
-Use an issued HyperMove token after authentication is available; self-hosted
-operators can provision `HYPERMOVE_MCP_ADMIN_TOKEN` for administrative checks.
-The gateway retains its installed SDK protocol negotiation; no protocol revision
-upgrade is required. [Authentication guide](src/app/docs/agent-auth/page.mdx).
-
-From this repository, save the following as `flashloan-client.mjs`, provide
-`HYPERMOVE_MCP_TOKEN` through your shell's secret/environment mechanism, and run
-`node flashloan-client.mjs`. The SDK handles initialization and transport headers.
+After `pnpm install`, save this as `flashloan-client.mjs` in the repository root
+and run `node flashloan-client.mjs`:
 
 ```js
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 
-const token = process.env.HYPERMOVE_MCP_TOKEN;
-if (!token) throw new Error('Set HYPERMOVE_MCP_TOKEN');
 const client = new Client({ name: 'flashloan-research', version: '1.0.0' });
 await client.connect(new StreamableHTTPClientTransport(
   new URL('https://mcp.overguild.com'),
-  { requestInit: { headers: { Authorization: `Bearer ${token}` } } },
 ));
-async function call(name, args) {
+async function call(name, args = {}) {
   const result = await client.callTool({ name, arguments: args });
-  if (result.isError) throw new Error(JSON.stringify(result.content));
-  return result.structuredContent ?? JSON.parse(
+  const response = result.structuredContent ?? JSON.parse(
     result.content.find((item) => item.type === 'text').text,
   );
+  if (result.isError || !response.ok) throw new Error(JSON.stringify(response.error));
+  return response.data;
 }
 try {
-  console.log(await call('flashloan_research_job', { operation: 'capabilities' }));
-  const job = await call('flashloan_discover_arbitrage_pools', {
-    idempotency_key: `base-discovery-${Date.now()}`,
+  console.log(await call('flashloan_capabilities'));
+  console.log(await call('flashloan_discover_arbitrage_pools', {
     network: 'base',
     tokens: ['0x4200000000000000000000000000000000000006'],
-  });
-  let complete = false;
-  for (let attempt = 0; attempt < 120; attempt++) {
-    const status = await call('flashloan_research_job', {
-      operation: 'get', job_id: job.id,
-    });
-    if (status.state === 'SUCCEEDED') {
-      console.log(await call('flashloan_research_job', {
-        operation: 'artifact', artifact_id: status.result_id,
-      }));
-      complete = true;
-      break;
-    }
-    if (['FAILED', 'CANCELLED'].includes(status.state)) {
-      throw new Error(JSON.stringify(status.error ?? status));
-    }
-    await new Promise((done) => setTimeout(done, 1000));
-  }
-  if (!complete) throw new Error(`Poll budget exceeded; resume with job_id ${job.id}`);
+  }));
 } finally {
   await client.close();
 }
 ```
 
-### Research workflow and contracts
+### Research tools and inline workflow
 
-| Tool | Input → output |
+| Tool | Input → direct output |
 |---|---|
-| `flashloan_discover_arbitrage_pools` | Network + token addresses → discovery job/artifact with candidates and diagnostics |
-| `flashloan_ingest_l2_tickmap_and_reserves` | Reviewed pool references + lender/asset → canonical block snapshot with reserves, bounded ticks, fees and capacity |
-| `flashloan_solve_dynamic_route_split` | Owned snapshot ID + borrow asset + risk policy → feasible plan, `NO_OPPORTUNITY`, or `INCONCLUSIVE` report |
-| `flashloan_simulate_atomic_revm` | Owned feasible plan ID + caller + executor mode/address → repayment/revert and reference dry-run report |
-| `xrpl_discover_arbitrage_routes` | Native assets + account-backed or hypothetical funding → ledger-pinned AMM/book routes |
-| `xrpl_simulate_arbitrage_route` | Owned XRPL route artifact + optional unsigned transaction → native dry-run report |
-| `nim_memory_sync_flashloan_lesson` | Explicit `RETRIEVE`, `PROPOSE`, `VALIDATE`, or `COMMIT` operation → cited owner-scoped memory artifact |
-| `flashloan_research_job` | `capabilities`, `get`, `cancel`, or `artifact` → configuration, owned job state, cancellation or result |
+| `flashloan_capabilities` | `{}` → networks, reviewed deployments, effective limits and verification constraints |
+| `sui_ingest_pool_state` | Reviewed Move pools/lender → proven checkpoint snapshot |
+| `sui_solve_arbitrage_routes` | Proven snapshot and funding policy → bounded native PTB research |
+| `sui_simulate_ptb` | Proven plan → native dry-run, residuals, gas and repayment evidence |
+| `flashloan_discover_arbitrage_pools` | Network, tokens, filters → all observed pools, eligibility, coverage and diagnostics |
+| `flashloan_ingest_l2_tickmap_and_reserves` | Reviewed pools and lender → proven block-pinned snapshot |
+| `flashloan_solve_dynamic_route_split` | `snapshot`, borrow asset, risk policy → proven feasible plan or explicit research outcome |
+| `flashloan_simulate_atomic_revm` | `plan`, caller, executor mode/address → repayment/revert and reference dry-run report |
+| `xrpl_discover_arbitrage_routes` | Native assets and account/hypothetical funding → proven ledger snapshot with estimated routes |
+| `xrpl_simulate_arbitrage_route` | `routes` and optional unsigned transaction → estimate or native dry-run report |
 
-Start with `capabilities` to see the configured networks and reviewed deployments.
-Discovery candidates are not automatically trusted: only registered deployments
-with matching runtime hashes can enter EVM snapshots. The initial deployment
-contains two Uniswap V3 pools and one Aave lender on each EVM network.
+Discovery inventory and liquidity eligibility do not establish a valid route. Start with capabilities and
+select only reviewed deployments whose runtime hashes pass verification.
+Place the following inside the example’s `try` block, before `client.close()`:
 
-For example, enqueue a Base snapshot with these tool arguments, then poll its
-job and pass the resulting **snapshot artifact ID** to the sizing tool:
-
-```json
-{
-  "idempotency_key": "base-snapshot-unique-request",
-  "network": "base",
-  "pools": [
-    { "address": "0xd0b53d9277642d899df5c87a3966a349a798f224", "adapter": "UNISWAP_V3", "word_range": 3 },
-    { "address": "0x6c561b446416e1a00e8e93e221854d6ea4171372", "adapter": "UNISWAP_V3", "word_range": 3 }
+```js
+const asset = '0x4200000000000000000000000000000000000006';
+const snapshot = await call('flashloan_ingest_l2_tickmap_and_reserves', {
+  network: 'base',
+  pools: [
+    { address: '0xd0b53d9277642d899df5c87a3966a349a798f224', adapter: 'UNISWAP_V3', word_range: 0 },
+    { address: '0x6c561b446416e1a00e8e93e221854d6ea4171372', adapter: 'UNISWAP_V3', word_range: 0 },
   ],
-  "lender": {
-    "provider": "AAVE_V3",
-    "address": "0xa238dd80c259a72e81d7e4664a9801593f98d1c5",
-    "asset": "0x4200000000000000000000000000000000000006"
-  }
+  lender: { provider: 'AAVE_V3', address: '0xa238dd80c259a72e81d7e4664a9801593f98d1c5', asset },
+});
+const result = await call('flashloan_solve_dynamic_route_split', {
+  snapshot,
+  borrow_asset: asset,
+  policy: { max_principal: '10000000000000000', network_cost: '100000000000000' },
+});
+if (result.kind === 'evm_plan') {
+  const report = await call('flashloan_simulate_atomic_revm', {
+    plan: result,
+    caller: '0x1111111111111111111111111111111111111111',
+    executor_mode: 'fixture',
+    executor: '0x000000000000000000000000000000000000f1a5',
+  });
+  console.log(report);
+} else {
+  console.log(result.status); // NO_OPPORTUNITY or INCONCLUSIVE is a valid outcome.
 }
 ```
 
-Sizing requires `snapshot_id`, `borrow_asset`, and a `policy` containing
-`max_principal` and `network_cost`. Amounts are exact decimal **strings in raw
-token units**, not JSON numbers or USD. For WETH, `"10000000000000000"` is 0.01
-WETH. Supply an explicit cost assumption; the service does not guarantee live gas
-costs or fiat valuations. Only a feasible `plan` artifact can be simulated.
+Amounts use exact decimal **strings in raw token units**, not JSON numbers or USD.
+The cost above is an explicit research assumption. Public requests do not accept
+`idempotency_key`, owned artifact IDs, job polling or memory operations. Inline
+proofs expire after ten minutes, cannot be modified and become invalid when the
+reviewed configuration changes; fetch a new snapshot when rejected.
 
-All asynchronous requests require an `idempotency_key`; retry the same request
-with the same key and use a new key for new research. Jobs are owner-scoped and
-move through `QUEUED`, `RUNNING`, `SUCCEEDED`, `FAILED`, or `CANCELLED`. Large
-artifacts return JSON chunks; follow `next_offset` with `offset` and `limit`
-(at most 100,000 characters). Reports/jobs expire after seven days; other large
-artifacts expire after 24 hours.
+Success envelopes contain `schema_version`, `request_id`, `operation`, `ok`,
+`data`, `warnings` and `execution: false`. Errors use `isError: true` and a typed
+`error` with `code`, `message`, `retryable` and, when relevant, `retry_after_ms`.
+Handle `INVALID_PROOF`, `PROOF_EXPIRED`, `REORG`, `RATE_LIMITED`,
+`CAPACITY_EXCEEDED`, incomplete tick coverage and dependency timeouts explicitly.
+Do not treat an error or an inconclusive report as an empty profitable result.
 
-Route sizing is a bounded heuristic. Tick coverage can be incomplete, transfer
-restrictions can cause contextual reverts, and generic Cancun execution does not
-fully reproduce ArbOS, OP Stack or later Ethereum hardforks.
-`chain_native_verified` and `can_execute` remain false. Native XRPL uses
-issuer-aware assets and account funding rather than an EVM flashloan; hypothetical
-funding remains explicitly labeled. Memory evidence stays cited, inferences stay
-provisional, and procedures/rules require owner approval before activation.
+### Limits and verification
 
-### Run the worker locally
+Defaults: 30 discovery tokens, four EVM pools, at most one bitmap word on either
+side, 2,000 initialized ticks, four XRPL assets, three sizing routes and 500
+sizing evaluations. Each IP can submit six computations and 60 transport requests
+per minute. One public computation can run at once, sharing a two-slot worker
+budget with authenticated jobs. Capacity exhaustion returns a retryable error;
+there is no public queue. Bodies are capped at 2 MiB, and integrity envelopes at
+1 MiB; MCP's repeated text/structured representation also counts toward the wire
+budget. Reduce pool/tick coverage if a response exceeds the limit.
 
-The worker requires Node **20.19+ or 22.12+**, Rust/Cargo, Foundry and PostgreSQL.
-The main app can still run with flashloan research disabled and without Rust.
+Ordinary operations have a 30-second deadline; EVM simulation has 60 seconds.
+CPU searches run in isolated worker threads with a five-second search budget.
+The public API persists no request bodies, snapshots, plans or research memory.
+All public users can replay a valid inline payload; proofs establish provenance,
+not private ownership. Avoid placing secrets in requests.
+
+Research never signs or broadcasts. Generic Cancun simulation is not complete
+ArbOS/OP Stack/later Ethereum verification. `chain_native_verified` and
+`can_execute` remain false. XRPL account-backed and hypothetical funding stay
+separate; native dry-runs use the node's simulation ledger, not a historical
+snapshot execution guarantee. No profitable opportunity is guaranteed.
+
+### Pool coverage v2 and new chains
+
+Discovery uses token-pairs enumeration and returns all observed pools, including
+single/low-liquidity markets and opaque v4 IDs. Coverage is provider-scoped;
+`complete` and filtered `candidates/rejected` have been replaced by `pools`,
+`token_results`, `coverage` and `diagnostics`. Public schema is v3 and proofs remain
+v2; update gateway and worker together. Eleven public tools include Sui snapshot, sizing
+and PTB simulation. Robinhood (4663) supports reviewed Uniswap v3/v4 adapters;
+Sui uses Cetus/DeepBook through the official SDK on Node 22.12+.
+
+New chain research stays disabled without matching build/registry-bound live
+verification evidence. Discovery works independently. See the [coverage feature
+contract](docs/features/flashloan-pool-coverage.md) for schemas, limits, setup,
+verification levels and rollback. Run `pnpm flashloan:multichain-test`,
+`pnpm flashloan:move-test` and opt-in `pnpm flashloan:multichain-live`.
+
+### Self-host the public worker
+
+Requires Node 20.19+ or 22.12+, Rust/Cargo, Foundry and the existing worker's
+PostgreSQL queue for authenticated jobs. Public computations bypass its repository.
 
 ```bash
 pnpm install
 cp services/flashloan/.env.example services/flashloan/.env
-# Configure a dedicated DATABASE_URL, a random worker token (32+ characters),
-# HTTPS RPC endpoints and an explicitly reviewed FLASHLOAN_DEPLOYMENTS registry.
+# Configure server-only worker token, PostgreSQL, HTTPS RPC endpoints and registry.
+# Enable FEATURE_MCP_FLASHLOAN_PUBLIC_STATELESS=true in worker and gateway envs.
+# Generate a separate random FLASHLOAN_PUBLIC_ARTIFACT_KEY (32+ bytes) for the worker.
 pnpm flashloan:build
 bash services/flashloan/start.sh
+# In another terminal, configure .env.local and run pnpm dev.
 ```
 
-In a separate terminal, configure the gateway's `.env.local` and run `pnpm dev`:
+Gateway configuration:
 
 ```dotenv
-FEATURE_MCP_FLASHLOAN=true
+FEATURE_MCP_FLASHLOAN_PUBLIC_STATELESS=true
 FLASHLOAN_WORKER_URL=http://127.0.0.1:3012
 FLASHLOAN_WORKER_TOKEN=<same-server-only-worker-token>
-HYPERMOVE_MCP_ADMIN_TOKEN=<separate-server-only-admin-token>
+FLASHLOAN_TRUST_PROXY=false
 NEXT_PUBLIC_MCP_HOST_URL=https://mcp.overguild.com
 NEXT_PUBLIC_LLM_API_URL=https://mcp.overguild.com/llm
 ```
 
-Use `http://localhost:3003/api/mcp` for the local MCP client. The two public URL
-variables above direct the UI to the deployed services; adjust them when using
-local services. Worker/admin tokens and database URLs must never use a
-`NEXT_PUBLIC_` prefix. For remote PostgreSQL, keep CA/hostname verification enabled
-and configure `NODE_EXTRA_CA_CERTS` when the provider requires its own CA.
+Locally connect to `http://localhost:3003/api/mcp/flashloan`. In production, bind
+the app to loopback, overwrite `X-Flashloan-Client-IP` at the trusted reverse proxy,
+and then set `FLASHLOAN_TRUST_PROXY=true`. Configure browser origins with
+`FLASHLOAN_PUBLIC_ORIGINS`; agents without Origin headers are supported.
+Never expose the worker port or put server credentials in `NEXT_PUBLIC_` variables.
 
-Run `pnpm flashloan:test` and `pnpm flashloan:e2e` for focused checks.
-`pnpm flashloan:native-e2e` exercises actual Anvil/Rust repayment and rejection
-cases; `pnpm flashloan:postgres-e2e` and `pnpm flashloan:live` are explicit opt-in
-checks requiring their documented endpoints/environment.
+`FLASHLOAN_PUBLIC_MAX_TOKENS`, `MAX_POOLS`, `MAX_TICKS`, `MAX_XRPL_ASSETS`,
+`MAX_ROUTES`, `MAX_EVALUATIONS`, `COMPUTATIONS_PER_MINUTE`,
+`TRANSPORT_PER_MINUTE`, `OPERATION_MS`, `SIMULATION_MS` and `PROOF_TTL_MS`
+(each with the `FLASHLOAN_PUBLIC_` prefix) can lower the tested ceilings. Keep
+matching limit configuration on the gateway and worker. Invalid values fail
+configuration rather than silently increasing resource budgets.
 
-The PostgreSQL E2E suite creates a disposable local cluster. Set
-`FLASHLOAN_POSTGRES_BIN` to your PostgreSQL binary directory if it differs from
-the test's default `/usr/local/opt/postgresql@15/bin`; it does not use the
-production research database.
+Run `pnpm flashloan:public-e2e` for credential-free SDK, integrity and isolation
+checks. `pnpm flashloan:native-e2e` exercises public and private Anvil/Rust
+repayment and rejection cases. Existing authenticated verification commands remain
+available: `pnpm flashloan:test`, `pnpm flashloan:e2e`,
+`pnpm flashloan:postgres-e2e` and `pnpm flashloan:live`.
+
+The deployed `flashloan.public.v3` catalog adds `flashloan_get_token_movers`: up to
+ten tokens per Base, Arbitrum, Robinhood or Sui chain with at least ±10% reported
+24h movement. Defaults require $15,000 market liquidity and a market age of 24h.
+Results rank a bounded free DexScreener scan, with explicit non-exhaustive coverage;
+returned token identifiers compose with pool discovery. See the public feature
+specification for input/output contracts. Run `pnpm exec vitest run
+tests/flashloan-movers.test.ts`; set `FLASHLOAN_MOVERS_LIVE=1` for opt-in live checks.
+Release `worktree-movers-5c3499ba3e74` was deployed on 2026-10-28 and verified by
+real HTTPS SDK clients against both public paths; the worker guide records the
+current runtime and retained rollback release.
 
 Read the [worker/deployment guide](services/flashloan/README.md),
-[implementation specification](docs/prd/flashloan-research-implementation.md), and
-[canonical input schemas](src/lib/mcp/flashloan/contracts.ts) for exact fields,
-limits and verification details. Environment files, credentials, private keys,
-local memory, deployment evidence and compiled artifacts stay outside Git;
-only placeholder configuration examples are committed.
+[public feature specification](docs/features/flashloan-public-stateless.md), and
+[public schemas](src/lib/mcp/flashloan/public-contracts.ts).
 
 ## Earlier milestones
 
@@ -272,17 +302,21 @@ When the Server Action returns `persist_failed`, the UI shows a hint code mapped
 ### Current production — VPS with PM2 and Caddy
 
 The MCP gateway and research worker run from
-`/home/ubuntu/hypermove-flashloan-release`. Caddy terminates HTTPS at
+`/home/ubuntu/hypermove-public-release`. Caddy terminates HTTPS at
 `mcp.overguild.com`; the worker remains on loopback port 3012 and is not exposed
 directly. Provision server-only environment files before deploying:
 
 ```bash
 VPS_SSH_KEY=/path/to/your-private-key.pem \
-  bash scripts/deploy-vps.sh --with-flashloan
+  bash scripts/deploy-vps.sh --app-only --with-flashloan
 ```
 
 The script builds the native worker on the target OS. Set `APP_REMOTE_DIR` or
 `PUBLIC_BASE_URL` to override the installed release path or public domain.
+The active gateway and worker use Node 22.15.0 from
+`/home/ubuntu/.local-node22/node_modules/node/bin`; use that runtime for target
+builds and PM2 environment updates. Preserve the explicit Dream/LLM feature
+flags and the persisted `/llm/*` HTTP 410 route when deploying this profile.
 The [worker guide](services/flashloan/README.md) records the deployed topology,
 rollback locations and verification limits. The alternatives below describe
 other app deployments; a standalone app deployment does not provision the
