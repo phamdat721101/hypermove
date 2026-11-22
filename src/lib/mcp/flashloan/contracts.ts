@@ -38,7 +38,13 @@ const ingestLendersV1 = ingestSchema(LENDER_PROVIDERS);
 /** PRD-C ground truth (file 11 §C): authenticated shared job, admitted only behind FLASHLOAN_ARB_GT_V1 so the flag-off tool list stays byte-identical. */
 export const GROUND_TRUTH_OPERATION = 'flashloan_arb_ground_truth_v1';
 export const arbGtEnabled = () => process.env.FLASHLOAN_ARB_GT_V1 === 'true';
-export const operationEnabled = (name: string) => name !== GROUND_TRUTH_OPERATION || arbGtEnabled();
+/** PRD-B universe (file 11 §B): a public cached tool behind FLASHLOAN_ARB_UNIVERSE_V1; its build runs only as a shared worker job, never as a private tool. */
+export const UNIVERSE_OPERATION = 'flashloan_get_arb_universe_v1';
+export const arbUniverseEnabled = () => process.env.FLASHLOAN_ARB_UNIVERSE_V1 === 'true';
+export const universeInputSchema = z.object({ network: z.enum(['arbitrum', 'base', 'ethereum']), seed_tokens: z.array(address).max(30).default([]), min_depth_usd: z.number().finite().min(0).max(1e12).default(25_000),
+  max_hops: z.number().int().min(2).max(4).default(3), max_cycles: z.number().int().min(1).max(512).default(256), max_nodes_visited: z.number().int().min(1).max(200_000).default(50_000),
+  include_research: z.boolean().default(false), include_v4: z.boolean().default(true) }).strict();
+export const operationEnabled = (name: string) => name === UNIVERSE_OPERATION ? false : name !== GROUND_TRUTH_OPERATION || arbGtEnabled();
 export const groundTruthInputSchema = z.object({ ...start, network: z.enum(['arbitrum', 'base', 'ethereum']), from_block: uint.optional(), to_block: uint.optional(),
   window_blocks: z.number().int().min(100).max(20_000).default(14_400), include_v4: z.boolean().default(true), min_gross_usd: z.number().finite().min(0).max(1e12).default(0) }).strict()
   .superRefine((v, ctx) => {
@@ -54,6 +60,7 @@ export const operationSchemas = {
   xrpl_simulate_arbitrage_route: z.object({ ...start, route_id: digest, transaction: z.record(z.string(), z.unknown()).optional() }).strict(),
   nim_memory_sync_flashloan_lesson: z.object({ ...start, operation: z.enum(['RETRIEVE', 'PROPOSE', 'VALIDATE', 'COMMIT']), query: z.string().min(3).max(8000).optional(), report_id: digest.optional(), proposal_id: z.string().min(1).max(128).optional() }).strict(),
   flashloan_arb_ground_truth_v1: groundTruthInputSchema,
+  flashloan_get_arb_universe_v1: universeInputSchema.extend(start).strict(),
   flashloan_research_job: z.object({ operation: z.enum(['get', 'cancel', 'artifact', 'capabilities']), job_id: z.string().uuid().optional(), artifact_id: digest.optional(), offset: z.number().int().min(0).max(8_000_000).default(0), limit: z.number().int().min(1).max(100000).default(100000) }).strict(),
 };
 export type Operation = keyof typeof operationSchemas;

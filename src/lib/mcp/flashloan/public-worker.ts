@@ -6,7 +6,10 @@ import { integrationNetwork, validateIntegration, type ResolutionRequest, type C
 import { managerMapping, resolveInventory } from './pool-resolution';
 import { randomUUID } from 'node:crypto';
 import { runHarnessed, HarnessExecutionError } from 'nim-skill';
-import { hash, ResearchError, errorResult, boundaryEvent, operationSchemas } from './contracts';
+import { hash, ResearchError, errorResult, boundaryEvent, operationSchemas, UNIVERSE_OPERATION, universeInputSchema } from './contracts';
+import { arbUniversePayloadSchema } from './arb-contracts';
+import { universeCacheKey, fitUniverse, UNIVERSE_FRESH_MS } from './arb-universe';
+import type { Repository } from './storage';
 import { moverInputSchema } from './movers';
 import { DiscoveryRegistry } from './discovery-registry';
 import { discoveryV3InputSchema, moversV2InputSchema, registryInputSchema, watchlistInputSchema, v8Enabled } from './v8-contracts';
@@ -23,7 +26,7 @@ import { assertPublicValue, assertVersionEnabled, PUBLIC_LIMITS, PUBLIC_VERSION,
 export class PublicResearch {
   readonly proofs: PublicProofs;
   private readonly active = new Set<AbortController>();
-  constructor(private readonly engine: ResearchEngine, private readonly admission: ResearchAdmission, key: string, private readonly compute: ComputeAdapter = computeIsolated, clock = Date.now) {
+  constructor(private readonly engine: ResearchEngine, private readonly admission: ResearchAdmission, key: string, private readonly compute: ComputeAdapter = computeIsolated, private readonly clock = Date.now, private readonly repo?: Repository) {
     this.proofs = new PublicProofs(key, hash({ version: PUBLIC_VERSION, limits: PUBLIC_LIMITS, research_registry: engine.registryHash(), deployments: [...engine.options.deployments].sort((a, b) => (a.network + a.address + a.adapter).localeCompare(b.network + b.address + b.adapter)) }), clock);
   }
   capabilities() {
@@ -54,6 +57,8 @@ export class PublicResearch {
     const parsed = publicSchemas[operation].safeParse(raw);
     if (!parsed.success) { boundaryEvent('EDGE-04', 'PUBLIC_INVALID_INPUT'); throw new ResearchError('INVALID_INPUT', 'Invalid public research input.'); }
     if (operation === 'flashloan_capabilities') return this.response(operation, this.capabilities());
+    // F2 (file 11 #20/#21): the universe is read from the shared artifact before any admission lease; misses enqueue a bounded shared build.
+    if (operation === UNIVERSE_OPERATION) return this.universe(parsed.data);
     const release = this.admission.publicLease(admissionKey);
     const controller = new AbortController();
     this.active.add(controller);
@@ -81,6 +86,20 @@ export class PublicResearch {
     }
   }
   stop() { for (const controller of this.active) controller.abort(); }
+  private async universe(raw: unknown) {
+    const input = universeInputSchema.parse(raw), registry = this.engine.options.discoveryRegistry;
+    if (!this.repo || !registry) throw new ResearchError('PUBLIC_UNCONFIGURED', 'The arb universe needs shared storage and the reviewed discovery registry.');
+    const key = universeCacheKey(registry, this.engine.options.deployments, input);
+    const hit = await this.repo.readSharedLatest('arb_universe', key);
+    const built = hit ? Date.parse(hit.created_at) : NaN, now = this.clock();
+    if (hit && now - built < UNIVERSE_FRESH_MS) {
+      const payload = fitUniverse(arbUniversePayloadSchema.parse(hit.data), PUBLIC_LIMITS.envelope_bytes - 4096);
+      return this.response(UNIVERSE_OPERATION, this.proofs.sign('evm_universe', payload, new Date(built + UNIVERSE_FRESH_MS).toISOString()));
+    }
+    const job = await this.repo.enqueueShared(UNIVERSE_OPERATION, { ...input }, key); // returns the queued/running job for this key
+    boundaryEvent('EDGE-05', 'UNIVERSE_WARMING');
+    throw new ResearchError('UNIVERSE_WARMING', 'The arb universe for this input is being built (job ' + job.id + '); retry shortly.', true);
+  }
   private response(operation: PublicOperation, data: unknown, requestId = randomUUID()) {
     const result = { schema_version: PUBLIC_VERSION, request_id: requestId, operation, ok: true as const, data, warnings: data && typeof data === 'object' && 'warnings' in data ? (data as { warnings: unknown }).warnings : [], execution: false as const };
     try { assertPublicValue(result); } catch { throw new ResearchError('RESPONSE_TOO_LARGE', 'Research output exceeds the public budget; reduce the request.'); }

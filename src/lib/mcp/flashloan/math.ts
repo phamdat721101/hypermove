@@ -144,12 +144,20 @@ export function quotePool(pool: Pool, tokenIn: string, amount: bigint): Quote {
 }
 
 export type Route = { id: string; hops: Array<{ pool: string; token_in: string; token_out: string }> };
-export function closedRoutes(pools: Pool[], asset: string): Route[] {
-  const routes: Route[] = [];
+export function closedRoutes(pools: Pool[], asset: string): Route[] { return enumerateClosedRoutes(pools, asset, { maxHops: 4, maxRoutes: 64 }).routes; }
+/**
+ * Directed closed-route DFS with explicit bounds (file 11 #12): `maxNodes` counts every pool edge examined, so a dense
+ * graph stops with `exhausted: true` instead of exploding. Both directions of a cycle are distinct routes.
+ */
+export function enumerateClosedRoutes(pools: Pool[], asset: string, bounds: { maxHops: number; maxRoutes: number; maxNodes?: number }) {
+  const routes: Route[] = []; let nodes = 0, exhausted = false;
+  const limit = bounds.maxNodes ?? Infinity;
   const visit = (token: string, hops: Route['hops'], used: Set<string>) => {
-    if (hops.length === 4 || routes.length >= 64) return;
+    if (hops.length === bounds.maxHops || routes.length >= bounds.maxRoutes) return;
     for (const p of pools) {
-      if (routes.length >= 64) break;
+      if (routes.length >= bounds.maxRoutes) break;
+      if (nodes >= limit) { exhausted = true; return; }
+      nodes++;
       if (used.has(p.address) || (p.token0 !== token && p.token1 !== token) || p.kind === 'wrap' && (p.direction === 'unwrap' ? token !== p.token0 : token !== p.token1)) continue;
       const next = p.token0 === token ? p.token1 : p.token0;
       const step = [...hops, { pool: p.address, token_in: token, token_out: next }];
@@ -157,7 +165,8 @@ export function closedRoutes(pools: Pool[], asset: string): Route[] {
       else if (!hops.some((h) => h.token_in === next)) visit(next, step, new Set([...used, p.address]));
     }
   };
-  visit(asset, [], new Set()); return routes;
+  visit(asset, [], new Set());
+  return { routes, nodes_visited: nodes, exhausted: exhausted || routes.length >= bounds.maxRoutes };
 }
 export function quoteRoute(route: Route, initial: Map<string, Pool>, amount: bigint, impactBps: number) {
   const state = new Map(initial); let output = amount;
@@ -173,6 +182,48 @@ export function quoteRoute(route: Route, initial: Map<string, Pool>, amount: big
 /** A Uniswap-V3-style flash lender is locked during its callback, so routes may not swap through the lender pool. */
 export function lenderRoutablePools(pools: Pool[], lender: { provider?: string; address: string }): Pool[] {
   return lender.provider === 'UNISWAP_V3_FLASH' ? pools.filter((p) => p.address !== lender.address) : pools;
+}
+function isqrt(n: bigint): bigint { if (n < 2n) return n; let x = n, y = (x + 1n) / 2n; while (y < x) { x = y; y = (x + n / x) / 2n; } return x; }
+export const DEPTH_BANDS_BPS = [50, 100, 200] as const;
+export type DepthBand = { bps: number; amount0_in: bigint; amount1_in: bigint; complete: boolean };
+/**
+ * In-range depth (PRD-B): the fee-free input of token0 that moves the price down by `bps`, and of token1 that moves it
+ * up by `bps`, integrated across loaded initialized ticks (CLMM) or from reserves (CPMM). A band that runs past the
+ * loaded bitmap words is clipped there and marked incomplete. Stable curves and wrap edges have no band (null).
+ */
+export function depthBands(pool: Pool, bands: readonly number[] = DEPTH_BANDS_BPS): DepthBand[] | null {
+  if (pool.kind === 'wrap' || pool.kind === 'v2' && pool.stable) return null;
+  const S = 10n ** 18n, factor = (bps: number, up: boolean) => isqrt((up ? 10000n + BigInt(bps) : 10000n - BigInt(bps)) * S * S / 10000n);
+  if (pool.kind === 'v2') {
+    const x = BigInt(pool.reserve0), y = BigInt(pool.reserve1);
+    if (x <= 0n || y <= 0n) return null;
+    // x*y=k: price y/x falls by f when x grows to x/sqrt(f); rises by g when y grows to y*sqrt(g).
+    return bands.map((bps) => ({ bps, amount0_in: x * S / factor(bps, false) - x, amount1_in: y * factor(bps, true) / S - y, complete: true }));
+  }
+  const start = BigInt(pool.sqrt_price_x96), active = BigInt(pool.liquidity);
+  const lowEdge = Math.max(-887272, pool.word_min * 256 * pool.tick_spacing), highEdge = Math.min(887272, (pool.word_max + 1) * 256 * pool.tick_spacing);
+  const down = pool.ticks.filter((t) => t.tick <= pool.tick).sort((a, b) => b.tick - a.tick);
+  const up = pool.ticks.filter((t) => t.tick > pool.tick).sort((a, b) => a.tick - b.tick);
+  const walk = (target: bigint, zero: boolean) => {
+    let price = start, liquidity = active, amount = 0n;
+    const steps = [...(zero ? down : up), { tick: zero ? lowEdge : highEdge, liquidity_net: '0', edge: true as const }];
+    for (const step of steps) {
+      const boundary = sqrtAtTick(step.tick), stop = zero ? (boundary > target ? boundary : target) : (boundary < target ? boundary : target);
+      if (zero ? stop < price : stop > price) {
+        if (liquidity > 0n) amount += zero ? liquidity * (price - stop) * Q96 / (price * stop) : liquidity * (stop - price) / Q96;
+        price = stop;
+      }
+      if (price === target) return { amount, complete: true };
+      if ('edge' in step) return { amount, complete: false };
+      const delta = BigInt(step.liquidity_net); liquidity += zero ? -delta : delta;
+      if (liquidity < 0n) throw new ResearchError('INVALID_LIQUIDITY', 'Tick crossing produced negative liquidity.');
+    }
+    return { amount, complete: false };
+  };
+  return bands.map((bps) => {
+    const lo = walk(start * factor(bps, false) / S, true), hi = walk(start * factor(bps, true) / S, false);
+    return { bps, amount0_in: lo.amount, amount1_in: hi.amount, complete: lo.complete && hi.complete };
+  });
 }
 export type SearchOptions = { targets: string[]; deadline_ms: number; refine?: boolean };
 export function solve(allPools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string; provider?: string }, policy: RiskPolicy, options?: SearchOptions) {

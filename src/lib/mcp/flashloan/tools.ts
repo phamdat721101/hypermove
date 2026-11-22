@@ -14,6 +14,7 @@ const descriptions: Record<Operation, string> = {
   xrpl_discover_arbitrage_routes: 'Read native XRPL AMMs and funded order books at one validated ledger; distinguish account-backed and hypothetical funding.',
   xrpl_simulate_arbitrage_route: 'Estimate native XRPL routes or dry-run one supported unsigned native transaction. Does not assert cross-transaction atomicity.',
   nim_memory_sync_flashloan_lesson: 'Retrieve cited research context or propose, validate and commit report evidence. Never approves generated procedures.',
+  flashloan_get_arb_universe_v1: 'Internal shared build job for the public arb universe; never listed as a private tool.',
   flashloan_arb_ground_truth_v1: 'Measure closed-loop DEX arbs that landed in a block window: swap-surplus candidates and receipt-verified realized profit, with gas, triggers and an ordered event dataset. Returns a shared job; poll it and read its artifacts with flashloan_research_job.',
   flashloan_research_job: 'Get/cancel an owned job, read an owned artifact, or inspect research capabilities.',
 };

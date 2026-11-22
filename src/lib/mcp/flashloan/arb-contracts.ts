@@ -148,7 +148,9 @@ export const replayEventSchema = z.object({
 // ---- Envelope payloads and shared-artifact documents ----
 const head = { network: evmNetwork, chain_id: z.number().int().positive() };
 const windowSchema = z.object({ from_block: uint, to_block: uint, from_hash: bytes32, to_hash: bytes32 }).strict().refine((w) => BigInt(w.from_block) <= BigInt(w.to_block), 'Empty block window.');
-export const arbUniversePayloadSchema = z.object({ schema_version: z.literal('flashloan.arb.universe.v1'), ...head, block: blockV8Schema, registry_version: digest, cache_key: digest, outcome: z.enum(['SUCCESS', 'EMPTY', 'PARTIAL']), pools: z.array(universePoolSchema).max(400), cycles: z.array(cycleSchema).max(4000), coverage: coverageArbSchema, warnings: z.array(z.string().max(512)).max(64) }).strict();
+/** Universe coverage (PRD-B §6): the share of the latest verified GT gross whose hop pools are all in the universe; null without a GT artifact. */
+export const coverageUniverseSchema = coverageArbSchema.extend({ realized_value_share: z.number().min(0).max(1).nullable(), ground_truth_window: z.object({ from_block: uint, to_block: uint }).strict().nullable() }).strict();
+export const arbUniversePayloadSchema = z.object({ schema_version: z.literal('flashloan.arb.universe.v1'), ...head, block: blockV8Schema, registry_version: digest, cache_key: digest, outcome: z.enum(['SUCCESS', 'EMPTY', 'PARTIAL']), pools: z.array(universePoolSchema).max(400), cycles: z.array(cycleSchema).max(4000), coverage: coverageUniverseSchema, warnings: z.array(z.string().max(512)).max(64) }).strict();
 export const arbCycleQuotePayloadSchema = z.object({ schema_version: z.literal('flashloan.arb.cycle_quote.v1'), ...head, quote: cycleQuoteSchema }).strict();
 export const arbGroundTruthSchema = z.object({ schema_version: z.literal('flashloan.arb.ground_truth.v1'), ...head, window: windowSchema, records: z.array(arbRecordSchema).max(20000), coverage: coverageArbSchema, warnings: z.array(z.string().max(512)).max(64) }).strict();
 // ---- PRD-C ground truth (file 11 #14, #17): two tiers plus the complete ordered event dataset M8/M9 replay from ----

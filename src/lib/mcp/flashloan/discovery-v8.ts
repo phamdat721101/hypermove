@@ -14,7 +14,7 @@ async function inRound<T>(engine: ResearchEngine, signal: AbortSignal | undefine
   const budget = new RoundBudget({ maxRpcCalls: 600, maxEvaluations: 0, deadlineMs: 23000 }, signal ?? new AbortController().signal);
   try { return await work(engine.withBudget(budget), budget); } finally { budget.dispose(); }
 }
-async function inventory(engine: ResearchEngine, reader: InventoryReaderV3, tokens: string[], excluded: string[], minDepth: number, native: NativeInventorySeed[] = []) {
+export async function inventory(engine: ResearchEngine, reader: InventoryReaderV3, tokens: string[], excluded: string[], minDepth: number, native: NativeInventorySeed[] = []) {
   const dex = new DexScreener(engine.options.fetcher, undefined, undefined, reader.budget);
   const base = await dex.discover({ network: reader.network, tokens, exclude_tokens: excluded, min_liquidity_usd: 0, idempotency_key: 'v8' }, reader.budget.signal, true).catch(() => inventorySchema.parse({ schema_version: 'flashloan.inventory.v2', network: reader.network, observed_at: new Date().toISOString(), outcome: 'PARTIAL', pools: [], token_results: [], coverage: tokens.map((token) => ({ source: 'dexscreener:token-pairs/v1', token, scope: 'provider_response', status: 'FAILED', raw_count: 0, valid_count: 0, retrieval_complete: false, exhaustive: false, next_cursor: null, observed_at: new Date().toISOString() })), diagnostics: [], warnings: [] }));
   return reader.inventory(base, tokens, excluded, minDepth, native);

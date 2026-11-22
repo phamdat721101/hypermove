@@ -1,7 +1,8 @@
 import { resolve, join } from 'node:path';
 import { runHarnessed, HarnessExecutionError } from 'nim-skill';
-import { operationSchemas, operationEnabled, arbGtEnabled, groundTruthInputSchema, GROUND_TRUTH_OPERATION, errorResult, ResearchError, boundaryEvent, hash, VERSION, type Operation } from './contracts';
-import { arbCacheKey, arbGroundTruthRefSchema, deploymentsVersion } from './arb-contracts';
+import { operationSchemas, operationEnabled, arbGtEnabled, arbUniverseEnabled, groundTruthInputSchema, GROUND_TRUTH_OPERATION, UNIVERSE_OPERATION, errorResult, ResearchError, boundaryEvent, hash, VERSION, type Operation } from './contracts';
+import { arbCacheKey, arbGroundTruthRefSchema, arbGroundTruthDocumentSchema, deploymentsVersion } from './arb-contracts';
+import { buildArbUniverse, universeCacheKey } from './arb-universe';
 import { measureArbGroundTruth, groundTruthKeyInputs, type GroundTruthInput, type GtNetwork } from './arb-ground-truth';
 import { RoundBudget } from './transport';
 import type { XrplSnapshot } from './xrpl';
@@ -17,6 +18,10 @@ import { FinanceService, POSITIONS_JOB, type FinanceOptions } from './finance/en
 const OPERATION_TIMEOUT_MS: Partial<Record<string, number>> = { [GROUND_TRUTH_OPERATION]: 300_000 };
 /** The ground-truth round ends early enough to publish an INCONCLUSIVE document before the worker deadline. */
 const GROUND_TRUTH_BUDGET = { maxRpcCalls: 6000, maxEvaluations: 0, deadlineMs: 270_000 };
+/** Universe build round: inventory + bounded hydration + lender reads, inside the 120 s default job deadline. */
+const UNIVERSE_BUDGET = { maxRpcCalls: 1500, maxEvaluations: 0, deadlineMs: 100_000 };
+/** Pointer to the latest non-INCONCLUSIVE GT document per network, published only with the universe flag on. */
+const GT_LATEST_KIND = 'arb_ground_truth_latest';
 /** ≈1 hour of blocks per network for the scheduled public refresh. */
 const HOUR_BLOCKS: Record<GtNetwork, number> = { arbitrum: 14_400, base: 1_800, ethereum: 300 };
 export type WorkerOptions = EngineOptions & { finance?: Omit<FinanceOptions, 'repo'>; repo: Repository; root?: string; timeoutMs?: number; concurrency?: number; publicKey?: string; compute?: ComputeAdapter; clock?: () => number };
@@ -33,7 +38,7 @@ export class ResearchWorker {
     this.root = options.root ?? resolve('services/flashloan/data'); this.engine = new ResearchEngine(options);
     this.admission = new ResearchAdmission(options.publicKey ? Math.min(2, options.concurrency ?? 2) : options.concurrency ?? 2, options.clock);
     if (options.finance) this.finance = new FinanceService({ ...options.finance, repo: options.repo, fetcher: options.finance.fetcher ?? options.fetcher, clock: options.finance.clock ?? options.clock });
-    if (options.publicKey) this.publicResearch = new PublicResearch(this.engine, this.admission, options.publicKey, options.compute, options.clock);
+    if (options.publicKey) this.publicResearch = new PublicResearch(this.engine, this.admission, options.publicKey, options.compute, options.clock, options.repo);
   }
   publicDispatch(operation: PublicOperation, input: unknown, key: string, signal?: AbortSignal) {
     if (!this.publicResearch) throw new ResearchError('PUBLIC_DISABLED', 'Stateless public research is disabled.');
@@ -109,7 +114,27 @@ export class ResearchWorker {
     try {
       const document = await measureArbGroundTruth({ rpc: this.engine.withBudget(budget).rpc(input.network), budget, network: input.network, registry: this.options.discoveryRegistry!, deployments: this.options.deployments,
         initializeIndex: this.options.initializeIndex, locators: this.options.initializations, cacheKey: key, publish: (kind, cacheKey, data) => repo.publishShared(kind, cacheKey, data) }, input);
-      return ref(await repo.publishShared('arb_ground_truth', document.cache_key, document), false);
+      const published = await repo.publishShared('arb_ground_truth', document.cache_key, document);
+      if (arbUniverseEnabled() && document.outcome !== 'INCONCLUSIVE') await repo.publishShared(GT_LATEST_KIND, this.groundTruthKey(input.network, { latest_pointer: true }), { artifact_id: published.id, cache_key: published.cache_key });
+      return ref(published, false);
+    } finally { budget.dispose(); }
+  }
+  /** Latest GT document for ranking; null (stated in coverage) when none is published or the pointer is stale. */
+  private async latestGroundTruth(network: GtNetwork) {
+    const pointer = await this.options.repo.readSharedLatest(GT_LATEST_KIND, this.groundTruthKey(network, { latest_pointer: true }));
+    if (!pointer) return null;
+    const { cache_key } = pointer.data as { cache_key: string };
+    const doc = await this.options.repo.readSharedLatest('arb_ground_truth', cache_key);
+    return doc ? arbGroundTruthDocumentSchema.parse(doc.data) : null;
+  }
+  private async universe(job: StoredJob, signal: AbortSignal) {
+    const { idempotency_key: _key, ...input } = operationSchemas[UNIVERSE_OPERATION].parse(job.input), { repo, discoveryRegistry: registry, deployments } = this.options;
+    if (!registry) throw new ResearchError('REGISTRY_UNCONFIGURED', 'The universe needs the reviewed discovery registry (FLASHLOAN_DISCOVERY_REGISTRY).');
+    const budget = new RoundBudget(UNIVERSE_BUDGET, signal);
+    try {
+      const payload = await buildArbUniverse({ engine: this.engine.withBudget(budget), budget, registry, deployments, groundTruth: await this.latestGroundTruth(input.network) }, input);
+      const artifact = await repo.publishShared('arb_universe', universeCacheKey(registry, deployments, input), payload);
+      return { kind: 'arb_universe_ref', data: { schema_version: 'flashloan.arb.universe_ref.v1', network: input.network, artifact_id: artifact.id, cache_key: artifact.cache_key, content_hash: artifact.content_hash, outcome: payload.outcome } };
     } finally { budget.dispose(); }
   }
   async tick(): Promise<void> {
@@ -195,6 +220,7 @@ export class ResearchWorker {
         if (routes.kind !== 'xrpl-routes') throw new ResearchError('INVALID_ARTIFACT', 'Expected a native XRPL route snapshot.');
         return { kind: 'report', data: await this.engine.xrplSimulate(routes.data as XrplSnapshot, input.transaction, signal) };
       }
+      case UNIVERSE_OPERATION: if (!arbUniverseEnabled()) throw new ResearchError('FEATURE_DISABLED', 'The arb universe is disabled on this worker.'); return this.universe(job, signal);
       case GROUND_TRUTH_OPERATION: if (!arbGtEnabled()) throw new ResearchError('FEATURE_DISABLED', 'Ground truth is disabled on this worker.'); return this.groundTruth(job, signal);
       case 'nim_memory_sync_flashloan_lesson': return { kind: 'memory', data: { ...await syncMemory(join(this.root, 'knowledge'), job.owner, operationSchemas.nim_memory_sync_flashloan_lesson.parse(job.input), repo) } };
       default: throw new ResearchError('UNKNOWN_OPERATION', 'Unknown research operation.');

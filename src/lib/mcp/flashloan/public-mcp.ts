@@ -11,6 +11,7 @@ import { boundedJson, boundedBody } from './transport';
 const transportRate = new RateWindow(PUBLIC_LIMITS.transport_per_minute);
 const descriptions: Record<PublicOperation, string> = {
   flashloan_get_watchlist_v1: 'Return a bounded liquidity-verified watchlist with pinned screening state, evidenced USD virtual depth, anchors, registry version and explicit partial coverage. Discovery only; consumers must re-read state before quoting.',
+  flashloan_get_arb_universe_v1: 'Return the signed arb cycle universe at one pinned block: reviewed quotable pools with bounded tick hydration and ±50/100/200 bps depth, directed closed cycles per lendable asset with live lender capacity, ranked by verified realized arbs. Cached; a cold key returns retryable UNIVERSE_WARMING while a shared build runs. Discovery only.',
   flashloan_get_registry_v1: 'Return a versioned discovery registry of venues, lenders, converters, hooks and execution metadata. This does not authorize execution or replace consumer configuration.',
   flashloan_resolve_pool_inventory_v1: 'Resolve provider pool IDs to reviewed manager and canonical PoolKey with bounded RPC provenance. Unresolved dependencies remain explicit; no execution.',
   flashloan_research_candidates_v2: 'Compose target discovery, canonical identity, admitted snapshot and amount-aware research within one budget. Returns complete target dispositions and unsigned modeled plans.',
@@ -30,7 +31,7 @@ const descriptions: Record<PublicOperation, string> = {
   xrpl_get_holder_report_v1: 'Compare XRP holding, assumed XRP yield, XRP/RLUSD liquidity provision and an RLUSD buffer under a price scenario. Use a fresh xrpl_routes envelope from discovery to estimate separate AMM and funded order-book exits in RLUSD.',
 };
 const annotatedReadOnlyTools = new Set<PublicOperation>([
-  'flashloan_get_token_movers', 'flashloan_get_watchlist_v1', 'flashloan_get_registry_v1', 'flashloan_rlusd_devtools_v1', 'xrpl_get_holder_report_v1',
+  'flashloan_get_token_movers', 'flashloan_get_watchlist_v1', 'flashloan_get_registry_v1', 'flashloan_get_arb_universe_v1', 'flashloan_rlusd_devtools_v1', 'xrpl_get_holder_report_v1',
 ]);
 function allowedOrigins(url: URL) {
   const configured = (process.env.FLASHLOAN_PUBLIC_ORIGINS ?? 'https://mcp.overguild.com,https://hypermove.xyz,https://hypermove.duckdns.org').split(',').map((v) => v.trim()).filter(Boolean);

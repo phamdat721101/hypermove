@@ -101,7 +101,7 @@ describe('M5a arb contracts S1–S6', () => {
     expect(ok(replayEventSchema, { ...replay, trigger_tx: 'd'.repeat(64) })).toBe(false);
     expect(ok(coverageArbSchema, coverage)).toBe(true);
     expect(ok(coverageArbSchema, { ...coverage, surprise: 1 })).toBe(false);
-    const universe = { schema_version: 'flashloan.arb.universe.v1', network: 'arbitrum', chain_id: 42161, block: BLOCK, registry_version: hash('r'), cache_key: hash('k'), outcome: 'SUCCESS', pools: [pool], cycles: [cycle], coverage, warnings: [] };
+    const universe = { schema_version: 'flashloan.arb.universe.v1', network: 'arbitrum', chain_id: 42161, block: BLOCK, registry_version: hash('r'), cache_key: hash('k'), outcome: 'SUCCESS', pools: [pool], cycles: [cycle], coverage: { ...coverage, realized_value_share: null, ground_truth_window: null }, warnings: [] };
     expect(ok(arbUniversePayloadSchema, universe)).toBe(true);
     expect(ok(arbUniversePayloadSchema, { ...universe, cache_key: '0x' + hash('k') })).toBe(false);
     const docs = arbDocumentSchemas();
