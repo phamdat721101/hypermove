@@ -20,8 +20,7 @@ export type ComputeTask = { kind: 'solve'; snapshot: EvmSnapshot; asset: string;
 export type ComputeAdapter = (task: ComputeTask, signal?: AbortSignal) => Promise<unknown>;
 export function computeInline(task: ComputeTask) {
   if (task.kind === 'xrpl') return xrplCycles(task.snapshot);
-  const pools = task.snapshot.lender.provider === 'UNISWAP_V3_FLASH' ? task.snapshot.pools.filter((p) => p.address !== task.snapshot.lender.address) : task.snapshot.pools;
-  return solve(pools, task.asset, task.snapshot.lender, task.policy, task.search);
+  return solve(task.snapshot.pools, task.asset, task.snapshot.lender, task.policy, task.search);
 }
 export type EngineOptions = { endpoints: Partial<Record<'ethereum' | 'arbitrum' | 'base' | 'robinhood' | 'xrpl', string>>; deployments: Deployment[]; evidence?: ResearchEvidence[]; sui?: SuiOptions; fetcher?: typeof fetch; engine?: EngineAdapter; budget?: RoundBudget; initializations?: InitializationLocator[]; discoveryRegistry?: DiscoveryRegistry };
 /** Domain execution shared by owned jobs and stateless requests; no repositories or memory. */

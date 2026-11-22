@@ -170,8 +170,13 @@ export function quoteRoute(route: Route, initial: Map<string, Pool>, amount: big
   return { output, state };
 }
 
+/** A Uniswap-V3-style flash lender is locked during its callback, so routes may not swap through the lender pool. */
+export function lenderRoutablePools(pools: Pool[], lender: { provider?: string; address: string }): Pool[] {
+  return lender.provider === 'UNISWAP_V3_FLASH' ? pools.filter((p) => p.address !== lender.address) : pools;
+}
 export type SearchOptions = { targets: string[]; deadline_ms: number; refine?: boolean };
-export function solve(pools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string }, policy: RiskPolicy, options?: SearchOptions) {
+export function solve(allPools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string; provider?: string }, policy: RiskPolicy, options?: SearchOptions) {
+  const pools = lenderRoutablePools(allPools, lender);
   const started = performance.now(), timeBudgetMs = options ? Math.min(5000, options.deadline_ms) : 5000; let timeLimited = false;
   const capabilities = pools.map((p) => [p.address, poolQuoteCapability(p)] as const);
   if (capabilities.some(([, c]) => c === 'none')) throw new ResearchError('QUOTE_UNSUPPORTED', 'Sizing refuses discovery-only pools (quote capability none).');

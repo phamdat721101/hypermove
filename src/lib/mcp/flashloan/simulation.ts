@@ -3,9 +3,9 @@ import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { encodeFunctionData, parseAbi, keccak256, type Address, type Hex } from 'viem';
 import { z } from 'zod';
-import { ResearchError, hash, type Input } from './contracts';
+import { ResearchError, hash, LENDER_PROVIDERS, type Input } from './contracts';
 import { EvmReader, evmSnapshotSchema, type EvmSnapshot } from './evm';
-import { quotePool, type Pool } from './math';
+import { quotePool, lenderRoutablePools, type Pool } from './math';
 
 export const planSchema = z.object({ snapshot_id: z.string(), snapshot: evmSnapshotSchema, borrow_asset: z.string(), policy: z.object({ network_cost: z.string(), min_profit: z.string() }).passthrough(), solution: z.object({ principal: z.string(), allocations: z.array(z.object({ route: z.object({ id: z.string(), hops: z.array(z.object({ pool: z.string(), token_in: z.string(), token_out: z.string() })) }), amount: z.string() })), expected_profit: z.string() }).passthrough() }).passthrough();
 export type Plan = z.infer<typeof planSchema>;
@@ -18,14 +18,14 @@ export function compilePlan(plan: Plan, executor: string) {
     let amount = BigInt(allocation.amount);
     for (const hop of allocation.route.hops) {
       const pool = state.get(hop.pool); if (!pool) throw new ResearchError('INVALID_ROUTE', 'Plan references missing pool.');
-      if (plan.snapshot.lender.provider === 'UNISWAP_V3_FLASH' && pool.address === plan.snapshot.lender.address) throw new ResearchError('LENDER_POOL_LOCK', 'Flash lender pool cannot also be swapped during its callback.');
+      if (!lenderRoutablePools([pool], plan.snapshot.lender).length) throw new ResearchError('LENDER_POOL_LOCK', 'Flash lender pool cannot also be swapped during its callback.');
       const quote = quotePool(pool, hop.token_in, amount);
       if (pool.kind === 'clmm' && pool.v4) extra.push({ index: BigInt(steps.length), key: pool.v4.key as { currency0: Address; currency1: Address; fee: number; tickSpacing: number; hooks: Address } });
       steps.push({ pool: (pool.kind === 'wrap' ? pool.wrapped_native : pool.kind === 'clmm' && pool.v4 ? pool.v4.manager : pool.address) as Address, tokenIn: hop.token_in as Address, tokenOut: hop.token_out as Address, kind: pool.kind === 'wrap' ? pool.direction === 'unwrap' ? 3 : 4 : pool.kind === 'v2' ? 0 : pool.v4 ? 2 : 1, amountIn: amount, minOut: quote.amount_out });
       state.set(pool.address, quote.pool); amount = quote.amount_out;
     }
   }
-  const provider = ['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH'].indexOf(plan.snapshot.lender.provider);
+  const provider = (LENDER_PROVIDERS as readonly string[]).indexOf(plan.snapshot.lender.provider);
   if (provider < 0) throw new ResearchError('UNSUPPORTED_LENDER', 'Plan lender is unsupported.');
   const args = [plan.snapshot.lender.address as Address, provider, plan.borrow_asset as Address, BigInt(plan.solution.principal), steps] as const;
   const minProfit = BigInt(plan.policy.min_profit) + BigInt(plan.policy.network_cost);

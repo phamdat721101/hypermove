@@ -1,8 +1,8 @@
-import { CHAINS, hash, ResearchError, riskPolicy, type PoolRef } from './contracts';
+import { CHAINS, hash, ResearchError, riskPolicy, LENDER_PROVIDERS, lendersV1Enabled, type LenderProvider, type PoolRef } from './contracts';
 import { evmSnapshotSchema, type EvmSnapshot } from './evm';
 import type { ResearchEngine, ComputeAdapter } from './engine';
 import type { solve } from './math';
-import { quoteRoute, ceilDiv } from './math';
+import { quoteRoute, ceilDiv, lenderRoutablePools } from './math';
 import { planSchema } from './simulation';
 import { PublicProofs } from './public-proof';
 import { PUBLIC_LIMITS, proofEnvelopeSchema, type ProofEnvelope } from './public-contracts';
@@ -124,11 +124,11 @@ export async function researchCandidatesV2(engine: ResearchEngine, raw: unknown,
       else if (anchor === ZERO_ADDRESS) { coverageBlocked = true; note('FUNDING_SOURCE_REQUIRED', 'The current ingestion lenders support ERC20 funding only; native identity is preserved.'); }
       else {
         engine.requireResearch(network);
-        const lenders = engine.options.deployments.filter((d) => d.network === network && ['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH'].includes(d.adapter)).sort((a, b) => (a.adapter + a.address).localeCompare(b.adapter + b.address));
+        const lenders = engine.options.deployments.filter((d) => d.network === network && (LENDER_PROVIDERS as readonly string[]).includes(d.adapter) && (d.adapter !== 'MORPHO_BLUE' || lendersV1Enabled())).sort((a, b) => (a.adapter + a.address).localeCompare(b.adapter + b.address));
         for (const lender of lenders) {
           budget.check();
           try {
-            snapshot = await engine.snapshot({ idempotency_key: 'stateless-v2', network, pools: poolRefs, lender: { provider: lender.adapter as 'AAVE_V3' | 'BALANCER_V2' | 'UNISWAP_V3_FLASH', address: lender.address, asset: anchor } }, budget.signal, PUBLIC_LIMITS.ticks, input.costEvidence?.state.blockNumber);
+            snapshot = await engine.snapshot({ idempotency_key: 'stateless-v2', network, pools: poolRefs, lender: { provider: lender.adapter as LenderProvider, address: lender.address, asset: anchor } }, budget.signal, PUBLIC_LIMITS.ticks, input.costEvidence?.state.blockNumber);
             if (BigInt(snapshot.lender.capacity) <= 0n) { snapshot = null; continue; }
             break;
           } catch (error) { if (!(error instanceof ResearchError) || ['CANCELLED', 'ROUND_DEADLINE', 'RESOLUTION_BUDGET', 'REORG'].includes(error.code)) throw error; }
@@ -152,7 +152,7 @@ export async function researchCandidatesV2(engine: ResearchEngine, raw: unknown,
         const totalEvaluations = Math.min(input.limits.maxEvaluations, PUBLIC_LIMITS.evaluations);
         const solverPolicy = riskPolicy.parse({ max_principal: policy.principalCapRaw, min_profit: threshold.toString(), max_price_impact_bps: policy.maxPriceImpactBps, max_routes: Math.min(policy.maxRoutes, input.limits.maxRoutes, PUBLIC_LIMITS.routes), max_evaluations: Math.max(1, totalEvaluations - Math.min(selected.length, totalEvaluations - 1)), network_cost: (BigInt(input.costEvidence!.networkCostUpperRaw) + BigInt(input.costEvidence!.otherCostUpperRaw)).toString() });
         effectivePolicy = solverPolicy;
-        const pools = snapshot.lender.provider === 'UNISWAP_V3_FLASH' ? snapshot.pools.filter((p) => p.address !== snapshot!.lender.address) : snapshot.pools;
+        const pools = lenderRoutablePools(snapshot.pools, snapshot.lender);
         const computeMs = Math.max(1, Math.min(PUBLIC_LIMITS.cpu_ms, budget.remainingMs())), computeDeadline = performance.now() + computeMs;
         search = await compute({ kind: 'solve', snapshot: { ...snapshot, pools }, asset: anchor, policy: solverPolicy, search: { targets: selected.map((id) => currencyAddress(input.chainId, id)), deadline_ms: computeMs, refine: true } }, budget.signal) as ReturnType<typeof solve>;
         budget.evaluations(search.evaluations);

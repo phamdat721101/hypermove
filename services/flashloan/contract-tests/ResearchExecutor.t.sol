@@ -139,3 +139,64 @@ contract WrappedExecutorTest {
         require(!wrong,"WRAP_ASSET_CHECK");
     }
 }
+
+/// Morpho Blue semantics: fee 0, repayment is pulled with transferFrom (so the executor must approve, not transfer).
+contract ResearchMorpho {
+    uint256 private extra;
+    constructor(uint256 pullExtra) { extra = pullExtra; }
+    function flashLoan(address token,uint256 assets,bytes calldata data) external {
+        ResearchToken(token).transfer(msg.sender,assets);
+        ResearchExecutor(payable(msg.sender)).onMorphoFlashLoan(assets,data);
+        ResearchToken(token).transferFrom(msg.sender,address(this),assets + extra);
+    }
+}
+/// Pancake V3 pool shape: same swap ABI as Uniswap V3, but pays through pancakeV3SwapCallback.
+contract ResearchPancakePool {
+    address public token0; address public token1;
+    constructor(address a,address b) { token0 = a; token1 = b; }
+    function swap(address recipient,bool zeroForOne,int256 amountSpecified,uint160,bytes calldata data) external returns(int256 a0,int256 a1) {
+        require(amountSpecified > 0,"EXACT_IN");
+        uint256 amountIn = uint256(amountSpecified); uint256 amountOut = amountIn * 2;
+        (address tokenIn,address tokenOut) = zeroForOne ? (token0,token1) : (token1,token0);
+        ResearchToken(tokenOut).transfer(recipient,amountOut);
+        uint256 beforeIn = ResearchToken(tokenIn).balanceOf(address(this));
+        (a0,a1) = zeroForOne ? (amountSpecified,-int256(amountOut)) : (-int256(amountOut),amountSpecified);
+        ResearchExecutor(payable(msg.sender)).pancakeV3SwapCallback(a0,a1,data);
+        require(ResearchToken(tokenIn).balanceOf(address(this)) >= beforeIn + amountIn,"IIA");
+    }
+}
+contract MorphoPancakeExecutorTest {
+    function fixture() private returns(ResearchToken a,ResearchToken b,ResearchPancakePool pool,ResearchExecutor executor,ResearchExecutor.Step[] memory steps) {
+        a = new ResearchToken(); b = new ResearchToken(); pool = new ResearchPancakePool(address(a),address(b)); executor = new ResearchExecutor();
+        a.mint(address(pool),10000); b.mint(address(pool),10000);
+        steps = new ResearchExecutor.Step[](2);
+        steps[0] = ResearchExecutor.Step(address(pool),address(a),address(b),1,100,200);
+        steps[1] = ResearchExecutor.Step(address(pool),address(b),address(a),1,200,400);
+    }
+    function testMorphoFlashRoundTripThroughPancakeCallback() public {
+        (ResearchToken a,,,ResearchExecutor executor,ResearchExecutor.Step[] memory steps) = fixture();
+        ResearchMorpho morpho = new ResearchMorpho(0); a.mint(address(morpho),1000);
+        uint256 profit = executor.execute(address(morpho),3,address(a),100,steps,300);
+        require(profit == 300 && a.balanceOf(address(executor)) == 300,"PROFIT");
+        require(a.balanceOf(address(morpho)) == 1000,"MORPHO_REPAID_BY_TRANSFER_FROM");
+        require(a.allowance(address(executor),address(morpho)) == 0,"EXACT_APPROVAL_CONSUMED");
+    }
+    function testMorphoCannotPullMoreThanBorrowed() public {
+        (ResearchToken a,,,ResearchExecutor executor,ResearchExecutor.Step[] memory steps) = fixture();
+        ResearchMorpho greedy = new ResearchMorpho(1); a.mint(address(greedy),1000);
+        (bool ok,) = address(executor).call(abi.encodeCall(executor.execute,(address(greedy),3,address(a),100,steps,0)));
+        require(!ok,"APPROVAL_NOT_EXACT");
+    }
+    function testUnauthorizedCallbacksRevert() public {
+        (ResearchToken a,,ResearchPancakePool pool,ResearchExecutor executor,) = fixture();
+        a.mint(address(executor),1000);
+        (bool morpho,) = address(executor).call(abi.encodeCall(executor.onMorphoFlashLoan,(100,abi.encode(new ResearchExecutor.Step[](0),new ResearchExecutor.V4Step[](0)))));
+        require(!morpho,"FORGED_MORPHO_CALLBACK");
+        (bool pancake,) = address(executor).call(abi.encodeCall(executor.pancakeV3SwapCallback,(int256(100),int256(-200),bytes(""))));
+        require(!pancake,"FORGED_PANCAKE_CALLBACK");
+        (bool viaPool,) = address(pool).call(abi.encodeCall(pool.swap,(address(this),true,int256(100),uint160(0),bytes(""))));
+        require(!viaPool && a.balanceOf(address(executor)) == 1000,"UNLOCKED_POOL_CALLBACK");
+        (bool unknown,) = address(executor).call(abi.encodeCall(executor.execute,(address(pool),4,address(a),100,new ResearchExecutor.Step[](0),0)));
+        require(!unknown,"UNKNOWN_PROVIDER");
+    }
+}

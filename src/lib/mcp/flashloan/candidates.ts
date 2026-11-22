@@ -4,7 +4,7 @@ import { moverInputSchema } from './movers';
 import type { EvmSnapshot } from './evm';
 import type { ResearchEngine, ComputeAdapter } from './engine';
 import { candidateResearchSchema } from './public-contracts';
-import type { solve } from './math';
+import { lenderRoutablePools, type solve } from './math';
 
 const outcome = z.enum(['EVALUATED', 'REJECTED', 'DEFERRED_BUDGET', 'INCOMPLETE_DATA', 'UNSUPPORTED']);
 const entry = z.object({ asset_id: address, sources: z.array(z.enum(['explicit', 'movers'])), outcome, reason_code: z.string(), evaluated_route_ids: z.array(z.string()), next_dependency: z.string().nullable() }).strict();
@@ -45,7 +45,7 @@ export async function researchCandidates(engine: ResearchEngine, input: z.infer<
   let search: ReturnType<typeof solve> | null = null;
   if (!blocked && policy && selected.length) {
     if (BigInt(snapshot.lender.fee_denominator) <= 0n) throw new ResearchError('INVALID_INPUT', 'Lender fee denominator must be positive.');
-    const pools = snapshot.lender.provider === 'UNISWAP_V3_FLASH' ? snapshot.pools.filter((p) => p.address !== snapshot.lender.address) : snapshot.pools;
+    const pools = lenderRoutablePools(snapshot.pools, snapshot.lender);
     search = await compute({ kind: 'solve', snapshot: { ...snapshot, pools }, asset: snapshot.lender.asset, policy, search: { targets: selected, deadline_ms: input.limits.deadline_ms } }, signal) as ReturnType<typeof solve>;
   }
   const routes = search?.route_catalog ?? [];

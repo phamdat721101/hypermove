@@ -8,6 +8,8 @@ interface Token {
 }
 interface Aave { function flashLoanSimple(address,address,uint256,bytes calldata,uint16) external; }
 interface Vault { function flashLoan(address,address[] calldata,uint256[] calldata,bytes calldata) external; }
+/// Morpho Blue: sends `assets`, calls onMorphoFlashLoan, then pulls `assets` back with transferFrom (fee 0).
+interface Morpho { function flashLoan(address,uint256,bytes calldata) external; }
 interface Pool {
     function token0() external view returns(address);
     function token1() external view returns(address);
@@ -59,7 +61,9 @@ contract ResearchExecutor {
             address[] memory tokens = new address[](1); tokens[0] = token;
             uint256[] memory amounts = new uint256[](1); amounts[0] = amount;
             Vault(source).flashLoan(address(this),tokens,amounts,data);
-        } else {
+        } else if (provider == 3) Morpho(source).flashLoan(token,amount,data);
+        else {
+            require(provider == 2, "PROVIDER");
             require(token == Pool(source).token0() || token == Pool(source).token1(), "ASSET");
             bool zero = token == Pool(source).token0(); Pool(source).flash(address(this),zero ? amount : 0,zero ? 0 : amount,data);
         }
@@ -78,6 +82,10 @@ contract ResearchExecutor {
     }
     function uniswapV3FlashCallback(uint256 fee0,uint256 fee1,bytes calldata data) external {
         require(msg.sender == lender, "CALLBACK"); run(data); safeTransfer(asset,lender,principal + fee0 + fee1);
+    }
+    function onMorphoFlashLoan(uint256 assets,bytes calldata data) external {
+        require(msg.sender == lender && assets == principal, "CALLBACK");
+        run(data); safeApprove(asset,lender,assets);
     }
     function run(bytes calldata data) private {
         (Step[] memory steps,V4Step[] memory extra) = abi.decode(data,(Step[],V4Step[]));
@@ -137,6 +145,7 @@ contract ResearchExecutor {
     }
     function uniswapV3SwapCallback(int256 amount0,int256 amount1,bytes calldata) external { pay(amount0,amount1); }
     function algebraSwapCallback(int256 amount0,int256 amount1,bytes calldata) external { pay(amount0,amount1); }
+    function pancakeV3SwapCallback(int256 amount0,int256 amount1,bytes calldata) external { pay(amount0,amount1); }
     function pay(int256 amount0,int256 amount1) private {
         require(msg.sender == callbackPool && callbackPool != address(0),"SWAP_CALLBACK");
         require((amount0 > 0) != (amount1 > 0),"DELTA");

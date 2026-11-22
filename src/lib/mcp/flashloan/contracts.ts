@@ -28,10 +28,17 @@ export const validateDiscoveryTokens = (input: { network: string; tokens: string
     const schema = input.network === 'sui' ? coinType : address;
     for (const key of ['tokens', 'exclude_tokens'] as const) input[key].forEach((token, i) => { if (!schema.safeParse(token).success) ctx.addIssue({ code: 'custom', path: [key, i], message: 'Invalid token identifier for network.' }); });
   };
+/** Flash lenders in ResearchExecutor provider-id order (index = `provider` argument). MORPHO_BLUE is admitted only behind FLASHLOAN_ARB_LENDERS_V1 so the flag-off tool list stays byte-identical. */
+export const LENDER_PROVIDERS = ['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH', 'MORPHO_BLUE'] as const;
+export type LenderProvider = typeof LENDER_PROVIDERS[number];
+export const lendersV1Enabled = () => process.env.FLASHLOAN_ARB_LENDERS_V1 === 'true';
+const ingestSchema = <P extends readonly [string, ...string[]]>(providers: P) => z.object({ ...start, network: evmNetwork, pools: z.array(poolRef).min(1).max(20), lender: z.object({ provider: z.enum(providers), address, asset: address }).strict() }).strict();
+const ingestLegacy = ingestSchema(['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH'] as const);
+const ingestLendersV1 = ingestSchema(LENDER_PROVIDERS);
 export const operationSchemas = {
   ...suiOperations,
   flashloan_discover_arbitrage_pools: discoveryRequestSchema.superRefine(validateDiscoveryTokens),
-  flashloan_ingest_l2_tickmap_and_reserves: z.object({ ...start, network: evmNetwork, pools: z.array(poolRef).min(1).max(20), lender: z.object({ provider: z.enum(['AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH']), address, asset: address }).strict() }).strict(),
+  get flashloan_ingest_l2_tickmap_and_reserves(): typeof ingestLendersV1 { return (lendersV1Enabled() ? ingestLendersV1 : ingestLegacy) as unknown as typeof ingestLendersV1; },
   flashloan_solve_dynamic_route_split: z.object({ ...start, snapshot_id: digest, borrow_asset: address, policy: riskPolicy }).strict(),
   flashloan_simulate_atomic_revm: z.object({ ...start, plan_id: digest, caller: address, executor_mode: z.enum(['existing', 'fixture']), executor: address }).strict(),
   xrpl_discover_arbitrage_routes: z.object({ ...start, network: z.literal('xrpl'), assets: z.array(xrplAsset).min(2).max(10), funding: z.discriminatedUnion('mode', [z.object({ mode: z.literal('account'), account: xrplAccount }).strict(), z.object({ mode: z.literal('hypothetical'), balances: z.array(z.object({ asset: xrplAsset, amount: z.string().regex(/^(0|[1-9][0-9]*)(\.[0-9]+)?$/) }).strict()).min(1).max(10) }).strict()]) }).strict(),

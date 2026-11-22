@@ -5,7 +5,7 @@ import { address, CHAINS, ResearchError, hash, type EvmNetwork, type Input, type
 import { poolSchema, bitmapPosition, initializedTicks, quoteCapability, saltKind, canonicalityProofSchema, type Pool, type CanonicalityProof } from './math';
 import { JsonClient } from './transport';
 
-export const deploymentSchema = z.object({ network: evmNetwork, address, adapter: z.enum(['UNISWAP_V2', 'UNISWAP_V3', 'UNISWAP_V4', 'WRAPPED_NATIVE', 'ALGEBRA', 'AERODROME_VOLATILE', 'AERODROME_STABLE', 'AERODROME_CLMM', 'AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH']), factory: address.optional(), factory_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), state_view: address.optional(), state_view_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), code_hash: z.string().regex(/^0x[0-9a-f]{64}$/), version: z.string().min(1), fee_pips: z.number().int().min(0).max(999999).optional(), initialization_block: z.string().regex(/^(0|[1-9][0-9]{0,77})$/).optional(),
+export const deploymentSchema = z.object({ network: evmNetwork, address, adapter: z.enum(['UNISWAP_V2', 'UNISWAP_V3', 'UNISWAP_V4', 'WRAPPED_NATIVE', 'ALGEBRA', 'AERODROME_VOLATILE', 'AERODROME_STABLE', 'AERODROME_CLMM', 'AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH', 'MORPHO_BLUE']), factory: address.optional(), factory_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), state_view: address.optional(), state_view_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), code_hash: z.string().regex(/^0x[0-9a-f]{64}$/), version: z.string().min(1), fee_pips: z.number().int().min(0).max(999999).optional(), initialization_block: z.string().regex(/^(0|[1-9][0-9]{0,77})$/).optional(),
   // Factory template (A5'): a pool not pinned by address is sized only when the factory registers it AND it is the CREATE2 image of these values.
   deployer: address.optional(), init_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), salt_kind: saltKind.optional(), adapter_version: z.string().min(1).optional(), canonicality: canonicalityProofSchema.optional() }).strict()
   .refine((d) => [d.deployer, d.init_code_hash, d.salt_kind].every((v) => v === undefined) || Boolean(d.deployer && d.init_code_hash && d.salt_kind && d.factory && d.factory_code_hash), 'A factory template needs deployer, init_code_hash, salt_kind, factory and factory_code_hash together.');
@@ -245,6 +245,9 @@ export class EvmReader {
     } else if (l.provider === 'BALANCER_V2') {
       const collector = wordAddress((await this.call(l.address, 'getProtocolFeesCollector()', [], block, signal))[0]);
       numerator = (await this.call(collector, 'getFlashLoanFeePercentage()', [], block, signal))[0]; denominator = 10n ** 18n;
+    } else if (l.provider === 'MORPHO_BLUE') {
+      // Morpho Blue has no flash fee parameter: flashLoan() pulls back exactly `assets`. Capacity is the token balance it custodies.
+      numerator = 0n; denominator = 1n;
     } else { numerator = (await this.call(l.address, 'fee()', [], block, signal))[0]; denominator = 1000000n;
       const [t0, t1] = await Promise.all([this.call(l.address, 'token0()', [], block, signal), this.call(l.address, 'token1()', [], block, signal)]);
       if (![wordAddress(t0[0]), wordAddress(t1[0])].includes(l.asset)) throw new ResearchError('INVALID_ASSET', 'Flash lender does not contain the funding asset.');
