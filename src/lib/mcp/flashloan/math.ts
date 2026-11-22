@@ -30,7 +30,12 @@ export function initializedTicks(word: number, bitmap: bigint, spacing: number):
   for (let bit = 0; bit < 256; bit++) if (bitmap & (1n << BigInt(bit))) { const tick = (word * 256 + bit) * spacing; if (Math.abs(tick) <= 887272) out.push(tick); }
   return out;
 }
-const base = { address: z.union([address, bytes32]), token0: address, token1: address, decimals0: z.number().int().min(0).max(36), decimals1: z.number().int().min(0).max(36), fee_pips: z.number().int().min(0).max(999999), code_hash: z.string(), adapter_version: z.string() };
+export const saltKind = z.enum(['V3_FEE', 'SPACING', 'ALGEBRA', 'V2_PACKED']);
+/** S1 canonicality: the pool address is the CREATE2 image of a reviewed (deployer, salt, init code hash). */
+export const canonicalityProofSchema = z.object({ kind: z.literal('create2'), chain_id: z.number().int().positive(), adapter_version: z.string().min(1), factory: address, deployer: address, init_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/), salt_kind: saltKind, salt_args: z.array(z.string().min(1)).min(2).max(3), salt: z.string().regex(/^0x[0-9a-f]{64}$/) }).strict();
+export type CanonicalityProof = z.infer<typeof canonicalityProofSchema>;
+// Optional fields are set only off the legacy path (non-exact quote model / factory-derived pool), so pinned outputs are unchanged.
+const base = { address: z.union([address, bytes32]), token0: address, token1: address, decimals0: z.number().int().min(0).max(36), decimals1: z.number().int().min(0).max(36), fee_pips: z.number().int().min(0).max(999999), code_hash: z.string(), adapter_version: z.string(), quote_capability: z.literal('estimate').optional(), canonicality: canonicalityProofSchema.optional() };
 export const poolSchema = z.discriminatedUnion('kind', [
   z.object({ ...base, kind: z.literal('wrap'), wrapped_native: address, direction: z.enum(['wrap', 'unwrap']) }).strict(),
   z.object({ ...base, kind: z.literal('v2'), reserve0: uint, reserve1: uint, stable: z.boolean().default(false) }).strict(),
@@ -38,11 +43,41 @@ export const poolSchema = z.discriminatedUnion('kind', [
 ]);
 export type Pool = z.infer<typeof poolSchema>;
 export type Quote = { amount_out: bigint; pool: Pool; spot_out: bigint };
+
+/**
+ * Capability matrix (review file 11 §A): which local quote model is exact for a pool family.
+ * `exact` may be sized; `estimate` may be sized but the result must be labelled INCONCLUSIVE; `none` is discovery-only.
+ */
+export type QuoteCapability = 'exact' | 'estimate' | 'none';
+export type QuoteFamily = 'UNISWAP_V2' | 'UNISWAP_V3' | 'UNISWAP_V4' | 'WRAPPED_NATIVE' | 'ALGEBRA' | 'AERODROME_VOLATILE' | 'AERODROME_STABLE' | 'AERODROME_CLMM' | 'AAVE_V3' | 'BALANCER_V2' | 'UNISWAP_V3_FLASH';
+/** Adapter versions whose quotePool output equals the venue's on-chain QuoterV2 (live parity, tests/flashloan-arb-integrity.test.ts). */
+export const QUOTE_PARITY_EXACT: ReadonlySet<string> = new Set(['uniswap-v3', 'pancake-v3']);
+export function quoteCapability(family: QuoteFamily, adapterVersion: string, facts: { hooked?: boolean; dynamic_fee?: boolean } = {}): QuoteCapability {
+  switch (family) {
+    case 'WRAPPED_NATIVE': case 'AERODROME_VOLATILE': return 'exact';
+    case 'UNISWAP_V2': return facts.dynamic_fee ? 'none' : 'exact'; // fixed fee_pips from the reviewed template
+    case 'UNISWAP_V4': return facts.hooked || facts.dynamic_fee ? 'none' : 'exact';
+    case 'UNISWAP_V3': return /^pancake/.test(adapterVersion) ? (QUOTE_PARITY_EXACT.has(adapterVersion) ? 'exact' : 'estimate') : 'exact';
+    case 'AERODROME_CLMM': return QUOTE_PARITY_EXACT.has(adapterVersion) ? 'exact' : 'estimate'; // Slipstream: fee module, no parity yet
+    case 'ALGEBRA': case 'AERODROME_STABLE': return 'estimate'; // dynamic/directional fee; stable curve
+    default: return 'none'; // lenders are not swap venues
+  }
+}
+/** The same matrix applied to a snapshot pool (family inferred from kind and adapter version), never better than its own label. */
+export function poolQuoteCapability(pool: Pool): QuoteCapability {
+  const version = pool.adapter_version;
+  const inferred = pool.kind === 'wrap' ? quoteCapability('WRAPPED_NATIVE', version)
+    : pool.kind === 'v2' ? quoteCapability(pool.stable ? 'AERODROME_STABLE' : 'UNISWAP_V2', version, { dynamic_fee: /dynamic|deltaswap/i.test(version) })
+    : pool.v4 ? quoteCapability('UNISWAP_V4', version, { hooked: BigInt(pool.v4.key.hooks) !== 0n, dynamic_fee: pool.v4.key.fee === 0x800000 })
+    : quoteCapability(/^algebra/i.test(version) ? 'ALGEBRA' : /^slipstream/i.test(version) ? 'AERODROME_CLMM' : 'UNISWAP_V3', version);
+  return inferred === 'exact' && pool.quote_capability === 'estimate' ? 'estimate' : inferred;
+}
 function stableK(x: bigint, y: bigint): bigint { return x * y * (x * x + y * y); }
 
 /** Every call returns a new state; sequential routes cannot accidentally reuse old reserves. */
 export function quotePool(pool: Pool, tokenIn: string, amount: bigint): Quote {
   if (amount < 0n || amount > MAX_UINT256) throw new ResearchError('INVALID_AMOUNT', 'Input outside uint256.');
+  if (poolQuoteCapability(pool) === 'none') throw new ResearchError('QUOTE_UNSUPPORTED', 'No exact or estimate quote model for this pool family; it is discovery-only.');
   const zero = tokenIn === pool.token0;
   if (!zero && tokenIn !== pool.token1) throw new ResearchError('INVALID_ROUTE', 'Input token is not in pool.');
   const protocolFee = pool.kind === 'clmm' && pool.v4 ? (zero ? pool.v4.protocol_fee & 4095 : pool.v4.protocol_fee >> 12) : 0;
@@ -138,6 +173,9 @@ export function quoteRoute(route: Route, initial: Map<string, Pool>, amount: big
 export type SearchOptions = { targets: string[]; deadline_ms: number; refine?: boolean };
 export function solve(pools: Pool[], asset: string, lender: { capacity: string; fee_numerator: string; fee_denominator: string; address: string }, policy: RiskPolicy, options?: SearchOptions) {
   const started = performance.now(), timeBudgetMs = options ? Math.min(5000, options.deadline_ms) : 5000; let timeLimited = false;
+  const capabilities = pools.map((p) => [p.address, poolQuoteCapability(p)] as const);
+  if (capabilities.some(([, c]) => c === 'none')) throw new ResearchError('QUOTE_UNSUPPORTED', 'Sizing refuses discovery-only pools (quote capability none).');
+  const estimatePools = capabilities.filter(([, c]) => c === 'estimate').map(([a]) => a);
   const enumerated = closedRoutes(pools, asset);
   const routes = options ? enumerated.filter((r) => r.hops.some((h) => options.targets.includes(h.token_in) || options.targets.includes(h.token_out))).sort((a, b) => a.id.localeCompare(b.id)) : enumerated;
   const evaluatedRoutes = new Set<string>();
@@ -243,5 +281,6 @@ export function solve(pools: Pool[], asset: string, lender: { capacity: string; 
       }
     }
   }
-  return { ...(options ? { target_results: [...targetResults.values()], evaluated_route_ids: [...evaluatedRoutes], route_catalog: routes, route_enumeration_truncated: enumerated.length >= 64 } : {}), status: best ? 'FEASIBLE' : timeLimited || coarseLimited || evaluations >= policy.max_evaluations || rejected.has('INSUFFICIENT_TICK_COVERAGE') ? 'INCONCLUSIVE' : 'NO_OPPORTUNITY', solution: best ?? null, routes_considered: routes.length, evaluations, rejected_evaluations: Object.fromEntries(rejected), search: { classification: 'BOUNDED_HEURISTIC', termination: timeLimited ? 'TIME_BUDGET' : coarseLimited || evaluations >= policy.max_evaluations ? 'EVALUATION_BUDGET' : 'GRID_COMPLETE', time_budget_ms: timeBudgetMs, max_principal: cap.toString(), global_optimum_proven: false }, cost_assumptions: { network_cost: policy.network_cost }, policy_hash: hash(policy) };
+  // Estimate-tier pools are marked so callers label the result INCONCLUSIVE; exact-only results are unchanged.
+  return { ...(estimatePools.length ? { quote_capability: 'estimate' as const, estimate_pool_ids: estimatePools } : {}), ...(options ? { target_results: [...targetResults.values()], evaluated_route_ids: [...evaluatedRoutes], route_catalog: routes, route_enumeration_truncated: enumerated.length >= 64 } : {}), status: best ? 'FEASIBLE' : timeLimited || coarseLimited || evaluations >= policy.max_evaluations || rejected.has('INSUFFICIENT_TICK_COVERAGE') ? 'INCONCLUSIVE' : 'NO_OPPORTUNITY', solution: best ?? null, routes_considered: routes.length, evaluations, rejected_evaluations: Object.fromEntries(rejected), search: { classification: 'BOUNDED_HEURISTIC', termination: timeLimited ? 'TIME_BUDGET' : coarseLimited || evaluations >= policy.max_evaluations ? 'EVALUATION_BUDGET' : 'GRID_COMPLETE', time_budget_ms: timeBudgetMs, max_principal: cap.toString(), global_optimum_proven: false }, cost_assumptions: { network_cost: policy.network_cost }, policy_hash: hash(policy) };
 }

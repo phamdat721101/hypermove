@@ -1,12 +1,13 @@
 import { decodeEventLog, keccak256, parseAbi, type Hex } from 'viem';
 import { z } from 'zod';
 import { ResearchError, hash } from './contracts';
-import { EvmReader, encodeCall, words, type Header } from './evm';
+import { EvmReader, encodeCall, words, type Header, type FactoryLookup, type MembershipClaim } from './evm';
 import type { ResearchEngine } from './engine';
 import type { PoolInventory } from './discovery';
 import { DiscoveryRegistry, type Venue, type RegistrySeed } from './discovery-registry';
 import { canonicalPoolId } from './pool-resolution';
 import { RoundBudget, boundedEvmLogs } from './transport';
+import { quoteCapability, type QuoteFamily } from './math';
 import { CHAINS, address, evmNetwork } from './networks';
 import { assetId, assetMetadataSchema, inventoryPoolV3Schema, inventoryV3Schema, poolKeyV8Schema, usdSchema, emptyCoverage, type InventoryV3, type InventoryPoolV3 } from './v8-contracts';
 
@@ -24,6 +25,31 @@ export function decimalNumber(value: number): string {
   const text = String(value); if (!text.includes('e')) return text;
   const [coefficient, power] = text.split('e'), digits = coefficient.replace('.', ''), point = (coefficient.split('.')[0].length) + Number(power);
   return point <= 0 ? '0.' + '0'.repeat(-point) + digits : point >= digits.length ? digits + '0'.repeat(point - digits.length) : digits.slice(0, point) + '.' + digits.slice(point);
+}
+type Prefetched = { ok: true; tokens: [string, string]; reads: Map<string, bigint[]> } | { ok: false; error: ResearchError };
+const asResearchError = (error: unknown) => error instanceof ResearchError ? error : new ResearchError('STATE_UNAVAILABLE', 'Batched state read failed.');
+function checkedDecimals(value: bigint) { const n = Number(value); if (!Number.isInteger(n) || n < 0 || n > 36) throw new ResearchError('UNSUPPORTED_DECIMALS', 'Discovery supports decimals 0 through 36.'); return n; }
+/** Factory registry lookup for a reviewed venue (the shared table lives in evm.ts `factoryLookupCall`). */
+function venueLookup(venue: Venue): FactoryLookup {
+  if (venue.family === 'V2') return 'getPair';
+  if (venue.family === 'SOLIDLY_STABLE') return 'getPoolStable';
+  if (venue.family === 'SOLIDLY_VOLATILE') return 'getPoolVolatile';
+  const lookup = venue.pool_lookup ?? (venue.family === 'ALGEBRA' ? 'poolByPair' : 'getPoolFee');
+  if (!['poolByPair', 'getPoolFee', 'getPoolSpacing'].includes(lookup)) throw new ResearchError('UNSUPPORTED_POOL_VERSION', 'Invalid concentrated-liquidity factory lookup.');
+  return lookup as FactoryLookup;
+}
+/** Per-pool Multicall3 members for a non-V4 reviewed venue; undefined when no discovery state adapter exists. */
+function statePlan(venue: Venue): string[] | undefined {
+  if (['V2', 'SOLIDLY_VOLATILE', 'SOLIDLY_STABLE'].includes(venue.family)) return ['token0()', 'token1()', 'factory()', 'getReserves()'];
+  if (venue.family !== 'V3' && venue.family !== 'ALGEBRA') return undefined;
+  const algebra = venue.family === 'ALGEBRA', spacing = venue.pool_lookup === 'getPoolSpacing';
+  return ['token0()', 'token1()', 'factory()', algebra ? 'globalState()' : 'slot0()', 'liquidity()', ...(algebra ? [] : ['fee()']), ...(spacing ? ['tickSpacing()'] : [])];
+}
+/** Capability matrix applied to a discovery pool (venue family + venue id as adapter version). */
+export function venueQuoteCapability(venue: Venue, feeMode: InventoryPoolV3['fee_mode']) {
+  const family: QuoteFamily = venue.family === 'V4' ? 'UNISWAP_V4' : venue.family === 'ALGEBRA' ? 'ALGEBRA' : venue.family === 'SOLIDLY_STABLE' ? 'AERODROME_STABLE' : venue.family === 'SOLIDLY_VOLATILE' ? 'AERODROME_VOLATILE'
+    : venue.family === 'V2' ? 'UNISWAP_V2' : venue.pool_lookup === 'getPoolSpacing' ? 'AERODROME_CLMM' : 'UNISWAP_V3';
+  return quoteCapability(family, venue.id, { hooked: feeMode === 'hooked', dynamic_fee: feeMode === 'dynamic' && family !== 'ALGEBRA' || /deltaswap|dynamic/i.test(venue.id) });
 }
 export type NativeInventorySeed = RegistrySeed & { provenance?: InventoryPoolV3['provenance'] };
 export function virtualDepth(state: NonNullable<InventoryPoolV3['state']>, decimals: number, usd: string, side: 0 | 1): string {
@@ -45,6 +71,8 @@ export class InventoryReaderV3 {
   private readonly code = new Map<string, Promise<Hex>>();
   private readonly metadata = new Map<string, Promise<number>>();
   private readonly initializationLogs = new Map<string, Promise<Log[]>>();
+  private readonly prefetched = new Map<string, Prefetched>();
+  private decimalsBatchFailure?: string;
   constructor(readonly engine: ResearchEngine, readonly network: z.infer<typeof evmNetwork>, readonly budget: RoundBudget) {
     this.registry = engine.options.discoveryRegistry ?? new DiscoveryRegistry();
   }
@@ -58,7 +86,7 @@ export class InventoryReaderV3 {
   private async attest(to: string, expected: string, block: Header) { const code = await this.runtime(to, block); if (code === '0x' || keccak256(code) !== expected) throw new ResearchError('DEPLOYMENT_MISMATCH', 'Discovery runtime does not match reviewed evidence.'); }
   private decimals(token: string, block: Header) {
     let result = this.metadata.get(token);
-    if (!result) { result = token === ZERO ? Promise.resolve(18) : this.reader.call(token, 'decimals()', [], block, this.budget.signal).then((v) => { const n = Number(v[0]); if (!Number.isInteger(n) || n < 0 || n > 36) throw new ResearchError('UNSUPPORTED_DECIMALS', 'Discovery supports decimals 0 through 36.'); return n; }); this.metadata.set(token, result); }
+    if (!result) { result = token === ZERO ? Promise.resolve(18) : this.reader.call(token, 'decimals()', [], block, this.budget.signal).then((v) => checkedDecimals(v[0])); this.metadata.set(token, result); }
     return result;
   }
   private async logs(venue: Venue, poolId: string, block: Header) {
@@ -86,9 +114,57 @@ export class InventoryReaderV3 {
     if (!canonical || canonical.hash !== log.blockHash || !/^0x[0-9a-f]{64}$/.test(log.transactionHash) || !/^0x[0-9a-f]+$/.test(log.logIndex)) throw new ResearchError('BLOCK_REORG', 'Initialization provenance is not canonical.');
     return log;
   }
+  /**
+   * A2'': read every selected non-V4 pool in Multicall3 batches with per-member outcomes, then verify factory
+   * membership in one more batch, then unique-token decimals once per round. A failed member excludes only its own
+   * pool, with an explicit reason; a failure of the whole call is attributed to every pool it covered.
+   */
+  private async prefetch(items: Array<{ pool: InventoryPoolV3; venue?: Venue }>, block: Header) {
+    const plans = items.flatMap(({ pool, venue }) => {
+      const sigs = venue?.status === 'reviewed' && venue.family !== 'V4' && pool.reference.kind === 'evm_contract' ? statePlan(venue) : undefined;
+      return sigs ? [{ pool, venue: venue!, to: (pool.reference as { address: string }).address, sigs }] : [];
+    });
+    if (!plans.length) return;
+    const fail = (list: typeof plans, error: ResearchError) => { for (const { pool } of list) this.prefetched.set(pool.id, { ok: false, error }); };
+    let settled;
+    try { settled = await this.reader.batchSettled(plans.flatMap((p) => p.sigs.map((signature) => ({ to: p.to, signature }))), block, this.budget.signal); }
+    catch (error) { fail(plans, asResearchError(error)); return; }
+    const claims: Array<{ plan: typeof plans[number]; claim: MembershipClaim; tokens: [string, string]; reads: Map<string, bigint[]> }> = [];
+    let at = 0;
+    for (const plan of plans) {
+      const results = settled.slice(at, at += plan.sigs.length);
+      try {
+        const failed = results.findIndex((r) => !r.ok);
+        if (failed >= 0) throw new ResearchError('MULTICALL_MEMBER_FAILED', plan.sigs[failed] + ' ' + (results[failed] as { reason: string }).reason);
+        const reads = new Map(plan.sigs.map((sig, i) => [sig, (results[i] as { words: bigint[] }).words]));
+        const tokens: [string, string] = [wordAddress(reads.get('token0()')![0]), wordAddress(reads.get('token1()')![0])];
+        if (wordAddress(reads.get('factory()')![0]) !== plan.venue.factory || tokens[0] === tokens[1] || tokens.includes(ZERO)) throw new ResearchError('DEPLOYMENT_MISMATCH', 'Pool factory or assets mismatch.');
+        const lookup = venueLookup(plan.venue);
+        const param = lookup === 'getPoolFee' ? reads.get('fee()')![0] : lookup === 'getPoolSpacing' ? BigInt.asIntN(24, reads.get('tickSpacing()')![0]) : undefined;
+        if (lookup === 'getPoolSpacing' && (param! <= 0n || param! > 32767n)) throw new ResearchError('INVALID_POOL', 'Invalid factory tick spacing.');
+        claims.push({ plan, tokens, reads, claim: { pool: plan.to, factory: plan.venue.factory, lookup, token0: tokens[0], token1: tokens[1], param } });
+      } catch (error) { fail([plan], asResearchError(error)); }
+    }
+    if (!claims.length) return;
+    try {
+      const membership = await this.reader.verifyFactoryMembership(claims.map((c) => c.claim), block, this.budget.signal);
+      membership.forEach((result, i) => this.prefetched.set(claims[i].plan.pool.id, result.ok ? { ok: true, tokens: claims[i].tokens, reads: claims[i].reads } : { ok: false, error: new ResearchError(result.code, result.reason) }));
+    } catch (error) { fail(claims.map((c) => c.plan), asResearchError(error)); return; }
+    const tokens = [...new Set(claims.flatMap((c) => c.tokens))].filter((t) => t !== ZERO && !this.metadata.has(t));
+    if (!tokens.length) return;
+    let decimals;
+    // A whole-batch failure leaves decimals uncached: `decimals()` then reads per token and reports its own error.
+    try { decimals = await this.reader.batchSettled(tokens.map((to) => ({ to, signature: 'decimals()' })), block, this.budget.signal); }
+    catch (error) { this.decimalsBatchFailure = asResearchError(error).code; return; }
+    tokens.forEach((token, i) => {
+      const result = decimals[i]; if (!result.ok) return; // per-token fallback re-reads and reports its own reason
+      let value: Promise<number>;
+      try { value = Promise.resolve(checkedDecimals(result.words[0])); } catch (error) { value = Promise.reject(error); value.catch(() => undefined); /* observed when the pool awaits it */ }
+      this.metadata.set(token, value);
+    });
+  }
   private async readPool(pool: InventoryPoolV3, venue: Venue, block: Header) {
     await this.attest(venue.factory, venue.factory_code_hash, block);
-    const call = (to: string, sig: string, args: Array<string | bigint> = []) => this.reader.call(to, sig, args, block, this.budget.signal);
     const batch = async (calls: Array<{ to: string; signature: string; args?: Array<string | bigint> }>) => (await this.reader.rpc.batch<string>(calls.map((c) => ({ method: 'eth_call', params: [{ to: c.to, data: encodeCall(c.signature, c.args ?? []) }, { blockHash: block.hash, requireCanonical: true }] })), this.budget.signal)).map(words);
     let tokens: [string, string];
     if (venue.family === 'V4') {
@@ -112,27 +188,20 @@ export class InventoryReaderV3 {
       const to = pool.reference.address;
       const code = await this.runtime(to, block);
       if (code === '0x' || venue.pool_code_hash && keccak256(code) !== venue.pool_code_hash) throw new ResearchError('DEPLOYMENT_MISMATCH', 'Pool runtime mismatch.');
-      const [a, b, factory] = await batch([{ to, signature: 'token0()' }, { to, signature: 'token1()' }, { to, signature: 'factory()' }]);
-      tokens = [wordAddress(a[0]), wordAddress(b[0])];
-      if (wordAddress(factory[0]) !== venue.factory || tokens[0] === tokens[1] || tokens.includes(ZERO)) throw new ResearchError('DEPLOYMENT_MISMATCH', 'Pool factory or assets mismatch.');
-      let registered: bigint[];
+      const fetched = this.prefetched.get(pool.id);
+      if (!fetched) throw new ResearchError('UNSUPPORTED_POOL_VERSION', 'No reviewed discovery state adapter for this family.');
+      if (!fetched.ok) throw fetched.error;
+      tokens = fetched.tokens; const reads = fetched.reads;
       if (['V2', 'SOLIDLY_VOLATILE', 'SOLIDLY_STABLE'].includes(venue.family)) {
-        registered = await call(venue.factory, venue.family === 'V2' ? 'getPair(address,address)' : 'getPool(address,address,bool)', venue.family === 'V2' ? tokens : [...tokens, venue.family === 'SOLIDLY_STABLE' ? 1n : 0n]);
-        const reserves = await call(to, 'getReserves()');
+        const reserves = reads.get('getReserves()')!;
         if (reserves.length < 2) throw new ResearchError('STATE_UNAVAILABLE', 'Malformed reserves.');
         pool.state = { block: BigInt(block.number).toString(), block_hash: block.hash, reserve0: reserves[0].toString(), reserve1: reserves[1].toString() };
-      } else if (venue.family === 'V3' || venue.family === 'ALGEBRA') {
-        const [slot, liquidity] = await batch([{ to, signature: venue.family === 'ALGEBRA' ? 'globalState()' : 'slot0()' }, { to, signature: 'liquidity()' }]);
-        const fee = venue.family === 'ALGEBRA' ? slot[2] : (await call(to, 'fee()'))[0];
-        const lookup = venue.pool_lookup ?? (venue.family === 'ALGEBRA' ? 'poolByPair' : 'getPoolFee');
-        if (!['poolByPair', 'getPoolFee', 'getPoolSpacing'].includes(lookup)) throw new ResearchError('UNSUPPORTED_POOL_VERSION', 'Invalid concentrated-liquidity factory lookup.');
-        const spacing = lookup === 'getPoolSpacing' ? BigInt.asIntN(24, (await call(to, 'tickSpacing()'))[0]) : undefined;
-        if (spacing !== undefined && (spacing <= 0n || spacing > 32767n)) throw new ResearchError('INVALID_POOL', 'Invalid factory tick spacing.');
-        registered = await call(venue.factory, lookup === 'poolByPair' ? 'poolByPair(address,address)' : lookup === 'getPoolSpacing' ? 'getPool(address,address,int24)' : 'getPool(address,address,uint24)', lookup === 'poolByPair' ? tokens : [...tokens, spacing ?? fee]);
-        if (!slot[0] || slot.length < 2 || liquidity.length < 1) throw new ResearchError('STATE_UNAVAILABLE', 'Malformed concentrated-liquidity state.');
+      } else {
+        const slot = reads.get(venue.family === 'ALGEBRA' ? 'globalState()' : 'slot0()')!, liquidity = reads.get('liquidity()')!;
+        const fee = venue.family === 'ALGEBRA' ? slot[2] : reads.get('fee()')![0];
+        if (!slot[0] || slot.length < 2 || liquidity.length < 1 || fee === undefined) throw new ResearchError('STATE_UNAVAILABLE', 'Malformed concentrated-liquidity state.');
         pool.state = { block: BigInt(block.number).toString(), block_hash: block.hash, sqrt_price_x96: slot[0].toString(), tick: Number(BigInt.asIntN(24, slot[1])), active_liquidity: liquidity[0].toString(), lp_fee_pips: Number(fee) };
-      } else throw new ResearchError('UNSUPPORTED_POOL_VERSION', 'No reviewed discovery state adapter for this family.');
-      if (wordAddress(registered[0]) !== to) throw new ResearchError('DEPLOYMENT_MISMATCH', 'Factory does not register this pool.');
+      }
       pool.fee_mode = venue.family === 'ALGEBRA' ? 'dynamic' : 'static';
     }
     const canonicalAssets = tokens.map((t) => assetId(this.network, t)) as [string, string];
@@ -183,6 +252,8 @@ export class InventoryReaderV3 {
     const assets = new Map<string, z.infer<typeof assetMetadataSchema>>();
     let block: Header | undefined;
     try { block = await this.header(); } catch { coverage.source_results.push({ source: 'rpc:state', status: 'FAILED', raw_count: 0, valid_count: 0, truncated: false, reason: 'STATE_UNAVAILABLE' }); }
+    // A2'': one batched read pass over the selected pools; workers below only verify runtime and assemble state.
+    if (block && this.budget.remainingMs() >= 1500) await this.prefetch(selected, block);
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, selected.length) }, async () => {
       while (next < selected.length) {
@@ -194,7 +265,10 @@ export class InventoryReaderV3 {
           const decimals = await this.readPool(pool, venue, block);
           pool.asset_ids.forEach((id, i) => { assets.set(id, { asset_id: id, address: id.endsWith('/slip44:60') ? null : id.split('/erc20:')[1], decimals: decimals[i], usd_price: prices.get(id) ?? null }); });
           pool.capabilities.state = { status: 'available', reason: 'PINNED_CANONICAL_STATE' };
+          const quote = venueQuoteCapability(venue, pool.fee_mode);
           if (pool.hook) pool.capabilities.quote = { status: 'simulation_only', reason: 'HOOK_REQUIRES_EXECUTION_QUOTE' };
+          else if (quote === 'none') pool.capabilities.quote = venue.family === 'V4' ? { status: 'simulation_only', reason: 'DYNAMIC_FEE_REQUIRES_EXECUTION_QUOTE' } : { status: 'unsupported', reason: 'QUOTE_CAPABILITY_NONE' };
+          else if (quote === 'estimate') pool.capabilities.quote = { status: 'unverified', reason: 'QUOTE_ESTIMATE_ONLY' };
           pool.flags.zero_active_liquidity = pool.state!.active_liquidity !== undefined ? BigInt(pool.state!.active_liquidity) === 0n : BigInt(pool.state!.reserve0 ?? '0') === 0n || BigInt(pool.state!.reserve1 ?? '0') === 0n;
           const side = [1, 0].find((i) => { const price = prices.get(pool.asset_ids[i]); return price && Date.now() - Date.parse(price.observed_at) <= 120000 && Date.parse(price.observed_at) <= Date.now(); });
           if (side !== undefined) pool.depth.virtual_depth_usd = virtualDepth(pool.state!, decimals[side], prices.get(pool.asset_ids[side])!.value, side as 0 | 1);
@@ -236,7 +310,7 @@ export class InventoryReaderV3 {
     // A0 budget ledger: measure where the round's calls and time go before tuning any limit.
     console.info(JSON.stringify({ event: 'flashloan.inventory_round', network: this.network, pools_considered: all.length, pools_selected: selected.length,
       pools_read: selected.filter(({ pool }) => pool.state).length, read_calls: callsBeforeFinal - callsAtStart, final_calls: this.budget.rpcCallsUsed - callsBeforeFinal,
-      read_ms: Math.round(readMs), total_ms: Math.round(performance.now() - started), final_outcome: finalOutcome, deferred: coverage.deferred_counts }));
+      read_ms: Math.round(readMs), total_ms: Math.round(performance.now() - started), final_outcome: finalOutcome, deferred: coverage.deferred_counts, ...(this.decimalsBatchFailure ? { decimals_batch_failure: this.decimalsBatchFailure } : {}) }));
     const canonicalPools = new Map<string, InventoryPoolV3>();
     for (const { pool } of selected) {
       const prior = canonicalPools.get(pool.id);

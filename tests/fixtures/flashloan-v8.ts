@@ -1,4 +1,7 @@
-import { keccak256, toFunctionSelector, encodeEventTopics, encodeAbiParameters, parseAbi, parseAbiParameters, type Hex } from 'viem';
+import { keccak256, toFunctionSelector, encodeEventTopics, encodeAbiParameters, encodeFunctionResult, decodeFunctionData, parseAbi, parseAbiParameters, type Hex } from 'viem';
+
+const MULTICALL3 = '0xca11bde05977b3631167028862be2a173976ca11';
+const aggregate3 = parseAbi(['function aggregate3((address target,bool allowFailure,bytes callData)[] calls) payable returns ((bool success,bytes returnData)[] returnData)']);
 import { DiscoveryRegistry } from '../../src/lib/mcp/flashloan/discovery-registry';
 import { canonicalPoolId } from '../../src/lib/mcp/flashloan/pool-resolution';
 import { assetId } from '../../src/lib/mcp/flashloan/v8-contracts';
@@ -7,7 +10,7 @@ export const A8 = '0x' + '1'.repeat(40), Q8 = '0x' + '2'.repeat(40), P8 = '0x' +
 export const BLOCK8 = '0x' + 'a'.repeat(64), CODE8 = '0x6000' as Hex;
 export const words8 = (...values: Array<bigint | number | string>) => '0x' + values.map((v) => BigInt.asUintN(256, BigInt(v)).toString(16).padStart(64, '0')).join('');
 export type FixtureFault = 'none' | 'zero' | 'state' | 'code' | 'reorg' | 'no-price' | 'wrong-currency' | 'wrong-chain' | 'gecko' | 'bad-init' | 'bad-batch' | 'final-unavailable';
-export function fixtureV8(options: { fault?: FixtureFault; v4?: boolean; dynamic?: boolean; hook?: boolean; network?: 'base' | 'robinhood'; reverse?: boolean; nativeOnly?: boolean; cl?: 'V3' | 'ALGEBRA' | 'AERO_CL' } = {}) {
+export function fixtureV8(options: { failMember?: string; fault?: FixtureFault; v4?: boolean; dynamic?: boolean; hook?: boolean; network?: 'base' | 'robinhood'; reverse?: boolean; nativeOnly?: boolean; cl?: 'V3' | 'ALGEBRA' | 'AERO_CL' } = {}) {
   const network = options.network ?? 'base', chain = network === 'base' ? 8453 : 4663, fault = options.fault ?? 'none';
   const key = { currency0: A8, currency1: Q8, fee: options.dynamic ? 0x800000 : 3000, tickSpacing: 60, hooks: options.hook ? HOOK8 : '0x' + '0'.repeat(40) };
   const poolId = canonicalPoolId(key), calls: Array<{ method: string; params: unknown[] }> = [];
@@ -16,6 +19,22 @@ export function fixtureV8(options: { fault?: FixtureFault; v4?: boolean; dynamic
   const pair = (id: string, dex: string) => ({ chainId: network, dexId: dex, pairAddress: id, baseToken: { address: options.reverse ? Q8 : A8, symbol: 'FIX', name: 'Fixture' }, quoteToken: { address: options.reverse ? A8 : Q8 }, priceUsd: fault === 'no-price' ? null : '1', liquidity: { usd: 20000 }, volume: { m5: 100, h24: 20000 }, priceChange: { m5: 0.1, h1: 0.5, h24: 1 }, txns: { m5: { buys: 3, sells: 1 } }, pairCreatedAt: Date.now() - 86400000 });
   const pairs = options.v4 ? [pair(poolId, 'dex1')] : [pair(P8, 'dex1'), pair(P82, 'dex2')];
   let headers = 0;
+  /** Direct eth_call answer; undefined means the call reverts. */
+  const answer = (to: string, data: string): string | undefined => {
+    if (fault === 'state' && data.startsWith(toFunctionSelector('getReserves()'))) return undefined;
+    if (options.failMember && options.failMember === to + ':' + data.slice(0, 10)) return undefined; // one reverting call, as `<to>:<selector>`
+    const selector = data.slice(0, 10);
+    const values: Record<string, string> = {
+      [toFunctionSelector('token0()')]: words8(fault === 'wrong-currency' ? HOOK8 : A8), [toFunctionSelector('token1()')]: words8(Q8),
+      [toFunctionSelector('factory()')]: words8(to === P82 ? F82 : F8), [toFunctionSelector('getPair(address,address)')]: words8(to === F82 ? P82 : P8),
+      [toFunctionSelector('getReserves()')]: words8(fault === 'zero' ? 0 : 10000000000, 10000000000, 0), [toFunctionSelector('decimals()')]: words8(6),
+      [toFunctionSelector('getSlot0(bytes32)')]: words8(2n ** 96n, 0, 0, 3000), [toFunctionSelector('getLiquidity(bytes32)')]: words8(fault === 'zero' ? 0 : 10000000000),
+      [toFunctionSelector('slot0()')]: words8(2n ** 96n, 0), [toFunctionSelector('globalState()')]: words8(2n ** 96n, 0, 3000), [toFunctionSelector('liquidity()')]: words8(10000000000), [toFunctionSelector('fee()')]: words8(3000), [toFunctionSelector('tickSpacing()')]: words8(60),
+      [toFunctionSelector('getPool(address,address,uint24)')]: words8(to === F82 ? P82 : P8), [toFunctionSelector('getPool(address,address,int24)')]: words8(to === F82 ? P82 : P8), [toFunctionSelector('poolByPair(address,address)')]: words8(to === F82 ? P82 : P8),
+    };
+    const value = values[selector]; if (value === undefined) throw new Error('Unexpected fixture call ' + selector);
+    return value;
+  };
   const rpc = (request: { id: number; method: string; params: unknown[] }) => {
     calls.push(request);
     const { method, params } = request; let result: unknown;
@@ -31,17 +50,15 @@ export function fixtureV8(options: { fault?: FixtureFault; v4?: boolean; dynamic
       } else result = options.v4 && (params[0] as { address?: string }).address === F8 ? [log, { ...log, topics: ['0x' + 'd'.repeat(64), poolId] }] : [];
     } else if (method === 'eth_call') {
       const { to, data } = params[0] as { to: string; data: string };
-      if (fault === 'state' && data.startsWith(toFunctionSelector('getReserves()'))) return { jsonrpc: '2.0', id: request.id, error: { code: -32000 } };
-      const selector = data.slice(0, 10);
-      const values: Record<string, string> = {
-        [toFunctionSelector('token0()')]: words8(fault === 'wrong-currency' ? HOOK8 : A8), [toFunctionSelector('token1()')]: words8(Q8),
-        [toFunctionSelector('factory()')]: words8(to === P82 ? F82 : F8), [toFunctionSelector('getPair(address,address)')]: words8(to === F82 ? P82 : P8),
-        [toFunctionSelector('getReserves()')]: words8(fault === 'zero' ? 0 : 10000000000, 10000000000, 0), [toFunctionSelector('decimals()')]: words8(6),
-        [toFunctionSelector('getSlot0(bytes32)')]: words8(2n ** 96n, 0, 0, 3000), [toFunctionSelector('getLiquidity(bytes32)')]: words8(fault === 'zero' ? 0 : 10000000000),
-        [toFunctionSelector('slot0()')]: words8(2n ** 96n, 0), [toFunctionSelector('globalState()')]: words8(2n ** 96n, 0, 3000), [toFunctionSelector('liquidity()')]: words8(10000000000), [toFunctionSelector('fee()')]: words8(3000), [toFunctionSelector('tickSpacing()')]: words8(60),
-        [toFunctionSelector('getPool(address,address,uint24)')]: words8(to === F82 ? P82 : P8), [toFunctionSelector('getPool(address,address,int24)')]: words8(to === F82 ? P82 : P8), [toFunctionSelector('poolByPair(address,address)')]: words8(to === F82 ? P82 : P8),
-      };
-      result = values[selector]; if (result === undefined) throw new Error('Unexpected fixture call ' + selector);
+      if (to === MULTICALL3) {
+        // Multicall3 aggregate3 with allowFailure: each member is answered (and logged) like a direct eth_call.
+        const members = decodeFunctionData({ abi: aggregate3, data: data as Hex }).args[0];
+        const results = members.map((m) => { calls.push({ method: 'eth_call', params: [{ to: m.target.toLowerCase(), data: m.callData }, params[1]] }); const value = answer(m.target.toLowerCase(), m.callData); return value === undefined ? { success: false, returnData: '0x' as Hex } : { success: true, returnData: value as Hex }; });
+        result = encodeFunctionResult({ abi: aggregate3, functionName: 'aggregate3', result: fault === 'bad-batch' ? results.slice(1) : results });
+      } else {
+        result = answer(to, data);
+        if (result === undefined) return { jsonrpc: '2.0', id: request.id, error: { code: -32000 } };
+      }
     } else throw new Error('Forbidden or unexpected RPC method ' + method);
     return { jsonrpc: '2.0', id: request.id, result };
   };
