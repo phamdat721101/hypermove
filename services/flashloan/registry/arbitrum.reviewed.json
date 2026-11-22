@@ -1,0 +1,24 @@
+{
+  "venues": [
+    {"id":"uniswap-v3","provider_ids":["uniswap"],"family":"V3","factory":"0x1f98431c8ad98523631ae4a59f267346ea31f984","factory_code_hash":"0x4d7b8525cd5d14343fa67a732fba5b24cddba11620ca88392f4ec6c52f91fd69","quoter_kind":"onchain_quoter","cpmm":true,"status":"reviewed"},
+    {"id":"uniswap-v4","provider_ids":["uniswap"],"family":"V4","factory":"0x360e68faccca8ca495c1b759fd9eee466db9fb32","factory_code_hash":"0xe4b2759e456c9c4ef763e3b4e257c5105e1ba283d7de8b131dd321197de794a4","state_view":"0x76fd297e2d437cd7f76d50f01afe6160f86e9990","state_view_code_hash":"0x4c0e823a0cd44b6b2d9485e774c421cf929db3996096d9b84ee6b23525184b9e","quoter_kind":"v4_state_quoter","cpmm":true,"status":"reviewed"},
+    {"id":"pancake-v3","provider_ids":["pancakeswap"],"family":"V3","factory":"0x0bfbcf9fa4f9c56b0f40a671ad40e0805a091865","factory_code_hash":"0x8191d3ab1d55d3da9822199f28865415c99566b6f1aee4a4b16713f57930678c","pool_lookup":"getPoolFee","quoter_kind":"onchain_quoter","cpmm":true,"status":"reviewed"},
+    {"id":"camelot-algebra","provider_ids":["camelot"],"family":"ALGEBRA","factory":"0x1a3c9b1d2f0529d97f2afc5136cc23e58f1fd35b","factory_code_hash":"0xd2e121b20e1ffe21cebd67e884032884c11425315d7d0f746673b246371558d3","pool_lookup":"poolByPair","quoter_kind":"onchain_quoter","cpmm":true,"status":"reviewed"},
+    {"id":"sushi-v2","provider_ids":["sushiswap"],"family":"V2","factory":"0xc35dadb65012ec5796536bd9864ed8773abc74c4","factory_code_hash":"0xeba2e349904f5b2c1f6086ffb00d5c7efb4a2c8ea8af2efccfd1c812c7869b6c","pool_lookup":"getPair","quoter_kind":"onchain_quoter","cpmm":true,"status":"reviewed"},
+    {"id":"slipstream-arb","provider_ids":["aero"],"family":"V3","factory":"0x88a60ee77392577c355c0acb2a8d476d5a4ec03a","factory_code_hash":"0x4cb82764ba4fd4a80c986952190a6052747a816a6dc5c7be3fc3a7a7b1bd0af4","pool_lookup":"getPoolSpacing","quoter_kind":"onchain_quoter","cpmm":true,"status":"reviewed"},
+    {"id":"deltaswap","provider_ids":["deltaswap"],"family":"V2","factory":"0xcb85e1222f715a81b8edaeb73b28182fa37cffa8","factory_code_hash":"0x91adb1005bf6ffc6e32c43f90082f6334d0a5466b943996d1b74401c3afd2172","pool_lookup":"getPair","quoter_kind":"onchain_quoter","cpmm":true,"status":"research"}
+  ],
+  "lenders": [
+    {"id":"aave-v3","kind":"aave_v3","address":"0x794a61358d6845594f94dc1db02a252b5b4814ad","code_hash":"0xf168c2e9e4d04292c7d5d526a9a917175a44369ab63a2f9997537acf0ffaaf2e","fee_bps":5,"callback":"executeOperation","assets":["eip155:42161/erc20:0x82af49447d8a07e3bd95bd0d56f35241523fbab1","eip155:42161/erc20:0xaf88d065e77c8cc2239327c5edb3a432268e5831"]},
+    {"id":"morpho-blue","kind":"morpho","address":"0x6c247b1f6182318877311737bac0844baa518f5e","code_hash":"0xd2bb64e51bc71ff5ce00ae89eab643e65fda6fc59f4ab8c367241c4bedf8acf5","fee_bps":0,"callback":"onMorphoFlashLoan","assets":"any"},
+    {"id":"balancer-v2","kind":"balancer_v2","address":"0xba12222222228d8ba445958a75a0704d566bf2c8","code_hash":"0x96f131af73d8a231741b91e266fb54e0bc8c3041954deb51652113600549093a","fee_bps":0,"callback":"receiveFlashLoan","assets":"any"}
+  ],
+  "anchors": [
+    "eip155:42161/erc20:0x82af49447d8a07e3bd95bd0d56f35241523fbab1",
+    "eip155:42161/erc20:0xaf88d065e77c8cc2239327c5edb3a432268e5831",
+    "eip155:42161/erc20:0xfd086bc7cd5c481dcc9c85ebe478a1c0b69fcbb9",
+    "eip155:42161/erc20:0x2f2a2543b76a4166549f7aab2e75bef0aefc5b0f",
+    "eip155:42161/erc20:0x5979d7b546e38e414f7e9822514be443a4800529",
+    "eip155:42161/erc20:0x912ce59144191c1204e64559fe8253a0e49e6548"
+  ]
+}
