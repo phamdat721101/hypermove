@@ -141,6 +141,14 @@ export class InventoryReaderV3 {
     return Promise.all(tokens.map((token) => this.decimals(token, block)));
   }
   async inventory(base: PoolInventory, tokens: string[], excluded: string[], minDepth: number, native: NativeInventorySeed[] = []): Promise<InventoryV3> {
+    // Final canonicality verification gets its own reserved capacity; without it an exhausted read
+    // budget made the check fail and erased every successfully read pool (D1).
+    const finalCheck = this.budget.reserveFinal(2, 2500);
+    try { return await this.collect(finalCheck, base, tokens, excluded, minDepth, native); }
+    finally { finalCheck.release(); }
+  }
+  private async collect(finalCheck: ReturnType<RoundBudget['reserveFinal']>, base: PoolInventory, tokens: string[], excluded: string[], minDepth: number, native: NativeInventorySeed[]): Promise<InventoryV3> {
+    const started = performance.now(), callsAtStart = this.budget.rpcCallsUsed;
     const observed_at = new Date().toISOString(), coverage = emptyCoverage(), config = this.registry.network(this.network);
     coverage.tokens_considered = tokens.length;
     coverage.source_results = base.coverage.map((c) => ({ source: c.source + ':' + c.token, status: c.status, raw_count: c.raw_count, valid_count: c.valid_count, truncated: !c.retrieval_complete, reason: c.status === 'FAILED' ? 'DISCOVERY_UNAVAILABLE' : null })).slice(0, 100);
@@ -160,7 +168,16 @@ export class InventoryReaderV3 {
     for (const seed of ([...this.registry.config.pools, ...native] as NativeInventorySeed[]).filter((p) => p.network === this.network && p.asset_ids.some((a) => tokens.some((t) => a === assetId(this.network, t))))) add(seed.reference, seed.asset_ids, seed.venue_id, [], seed.provenance ?? [{ source: 'reviewed-registry', provider_pool_id: hash(seed.reference), observed_at }], null, config.venues.find((v) => v.id === seed.venue_id));
     const unique = new Map<string, typeof candidates[number]>();
     for (const item of candidates) { const prior = unique.get(item.pool.id); if (prior && prior.pool.asset_ids.some((a) => !item.pool.asset_ids.includes(a))) { prior.venue = undefined; prior.pool.eligibility_reasons.push('CONFLICTING_POOL_ID'); } else if (!prior) unique.set(item.pool.id, item); else prior.pool.provenance = [...prior.pool.provenance, ...item.pool.provenance].slice(0, 16); }
-    const all = [...unique.values()].sort((a, b) => a.pool.id.localeCompare(b.pool.id)); coverage.pools_considered = all.length;
+    // Read the pools that matter first: reviewed seeds, then anchor-anchor pairs, then reported depth.
+    // Ordering by id hash spent the read budget on arbitrary pools (D3). Output order stays id-sorted below.
+    const anchors = new Set(config.anchors);
+    const priority = (c: typeof candidates[number]) => [
+      c.pool.provenance.some((p) => p.source === 'reviewed-registry') ? 0 : 1,
+      c.pool.asset_ids.every((a) => anchors.has(a)) ? 0 : 1,
+      -Number(c.pool.depth.reported_liquidity_usd ?? 0),
+    ];
+    const all = [...unique.values()].sort((a, b) => { const pa = priority(a), pb = priority(b); for (let i = 0; i < pa.length; i++) if (pa[i] !== pb[i]) return pa[i] - pb[i]; return a.pool.id.localeCompare(b.pool.id); });
+    coverage.pools_considered = all.length;
     const selected = all.slice(0, 400); coverage.truncated = all.length > selected.length;
     if (coverage.truncated) coverage.deferred_counts.POOL_LIMIT = all.length - selected.length;
     const assets = new Map<string, z.infer<typeof assetMetadataSchema>>();
@@ -196,17 +213,37 @@ export class InventoryReaderV3 {
         }
       }
     }));
+    const readMs = performance.now() - started, callsBeforeFinal = this.budget.rpcCallsUsed;
+    let finalOutcome: 'VERIFIED' | 'BLOCK_REORG' | 'HEADER_MISSING' | 'CHECK_UNAVAILABLE' | 'SKIPPED' = 'SKIPPED';
     if (block) {
-      try { const canonical = await this.reader.rpc.rpc<Header | null>('eth_getBlockByNumber', [block.number, false], this.budget.signal); if (!canonical || canonical.hash !== block.hash) throw new Error('reorg'); }
-      catch { for (const { pool } of selected) { delete pool.state; pool.depth.virtual_depth_usd = null; pool.liquidity_eligible = false; pool.capabilities.state = unknown('CANONICALITY_UNVERIFIED'); pool.eligibility_reasons.push('CANONICALITY_UNVERIFIED'); } block = undefined; coverage.truncated = true; }
+      const pinned = block;
+      try {
+        const canonical = await finalCheck.run(() => this.reader.rpc.rpc<Header | null>('eth_getBlockByNumber', [pinned.number, false], this.budget.signal));
+        finalOutcome = !canonical ? 'HEADER_MISSING' : canonical.hash !== pinned.hash ? 'BLOCK_REORG' : 'VERIFIED';
+      } catch { finalOutcome = 'CHECK_UNAVAILABLE'; }
+      if (finalOutcome === 'BLOCK_REORG' || finalOutcome === 'HEADER_MISSING') {
+        // The pinned block is provably not canonical (or the node no longer has it): every read is stale.
+        const reason = finalOutcome === 'BLOCK_REORG' ? 'BLOCK_REORG' : 'CANONICALITY_UNVERIFIED';
+        for (const { pool } of selected) { delete pool.state; pool.depth.virtual_depth_usd = null; pool.liquidity_eligible = false; pool.capabilities.state = unknown(reason); pool.eligibility_reasons.push(reason); }
+        block = undefined; coverage.truncated = true;
+      } else if (finalOutcome === 'CHECK_UNAVAILABLE') {
+        // Each read already pinned `{blockHash, requireCanonical:true}`; only a reorg *during* the round is
+        // unproven. Keep the verified reads and report the gap instead of discarding them.
+        coverage.source_results.push({ source: 'rpc:canonical', status: 'FAILED', raw_count: 0, valid_count: 0, truncated: true, reason: 'CANONICALITY_CHECK_UNAVAILABLE' });
+        coverage.truncated = true;
+      }
     }
+    // A0 budget ledger: measure where the round's calls and time go before tuning any limit.
+    console.info(JSON.stringify({ event: 'flashloan.inventory_round', network: this.network, pools_considered: all.length, pools_selected: selected.length,
+      pools_read: selected.filter(({ pool }) => pool.state).length, read_calls: callsBeforeFinal - callsAtStart, final_calls: this.budget.rpcCallsUsed - callsBeforeFinal,
+      read_ms: Math.round(readMs), total_ms: Math.round(performance.now() - started), final_outcome: finalOutcome, deferred: coverage.deferred_counts }));
     const canonicalPools = new Map<string, InventoryPoolV3>();
     for (const { pool } of selected) {
       const prior = canonicalPools.get(pool.id);
       if (!prior) canonicalPools.set(pool.id, pool);
       else { const preferred = prior.liquidity_eligible ? prior : pool; preferred.provenance = [...new Map([...prior.provenance, ...pool.provenance].map((p) => [hash(p), p])).values()].slice(0, 16); canonicalPools.set(pool.id, preferred); }
     }
-    const pools = [...canonicalPools.values()];
+    const pools = [...canonicalPools.values()].sort((a, b) => a.id.localeCompare(b.id)); // stable id order for consumers
     for (const pool of pools) for (const code of new Set(pool.eligibility_reasons)) coverage.excluded_counts[code] = (coverage.excluded_counts[code] ?? 0) + 1;
     coverage.pools_watched = pools.filter((p) => p.liquidity_eligible).length;
     const partial = base.outcome === 'PARTIAL' || coverage.truncated || coverage.source_results.some((s) => s.status !== 'SUCCESS') || pools.some((p) => p.eligibility_reasons.some((r) => !['ZERO_ACTIVE_LIQUIDITY', 'BELOW_VIRTUAL_DEPTH_THRESHOLD'].includes(r)));

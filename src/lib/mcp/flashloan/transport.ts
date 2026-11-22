@@ -19,12 +19,26 @@ export class RoundBudget {
     this.timer.unref?.();
   }
   dispose() { clearTimeout(this.timer); this.parent.removeEventListener('abort', this.abort); }
-  remainingMs() { return Math.max(0, this.deadline - performance.now()); }
+  /** Calls/time held back from ordinary work so a pending final verification always has capacity. */
+  private reserved = { calls: 0, ms: 0 };
+  /**
+   * Reserve capacity for one final verification step. Ordinary work sees the budget minus every
+   * outstanding reservation; `run` releases this lease's share for exactly the verification it guards.
+   * Callers must `release()` in `finally` when the guarded step is never reached.
+   */
+  reserveFinal(calls: number, ms: number) {
+    if (!Number.isInteger(calls) || calls < 1 || !(ms > 0)) throw new ResearchError('INVALID_INPUT', 'Final reservation requires positive calls and time.');
+    this.reserved = { calls: this.reserved.calls + calls, ms: this.reserved.ms + ms };
+    let held = true;
+    const release = () => { if (!held) return; held = false; this.reserved = { calls: this.reserved.calls - calls, ms: this.reserved.ms - ms }; };
+    return { release, run: async <T>(step: () => Promise<T>): Promise<T> => { if (!held) throw new ResearchError('INVALID_INPUT', 'Final reservation already used.'); release(); return step(); } };
+  }
+  remainingMs() { return Math.max(0, this.deadline - performance.now() - this.reserved.ms); }
   check() {
     if (this.remainingMs() <= 0) throw new ResearchError('ROUND_DEADLINE', 'Round deadline exhausted.');
     if (this.signal.aborted) throw new ResearchError('CANCELLED', 'Round cancelled.');
   }
-  rpc() { this.check(); if (this.rpcCallsUsed >= this.limits.maxRpcCalls) throw new ResearchError('RESOLUTION_BUDGET', 'Round RPC budget exhausted.'); this.rpcCallsUsed++; }
+  rpc() { this.check(); if (this.rpcCallsUsed >= this.limits.maxRpcCalls - this.reserved.calls) throw new ResearchError('RESOLUTION_BUDGET', 'Round RPC budget exhausted.'); this.rpcCallsUsed++; }
   evaluations(count: number) { this.check(); if (!Number.isInteger(count) || count < 0 || this.evaluationsUsed + count > this.limits.maxEvaluations) throw new ResearchError('EVALUATION_BUDGET', 'Round evaluation budget exhausted.'); this.evaluationsUsed += count; }
 }
 

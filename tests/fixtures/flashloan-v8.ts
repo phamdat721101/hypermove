@@ -6,7 +6,7 @@ import { assetId } from '../../src/lib/mcp/flashloan/v8-contracts';
 export const A8 = '0x' + '1'.repeat(40), Q8 = '0x' + '2'.repeat(40), P8 = '0x' + '3'.repeat(40), P82 = '0x' + '4'.repeat(40), F8 = '0x' + '5'.repeat(40), F82 = '0x' + '6'.repeat(40), VIEW8 = '0x' + '7'.repeat(40), HOOK8 = '0x' + '8'.repeat(40);
 export const BLOCK8 = '0x' + 'a'.repeat(64), CODE8 = '0x6000' as Hex;
 export const words8 = (...values: Array<bigint | number | string>) => '0x' + values.map((v) => BigInt.asUintN(256, BigInt(v)).toString(16).padStart(64, '0')).join('');
-export type FixtureFault = 'none' | 'zero' | 'state' | 'code' | 'reorg' | 'no-price' | 'wrong-currency' | 'wrong-chain' | 'gecko' | 'bad-init' | 'bad-batch';
+export type FixtureFault = 'none' | 'zero' | 'state' | 'code' | 'reorg' | 'no-price' | 'wrong-currency' | 'wrong-chain' | 'gecko' | 'bad-init' | 'bad-batch' | 'final-unavailable';
 export function fixtureV8(options: { fault?: FixtureFault; v4?: boolean; dynamic?: boolean; hook?: boolean; network?: 'base' | 'robinhood'; reverse?: boolean; nativeOnly?: boolean; cl?: 'V3' | 'ALGEBRA' | 'AERO_CL' } = {}) {
   const network = options.network ?? 'base', chain = network === 'base' ? 8453 : 4663, fault = options.fault ?? 'none';
   const key = { currency0: A8, currency1: Q8, fee: options.dynamic ? 0x800000 : 3000, tickSpacing: 60, hooks: options.hook ? HOOK8 : '0x' + '0'.repeat(40) };
@@ -20,7 +20,7 @@ export function fixtureV8(options: { fault?: FixtureFault; v4?: boolean; dynamic
     calls.push(request);
     const { method, params } = request; let result: unknown;
     if (method === 'eth_chainId') result = '0x' + (fault === 'wrong-chain' ? 1 : chain).toString(16);
-    else if (method === 'eth_getBlockByNumber') { headers++; result = { number: '0x10', hash: fault === 'reorg' && headers > 1 ? '0x' + 'b'.repeat(64) : BLOCK8, timestamp: '0x1', parentHash: '0x' + 'c'.repeat(64), gasLimit: '0x100000', miner: A8 }; }
+    else if (method === 'eth_getBlockByNumber') { headers++; if (fault === 'final-unavailable' && headers > 1) return { jsonrpc: '2.0', id: request.id, error: { code: -32000 } }; result = { number: '0x10', hash: fault === 'reorg' && headers > 1 ? '0x' + 'b'.repeat(64) : BLOCK8, timestamp: '0x1', parentHash: '0x' + 'c'.repeat(64), gasLimit: '0x100000', miner: A8 }; }
     else if (method === 'eth_getCode') result = fault === 'code' ? '0x6001' : CODE8;
     else if (method === 'eth_getLogs') {
       const abi = parseAbi(['event Initialize(bytes32 indexed id,address indexed currency0,address indexed currency1,uint24 fee,int24 tickSpacing,address hooks,uint160 sqrtPriceX96,int24 tick)']);

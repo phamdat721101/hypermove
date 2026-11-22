@@ -61,6 +61,12 @@ async function findInitialization(engine: ResearchEngine, manager: Deployment, p
 
 /** Resolve identity independently of full research admission; never issue snapshot proofs here. */
 export async function resolveInventory(engine: ResearchEngine, chainId: string, roundId: string, references: PoolReference[], mappingRef: EvidenceRef | null, atBlock: string | null, budget: RoundBudget, maxPools: number): Promise<ResolutionReport> {
+  // Same root cause as inventory D1: reserve capacity so the export's canonicality check is not starved.
+  const finalCheck = budget.reserveFinal(2, 2500);
+  try { return await resolveRound(engine, chainId, roundId, references, mappingRef, atBlock, budget, maxPools, finalCheck); }
+  finally { finalCheck.release(); }
+}
+async function resolveRound(engine: ResearchEngine, chainId: string, roundId: string, references: PoolReference[], mappingRef: EvidenceRef | null, atBlock: string | null, budget: RoundBudget, maxPools: number, finalCheck: ReturnType<RoundBudget['reserveFinal']>): Promise<ResolutionReport> {
   const started = performance.now();
   const network = integrationNetwork(chainId), expectedMapping = managerMapping(engine, chainId, roundId);
   const report: ResolutionReport = { schema: 'pool-resolution-report/1', roundId, chainId, resolved: [], unresolved: [], complete: true, rpcCallsUsed: 0, sourceRefs: [] };
@@ -129,7 +135,7 @@ export async function resolveInventory(engine: ResearchEngine, chainId: string, 
   }
   if (block && report.resolved.length) {
     try {
-      const canonical = await reader.rpc.rpc<Header | null>('eth_getBlockByNumber', [block.number, false], budget.signal);
+      const pinned = block; const canonical = await finalCheck.run(() => reader.rpc.rpc<Header | null>('eth_getBlockByNumber', [pinned.number, false], budget.signal));
       if (!canonical || canonical.hash !== block.hash) throw new ResearchError('BLOCK_REORG', 'Accepted resolution block changed before export.');
     } catch (error) {
       const reorg = error instanceof ResearchError && error.code === 'BLOCK_REORG';
