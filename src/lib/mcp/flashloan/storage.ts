@@ -7,7 +7,15 @@ import { hash, digest, ResearchError, boundaryEvent, VERSION, type Job, type Ope
 const verifiedClient = <T>(action: (client: PoolClient) => Promise<T>) => withClient(action, { verifiedTls: true, skipSchema: true });
 
 export type StoredJob = Job & { owner: string; input: Record<string, unknown>; input_hash: string; key: string };
-export type Artifact = { schema_version: 1; id: string; owner_id: string; created_at: string; producer_version: string; kind: string; content_hash: string; data: unknown };
+/** `cache_key`/`shared` are present only on shared artifacts, so private artifact bytes are unchanged. */
+export type Artifact = { schema_version: 1; id: string; owner_id: string; created_at: string; producer_version: string; kind: string; content_hash: string; data: unknown; cache_key?: string; shared?: true };
+/** Owner of shared (cache-keyed, any-caller) artifacts and jobs; `@` cannot appear in an authenticated owner id. */
+export const SHARED_OWNER = '@shared';
+/** Per-kind artifact retention (file 11 #20); existing kinds keep report 7 d, everything else 24 h. */
+const RETENTION_HOURS: Record<string, number> = { report: 168, arb_universe: 24, arb_ground_truth: 168, backrun_replay: 168 };
+export const retentionHours = (kind: string) => RETENTION_HOURS[kind] ?? 24;
+const retention = (kind: string) => retentionHours(kind) + ' hours';
+const sharedKey = (cacheKey: string) => 'shared:' + digest.parse(cacheKey) + ':' + randomUUID();
 export interface Repository {
   enqueue(owner: string, operation: Operation, input: Record<string, unknown>): Promise<Job>;
   claim(): Promise<StoredJob | null>;
@@ -18,12 +26,21 @@ export interface Repository {
   recover(): Promise<void>;
   put(owner: string, kind: string, data: unknown): Promise<string>;
   artifact(owner: string, id: string): Promise<Artifact>;
+  /** Publishes an any-caller artifact under a normalized cache key (arbCacheKey). */
+  publishShared(kind: string, cacheKey: string, data: unknown): Promise<Artifact>;
+  /** Latest unexpired shared artifact for (kind, cache key); private artifacts are never visible here. */
+  readSharedLatest(kind: string, cacheKey: string): Promise<Artifact | null>;
+  /** Returns the QUEUED/RUNNING job with this cache key, or enqueues one (atomic dedupe). */
+  enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string): Promise<Job>;
 }
 export function publicJob(job: StoredJob): Job { const { owner: _owner, input: _input, input_hash: _hash, key: _key, ...visible } = job; return visible; }
 
 /** Fixture-only adapter: the server never selects this as a production fallback. */
 export class MemoryRepository implements Repository {
-  private jobs = new Map<string, StoredJob>(); private artifacts = new Map<string, Artifact>();
+  private jobs = new Map<string, StoredJob>(); private artifacts = new Map<string, Artifact>(); private expiry = new Map<string, number>(); private cacheKeys = new Map<string, string>();
+  constructor(private readonly clock: () => number = Date.now) {}
+  private store(artifact: Artifact) { this.artifacts.set(artifact.id, artifact); this.expiry.set(artifact.id, this.clock() + retentionHours(artifact.kind) * 3_600_000); }
+  private live(id: string) { const a = this.artifacts.get(id); return a && (this.expiry.get(id) ?? 0) > this.clock() ? a : undefined; }
   async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) {
     const key = String(input.idempotency_key), inputHash = hash({ operation, input, version: VERSION });
     const prior = [...this.jobs.values()].find((j) => j.owner === owner && j.key === key);
@@ -32,6 +49,15 @@ export class MemoryRepository implements Repository {
     if (queued.length >= 256 || queued.filter((j) => j.owner === owner).length >= 16) throw new ResearchError('QUEUE_FULL', 'Research queue budget exhausted; poll existing jobs first.', true);
     const now = new Date().toISOString(); const job: StoredJob = { id: randomUUID(), owner, operation, input, input_hash: inputHash, key, state: 'QUEUED', created_at: now, updated_at: now };
     this.jobs.set(job.id, job); return publicJob(job);
+  }
+  async enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string) {
+    // No await before the insert: concurrent callers in one process observe the first job.
+    const active = [...this.jobs.values()].find((j) => this.cacheKeys.get(j.id) === cacheKey && ['QUEUED', 'RUNNING'].includes(j.state));
+    if (active) return publicJob(active);
+    const key = sharedKey(cacheKey), pending = this.enqueue(SHARED_OWNER, operation, { ...input, idempotency_key: key });
+    const created = [...this.jobs.values()].find((j) => j.key === key); // inserted synchronously by enqueue
+    if (created) this.cacheKeys.set(created.id, cacheKey);
+    return pending;
   }
   async claim() { const j = [...this.jobs.values()].find((v) => v.state === 'QUEUED'); if (!j) return null; j.state = 'RUNNING'; return structuredClone(j); }
   private owned(owner: string, id: string) { const job = this.jobs.get(id); if (!job || job.owner !== owner) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return job; }
@@ -44,15 +70,23 @@ export class MemoryRepository implements Repository {
   async complete(job: StoredJob, kind: string, data: unknown) {
     const current = this.jobs.get(job.id); if (current?.state !== 'RUNNING') { boundaryEvent('EDGE-05', 'PUBLICATION_CANCELLED'); return false; }
     const artifact = makeArtifact(job.owner, kind, data);
-    this.artifacts.set(artifact.id, artifact); current.state = 'SUCCEEDED'; current.result_id = artifact.id; current.updated_at = new Date().toISOString(); return true;
+    this.store(artifact); current.state = 'SUCCEEDED'; current.result_id = artifact.id; current.updated_at = new Date().toISOString(); return true;
   }
   async recover() { for (const job of this.jobs.values()) if (job.state === 'RUNNING') { job.state = 'FAILED'; job.error = { code: 'WORKER_RESTARTED', message: 'Worker restarted; create a fresh job against refreshed state.', retryable: true }; } }
-  async put(owner: string, kind: string, data: unknown) { const artifact = makeArtifact(owner, kind, data); this.artifacts.set(artifact.id, artifact); return artifact.id; }
-  async artifact(owner: string, id: string) { const a = this.artifacts.get(digest.parse(id)); if (!a || a.owner_id !== owner) throw new ResearchError('NOT_FOUND', 'Research artifact not found.'); return structuredClone(a); }
+  async put(owner: string, kind: string, data: unknown) { const artifact = makeArtifact(owner, kind, data); this.store(artifact); return artifact.id; }
+  async publishShared(kind: string, cacheKey: string, data: unknown) { const artifact = makeArtifact(SHARED_OWNER, kind, data, cacheKey); this.artifacts.delete(artifact.id); this.store(artifact); return structuredClone(artifact); }
+  async readSharedLatest(kind: string, cacheKey: string) {
+    digest.parse(cacheKey); let latest: Artifact | undefined;
+    for (const a of this.artifacts.values()) if (a.shared && a.kind === kind && a.cache_key === cacheKey && this.live(a.id)) latest = a; // Map keeps insertion order; republish re-inserts
+    return latest ? structuredClone(latest) : null;
+  }
+  async artifact(owner: string, id: string) { const a = this.live(digest.parse(id)); if (!a || a.owner_id !== owner) throw new ResearchError('NOT_FOUND', 'Research artifact not found.'); return structuredClone(a); }
 }
-function makeArtifact(owner: string, kind: string, data: unknown): Artifact {
-  const content_hash = hash(data); const id = hash({ owner, kind, content_hash, version: VERSION });
-  return { schema_version: 1, id, owner_id: owner, created_at: new Date().toISOString(), producer_version: VERSION, kind, content_hash, data };
+/** Artifact identity; `cache_key` is undefined for private artifacts, so their ids are unchanged. */
+const artifactId = (owner: string, kind: string, content_hash: string, version: string, cache_key?: string) => hash({ owner, kind, content_hash, version, cache_key });
+function makeArtifact(owner: string, kind: string, data: unknown, cacheKey?: string): Artifact {
+  const content_hash = hash(data); const id = artifactId(owner, kind, content_hash, VERSION, cacheKey);
+  return { schema_version: 1, id, owner_id: owner, created_at: new Date().toISOString(), producer_version: VERSION, kind, content_hash, data, ...(cacheKey ? { cache_key: digest.parse(cacheKey), shared: true as const } : {}) };
 }
 export const RESEARCH_DDL = `
 CREATE TABLE IF NOT EXISTS flashloan_jobs (
@@ -64,7 +98,11 @@ CREATE TABLE IF NOT EXISTS flashloan_jobs (
 CREATE INDEX IF NOT EXISTS flashloan_jobs_queue ON flashloan_jobs(state,created_at);
 CREATE TABLE IF NOT EXISTS flashloan_artifacts (
  id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, kind TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), expires_at TIMESTAMPTZ NOT NULL
-);`;
+);
+ALTER TABLE flashloan_artifacts ADD COLUMN IF NOT EXISTS cache_key TEXT NULL, ADD COLUMN IF NOT EXISTS content_hash TEXT NULL, ADD COLUMN IF NOT EXISTS shared BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS flashloan_artifacts_shared ON flashloan_artifacts(kind,cache_key,created_at DESC);
+ALTER TABLE flashloan_jobs ADD COLUMN IF NOT EXISTS cache_key TEXT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS flashloan_jobs_active_cache_key ON flashloan_jobs(cache_key) WHERE state IN ('QUEUED','RUNNING') AND cache_key IS NOT NULL;`;
 export class PostgresRepository implements Repository {
   private initialized?: Promise<void>;
   constructor(private readonly root: string) {}
@@ -78,24 +116,28 @@ export class PostgresRepository implements Repository {
   private row(r: Record<string, unknown>): StoredJob {
     return { id: String(r.id), owner: String(r.owner_id), operation: String(r.operation), input: r.input as Record<string, unknown>, input_hash: String(r.input_hash), key: String(r.idempotency_key), state: r.state as Job['state'], created_at: new Date(r.created_at as string).toISOString(), updated_at: new Date(r.updated_at as string).toISOString(), ...(r.result_id ? { result_id: String(r.result_id) } : {}), ...(r.error ? { error: r.error as NonNullable<Job['error']> } : {}) };
   }
-  async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) {
+  async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) { return this.insertJob(owner, operation, input, null); }
+  async enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string) { return this.insertJob(SHARED_OWNER, operation, { ...input, idempotency_key: sharedKey(cacheKey) }, cacheKey); }
+  private async insertJob(owner: string, operation: Operation, input: Record<string, unknown>, cacheKey: string | null) {
     const inputHash = hash({ operation, input, version: VERSION });
     await this.query('SELECT 1');
     const result = await verifiedClient(async (client) => {
       await client.query('BEGIN');
       try {
         await client.query("SELECT pg_advisory_xact_lock(hashtext('hypermove.flashloan.queue'))");
-        const prior = await client.query('SELECT * FROM flashloan_jobs WHERE owner_id=$1 AND idempotency_key=$2', [owner, input.idempotency_key]);
-        if (prior.rows[0]) { await client.query('COMMIT'); return prior; }
+        const prior = cacheKey === null ? await client.query('SELECT * FROM flashloan_jobs WHERE owner_id=$1 AND idempotency_key=$2', [owner, input.idempotency_key])
+          : await client.query("SELECT * FROM flashloan_jobs WHERE cache_key=$1 AND state IN ('QUEUED','RUNNING')", [cacheKey]);
+        if (prior.rows[0]) { await client.query('COMMIT'); return cacheKey === null ? prior : { rows: [{ ...prior.rows[0], shared_hit: true }] }; }
         const counts = await client.query("SELECT count(*)::int AS total,count(*) FILTER(WHERE owner_id=$1)::int AS owned FROM flashloan_jobs WHERE state IN ('QUEUED','RUNNING')", [owner]);
         if (counts.rows[0].total >= 256 || counts.rows[0].owned >= 16) { await client.query('ROLLBACK'); return { rows: [{ queue_full: true }] }; }
-        const inserted = await client.query(`INSERT INTO flashloan_jobs(id,owner_id,operation,input,input_hash,idempotency_key,state) VALUES($1,$2,$3,$4,$5,$6,'QUEUED') RETURNING *`, [randomUUID(), owner, operation, JSON.stringify(input), inputHash, input.idempotency_key]);
+        // The partial unique index on active cache keys is the storage-level backstop for the dedupe above.
+        const inserted = await client.query(`INSERT INTO flashloan_jobs(id,owner_id,operation,input,input_hash,idempotency_key,state,cache_key) VALUES($1,$2,$3,$4,$5,$6,'QUEUED',$7) RETURNING *`, [randomUUID(), owner, operation, JSON.stringify(input), inputHash, input.idempotency_key, cacheKey]);
         await client.query('COMMIT'); return inserted;
       } catch (e) { await client.query('ROLLBACK'); throw e; }
     });
     if (!result) throw new ResearchError('STORAGE_UNAVAILABLE', 'Research queue unavailable.', true);
     if (result.rows[0]?.queue_full) throw new ResearchError('QUEUE_FULL', 'Research queue budget exhausted; poll existing jobs first.', true);
-    const j = this.row(result.rows[0]); if (j.input_hash !== inputHash) throw new ResearchError('IDEMPOTENCY_CONFLICT', 'Idempotency key describes different input.'); return publicJob(j);
+    const j = this.row(result.rows[0]); if (result.rows[0].shared_hit) return publicJob(j); if (j.input_hash !== inputHash) throw new ResearchError('IDEMPOTENCY_CONFLICT', 'Idempotency key describes different input.'); return publicJob(j);
   }
   async claim() {
     await this.query(`UPDATE flashloan_jobs SET state='FAILED',error=$1,updated_at=now() WHERE state='QUEUED' AND created_at<now()-interval '15 minutes'`, [JSON.stringify({ code: 'QUEUE_EXPIRED', message: 'Queued research expired; refresh state and start a new job.', retryable: true })]);
@@ -127,8 +169,8 @@ export class PostgresRepository implements Repository {
     });
     await this.query("DELETE FROM flashloan_jobs WHERE created_at<now()-interval '7 days' AND state NOT IN ('QUEUED','RUNNING')");
   }
-  private async writeArtifact(owner: string, kind: string, data: unknown) {
-    const artifact = makeArtifact(owner, kind, data); const body = JSON.stringify(artifact);
+  private async writeArtifact(owner: string, kind: string, data: unknown, cacheKey?: string) {
+    const artifact = makeArtifact(owner, kind, data, cacheKey); const body = JSON.stringify(artifact);
     if (Buffer.byteLength(body) > 8_000_000) throw new ResearchError('ARTIFACT_BUDGET', 'Research artifact exceeds its byte budget.');
     await mkdir(this.root, { recursive: true, mode: 0o700 });
     const destination = join(this.root, artifact.id + '.json'); const temp = join(this.root, randomUUID() + '.tmp');
@@ -144,8 +186,8 @@ export class PostgresRepository implements Repository {
       const result = await client.query(`WITH completed AS (
       UPDATE flashloan_jobs SET state='SUCCEEDED',result_id=$2,updated_at=now() WHERE id=$1 AND state='RUNNING' RETURNING id
     ), published AS (
-      INSERT INTO flashloan_artifacts(id,owner_id,kind,expires_at) SELECT $2,$3,$4,now()+$5::interval FROM completed ON CONFLICT(id) DO UPDATE SET expires_at=EXCLUDED.expires_at RETURNING id
-    ) SELECT id FROM completed`, [job.id, artifact.id, job.owner, kind, kind === 'report' ? '7 days' : '24 hours']);
+      INSERT INTO flashloan_artifacts(id,owner_id,kind,expires_at,content_hash) SELECT $2,$3,$4,now()+$5::interval,$6 FROM completed ON CONFLICT(id) DO UPDATE SET expires_at=EXCLUDED.expires_at RETURNING id
+    ) SELECT id FROM completed`, [job.id, artifact.id, job.owner, kind, retention(kind), artifact.content_hash]);
       if (result.rowCount !== 1) boundaryEvent('EDGE-05', 'PUBLICATION_CANCELLED');
       return result.rowCount === 1;
     });
@@ -153,14 +195,32 @@ export class PostgresRepository implements Repository {
   async put(owner: string, kind: string, data: unknown) {
     return this.artifactTransaction(async (client) => {
       const artifact = await this.writeArtifact(owner, kind, data);
-      await client.query(`INSERT INTO flashloan_artifacts(id,owner_id,kind,expires_at) VALUES($1,$2,$3,now()+$4::interval) ON CONFLICT(id) DO UPDATE SET expires_at=EXCLUDED.expires_at`, [artifact.id, owner, kind, kind === 'report' ? '7 days' : '24 hours']); return artifact.id;
+      await client.query(`INSERT INTO flashloan_artifacts(id,owner_id,kind,expires_at,content_hash) VALUES($1,$2,$3,now()+$4::interval,$5) ON CONFLICT(id) DO UPDATE SET expires_at=EXCLUDED.expires_at`, [artifact.id, owner, kind, retention(kind), artifact.content_hash]); return artifact.id;
     });
+  }
+  async publishShared(kind: string, cacheKey: string, data: unknown) {
+    return this.artifactTransaction(async (client) => {
+      const artifact = await this.writeArtifact(SHARED_OWNER, kind, data, cacheKey);
+      // Republishing identical content makes it the latest again.
+      await client.query(`INSERT INTO flashloan_artifacts(id,owner_id,kind,expires_at,cache_key,content_hash,shared) VALUES($1,$2,$3,now()+$4::interval,$5,$6,true) ON CONFLICT(id) DO UPDATE SET expires_at=EXCLUDED.expires_at,created_at=now()`, [artifact.id, SHARED_OWNER, kind, retention(kind), artifact.cache_key, artifact.content_hash]); return artifact;
+    });
+  }
+  async readSharedLatest(kind: string, cacheKey: string) {
+    digest.parse(cacheKey);
+    const r = await this.query('SELECT id FROM flashloan_artifacts WHERE shared AND kind=$1 AND cache_key=$2 AND expires_at>now() ORDER BY created_at DESC LIMIT 1', [kind, cacheKey]);
+    if (!r.rows[0]) return null;
+    const a = await this.load(String(r.rows[0].id), SHARED_OWNER);
+    if (!a.shared || a.kind !== kind || a.cache_key !== cacheKey) throw new ResearchError('ARTIFACT_CORRUPT', 'Shared artifact integrity check failed.');
+    return a;
   }
   async artifact(owner: string, id: string) {
     digest.parse(id); const r = await this.query('SELECT id FROM flashloan_artifacts WHERE id=$1 AND owner_id=$2 AND expires_at>now()', [id, owner]);
     if (!r.rows[0]) throw new ResearchError('NOT_FOUND', 'Research artifact not found or expired.');
+    return this.load(id, owner);
+  }
+  private async load(id: string, owner: string) {
     let a: Artifact; try { a = JSON.parse(await readFile(join(this.root, id + '.json'), 'utf8')); } catch { throw new ResearchError('ARTIFACT_UNAVAILABLE', 'Research artifact unavailable.'); }
-    if (a.owner_id !== owner || a.id !== id || hash(a.data) !== a.content_hash || hash({ owner, kind: a.kind, content_hash: a.content_hash, version: a.producer_version }) !== id) throw new ResearchError('ARTIFACT_CORRUPT', 'Artifact integrity check failed.');
+    if (a.owner_id !== owner || a.id !== id || hash(a.data) !== a.content_hash || artifactId(owner, a.kind, a.content_hash, a.producer_version, a.cache_key) !== id) throw new ResearchError('ARTIFACT_CORRUPT', 'Artifact integrity check failed.');
     return a;
   }
 }

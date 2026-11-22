@@ -18,6 +18,15 @@ function configured(name: string, ceiling: number, minimum = 1) {
 export const PUBLIC_LIMITS = Object.freeze({ body_bytes: 2 * 1024 * 1024, envelope_bytes: 1024 * 1024, tokens: configured('MAX_TOKENS', 30), pools: configured('MAX_POOLS', 4), word_range: 1, ticks: configured('MAX_TICKS', 2000), xrpl_assets: configured('MAX_XRPL_ASSETS', 4, 2), routes: configured('MAX_ROUTES', 3), evaluations: configured('MAX_EVALUATIONS', 500), cpu_ms: 5000, operation_ms: configured('OPERATION_MS', 30000, 1000), simulation_ms: configured('SIMULATION_MS', 60000, 1000), public_concurrency: 1, total_concurrency: 2, computations_per_minute: configured('COMPUTATIONS_PER_MINUTE', 6), transport_per_minute: configured('TRANSPORT_PER_MINUTE', 60), proof_ttl_ms: configured('PROOF_TTL_MS', 600000, 1000) });
 export const proofEnvelopeSchema = z.object({ version: z.literal(2), kind: z.enum(['evm_snapshot', 'evm_plan', 'xrpl_routes', 'sui_snapshot', 'sui_plan']), issued_at: z.string().datetime(), expires_at: z.string().datetime(), registry_version: digest, content_hash: digest, payload: z.record(z.string(), z.unknown()), proof: z.object({ algorithm: z.literal('HS256'), key_id: z.literal('v2'), signature: z.string().regex(/^[A-Za-z0-9_-]{43}$/) }).strict() }).strict();
 export type ProofEnvelope = z.infer<typeof proofEnvelopeSchema>;
+/** Arb envelope kinds. Legacy tool inputs keep `proofEnvelopeSchema` (byte-identical tool lists); `verify` accepts the wider kind set. */
+export const ARB_PROOF_KINDS = ['evm_universe', 'evm_cycle_quote'] as const;
+export const proofKindSchema = z.enum([...proofEnvelopeSchema.shape.kind.options, ...ARB_PROOF_KINDS]);
+export const anyProofEnvelopeSchema = proofEnvelopeSchema.extend({ kind: proofKindSchema }).strict();
+export type ProofKind = z.infer<typeof proofKindSchema>;
+export type KindedEnvelope<K extends ProofKind> = Omit<ProofEnvelope, 'kind'> & { kind: K };
+/** Per-kind TTL caps (file 11 #22): universe keeps the 600 s cap, a block-pinned cycle quote lives 30 s; never above the configured cap. */
+const PROOF_TTL_MS_BY_KIND: Partial<Record<ProofKind, number>> = { evm_universe: 600_000, evm_cycle_quote: 30_000 };
+export const proofTtlMs = (kind: ProofKind) => Math.min(PUBLIC_LIMITS.proof_ttl_ms, PROOF_TTL_MS_BY_KIND[kind] ?? Infinity);
 const discovery = discoveryRequestSchema.omit({ idempotency_key: true });
 const snapshot = operationSchemas.flashloan_ingest_l2_tickmap_and_reserves.omit({ idempotency_key: true });
 const xrpl = operationSchemas.xrpl_discover_arbitrage_routes.omit({ idempotency_key: true });
