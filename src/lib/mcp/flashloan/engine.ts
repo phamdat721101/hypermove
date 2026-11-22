@@ -13,6 +13,7 @@ import { JsonClient, type RoundBudget } from './transport';
 import type { InitializationLocator } from './pool-resolution';
 import { ResearchError, type Input, type RiskPolicy } from './contracts';
 import type { DiscoveryRegistry } from './discovery-registry';
+import type { V4InitializeIndex } from './storage';
 import { discoverV3, getMoversV2, getWatchlistV1 } from './discovery-v8';
 import type { discoveryV3InputSchema, moversV2InputSchema, watchlistInputSchema } from './v8-contracts';
 
@@ -22,7 +23,7 @@ export function computeInline(task: ComputeTask) {
   if (task.kind === 'xrpl') return xrplCycles(task.snapshot);
   return solve(task.snapshot.pools, task.asset, task.snapshot.lender, task.policy, task.search);
 }
-export type EngineOptions = { endpoints: Partial<Record<'ethereum' | 'arbitrum' | 'base' | 'robinhood' | 'xrpl', string>>; deployments: Deployment[]; evidence?: ResearchEvidence[]; sui?: SuiOptions; fetcher?: typeof fetch; engine?: EngineAdapter; budget?: RoundBudget; initializations?: InitializationLocator[]; discoveryRegistry?: DiscoveryRegistry };
+export type EngineOptions = { endpoints: Partial<Record<'ethereum' | 'arbitrum' | 'base' | 'robinhood' | 'xrpl', string>>; deployments: Deployment[]; evidence?: ResearchEvidence[]; sui?: SuiOptions; fetcher?: typeof fetch; engine?: EngineAdapter; budget?: RoundBudget; initializations?: InitializationLocator[]; discoveryRegistry?: DiscoveryRegistry; /** File 11 #16 persistent Initialize index; absent = legacy request-scoped V4 scans. */ initializeIndex?: V4InitializeIndex };
 /** Domain execution shared by owned jobs and stateless requests; no repositories or memory. */
 export class ResearchEngine {
   private readonly dex: DexScreener;

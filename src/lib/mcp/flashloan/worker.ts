@@ -83,8 +83,8 @@ export class ResearchWorker {
         execute: async () => this.execute(job, controller.signal),
       }, {}, { agentId: hash(job.owner) });
       controller.signal.throwIfAborted();
-      const state = await this.options.repo.get(job.owner, job.id);
-      if (state.state === 'CANCELLED') return;
+      // Shared (`@shared`) jobs have no owner to cancel them and private reads reject reserved owners; complete() still requires RUNNING.
+      if (!job.owner.startsWith('@') && (await this.options.repo.get(job.owner, job.id)).state === 'CANCELLED') return;
       await this.options.repo.complete(job, result.output.kind, result.output.data);
     } catch (e) {
       const cause = e instanceof HarnessExecutionError ? e.error.cause : e;

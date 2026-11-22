@@ -33,6 +33,8 @@ export interface Repository {
   /** Returns the QUEUED/RUNNING job with this cache key, or enqueues one (atomic dedupe). */
   enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string): Promise<Job>;
 }
+/** Private paths never accept a reserved owner id (`@` prefix, e.g. `@shared`); shared paths use their own methods. */
+export function privateOwner(owner: string) { if (typeof owner !== 'string' || !owner || owner.startsWith('@')) throw new ResearchError('INVALID_OWNER', 'Owner ids starting with @ are reserved.'); return owner; }
 export function publicJob(job: StoredJob): Job { const { owner: _owner, input: _input, input_hash: _hash, key: _key, ...visible } = job; return visible; }
 
 /** Fixture-only adapter: the server never selects this as a production fallback. */
@@ -41,28 +43,29 @@ export class MemoryRepository implements Repository {
   constructor(private readonly clock: () => number = Date.now) {}
   private store(artifact: Artifact) { this.artifacts.set(artifact.id, artifact); this.expiry.set(artifact.id, this.clock() + retentionHours(artifact.kind) * 3_600_000); }
   private live(id: string) { const a = this.artifacts.get(id); return a && (this.expiry.get(id) ?? 0) > this.clock() ? a : undefined; }
-  async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) {
+  async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) { return this.insertJob(privateOwner(owner), operation, input); }
+  private insertJob(owner: string, operation: Operation, input: Record<string, unknown>) {
     const key = String(input.idempotency_key), inputHash = hash({ operation, input, version: VERSION });
     const prior = [...this.jobs.values()].find((j) => j.owner === owner && j.key === key);
-    if (prior) { if (prior.input_hash !== inputHash) throw new ResearchError('IDEMPOTENCY_CONFLICT', 'Idempotency key already describes different input.'); return publicJob(prior); }
+    if (prior) { if (prior.input_hash !== inputHash) return Promise.reject(new ResearchError('IDEMPOTENCY_CONFLICT', 'Idempotency key already describes different input.')); return Promise.resolve(publicJob(prior)); }
     const queued = [...this.jobs.values()].filter((j) => ['QUEUED', 'RUNNING'].includes(j.state));
-    if (queued.length >= 256 || queued.filter((j) => j.owner === owner).length >= 16) throw new ResearchError('QUEUE_FULL', 'Research queue budget exhausted; poll existing jobs first.', true);
+    if (queued.length >= 256 || queued.filter((j) => j.owner === owner).length >= 16) return Promise.reject(new ResearchError('QUEUE_FULL', 'Research queue budget exhausted; poll existing jobs first.', true));
     const now = new Date().toISOString(); const job: StoredJob = { id: randomUUID(), owner, operation, input, input_hash: inputHash, key, state: 'QUEUED', created_at: now, updated_at: now };
-    this.jobs.set(job.id, job); return publicJob(job);
+    this.jobs.set(job.id, job); return Promise.resolve(publicJob(job));
   }
   async enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string) {
     // No await before the insert: concurrent callers in one process observe the first job.
     const active = [...this.jobs.values()].find((j) => this.cacheKeys.get(j.id) === cacheKey && ['QUEUED', 'RUNNING'].includes(j.state));
     if (active) return publicJob(active);
-    const key = sharedKey(cacheKey), pending = this.enqueue(SHARED_OWNER, operation, { ...input, idempotency_key: key });
+    const key = sharedKey(cacheKey), pending = this.insertJob(SHARED_OWNER, operation, { ...input, idempotency_key: key });
     const created = [...this.jobs.values()].find((j) => j.key === key); // inserted synchronously by enqueue
     if (created) this.cacheKeys.set(created.id, cacheKey);
     return pending;
   }
   async claim() { const j = [...this.jobs.values()].find((v) => v.state === 'QUEUED'); if (!j) return null; j.state = 'RUNNING'; return structuredClone(j); }
   private owned(owner: string, id: string) { const job = this.jobs.get(id); if (!job || job.owner !== owner) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return job; }
-  async get(owner: string, id: string) { return publicJob(this.owned(owner, id)); }
-  async cancel(owner: string, id: string) { const j = this.owned(owner, id); if (['QUEUED', 'RUNNING'].includes(j.state)) j.state = 'CANCELLED'; return publicJob(j); }
+  async get(owner: string, id: string) { return publicJob(this.owned(privateOwner(owner), id)); }
+  async cancel(owner: string, id: string) { const j = this.owned(privateOwner(owner), id); if (['QUEUED', 'RUNNING'].includes(j.state)) j.state = 'CANCELLED'; return publicJob(j); }
   async finish(id: string, result: string | { code: string; message: string; retryable: boolean }) {
     const j = this.jobs.get(id); if (j?.state !== 'RUNNING') return false;
     j.updated_at = new Date().toISOString(); if (typeof result === 'string') { j.state = 'SUCCEEDED'; j.result_id = result; } else { j.state = 'FAILED'; j.error = result; } return true;
@@ -73,7 +76,7 @@ export class MemoryRepository implements Repository {
     this.store(artifact); current.state = 'SUCCEEDED'; current.result_id = artifact.id; current.updated_at = new Date().toISOString(); return true;
   }
   async recover() { for (const job of this.jobs.values()) if (job.state === 'RUNNING') { job.state = 'FAILED'; job.error = { code: 'WORKER_RESTARTED', message: 'Worker restarted; create a fresh job against refreshed state.', retryable: true }; } }
-  async put(owner: string, kind: string, data: unknown) { const artifact = makeArtifact(owner, kind, data); this.store(artifact); return artifact.id; }
+  async put(owner: string, kind: string, data: unknown) { const artifact = makeArtifact(privateOwner(owner), kind, data); this.store(artifact); return artifact.id; }
   async publishShared(kind: string, cacheKey: string, data: unknown) { const artifact = makeArtifact(SHARED_OWNER, kind, data, cacheKey); this.artifacts.delete(artifact.id); this.store(artifact); return structuredClone(artifact); }
   async readSharedLatest(kind: string, cacheKey: string) {
     digest.parse(cacheKey); let latest: Artifact | undefined;
@@ -116,7 +119,7 @@ export class PostgresRepository implements Repository {
   private row(r: Record<string, unknown>): StoredJob {
     return { id: String(r.id), owner: String(r.owner_id), operation: String(r.operation), input: r.input as Record<string, unknown>, input_hash: String(r.input_hash), key: String(r.idempotency_key), state: r.state as Job['state'], created_at: new Date(r.created_at as string).toISOString(), updated_at: new Date(r.updated_at as string).toISOString(), ...(r.result_id ? { result_id: String(r.result_id) } : {}), ...(r.error ? { error: r.error as NonNullable<Job['error']> } : {}) };
   }
-  async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) { return this.insertJob(owner, operation, input, null); }
+  async enqueue(owner: string, operation: Operation, input: Record<string, unknown>) { return this.insertJob(privateOwner(owner), operation, input, null); }
   async enqueueShared(operation: Operation, input: Record<string, unknown>, cacheKey: string) { return this.insertJob(SHARED_OWNER, operation, { ...input, idempotency_key: sharedKey(cacheKey) }, cacheKey); }
   private async insertJob(owner: string, operation: Operation, input: Record<string, unknown>, cacheKey: string | null) {
     const inputHash = hash({ operation, input, version: VERSION });
@@ -144,8 +147,8 @@ export class PostgresRepository implements Repository {
     const r = await this.query(`UPDATE flashloan_jobs SET state='RUNNING',updated_at=now() WHERE id=(SELECT id FROM flashloan_jobs WHERE state='QUEUED' ORDER BY created_at FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *`);
     return r.rows[0] ? this.row(r.rows[0]) : null;
   }
-  async get(owner: string, id: string) { const r = await this.query('SELECT * FROM flashloan_jobs WHERE id=$1 AND owner_id=$2 AND created_at>now()-interval \'7 days\'', [id, owner]); if (!r.rows[0]) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return publicJob(this.row(r.rows[0])); }
-  async cancel(owner: string, id: string) { await this.query(`UPDATE flashloan_jobs SET state='CANCELLED',updated_at=now() WHERE id=$1 AND owner_id=$2 AND state IN ('QUEUED','RUNNING')`, [id, owner]); return this.get(owner, id); }
+  async get(owner: string, id: string) { privateOwner(owner); const r = await this.query('SELECT * FROM flashloan_jobs WHERE id=$1 AND owner_id=$2 AND created_at>now()-interval \'7 days\'', [id, owner]); if (!r.rows[0]) { boundaryEvent('EDGE-03', 'NOT_FOUND'); throw new ResearchError('NOT_FOUND', 'Research job not found.'); } return publicJob(this.row(r.rows[0])); }
+  async cancel(owner: string, id: string) { privateOwner(owner); await this.query(`UPDATE flashloan_jobs SET state='CANCELLED',updated_at=now() WHERE id=$1 AND owner_id=$2 AND state IN ('QUEUED','RUNNING')`, [id, owner]); return this.get(owner, id); }
   async finish(id: string, result: string | { code: string; message: string; retryable: boolean }) { const r = await this.query(`UPDATE flashloan_jobs SET state=$2,result_id=$3,error=$4,updated_at=now() WHERE id=$1 AND state='RUNNING' RETURNING id`, [id, typeof result === 'string' ? 'SUCCEEDED' : 'FAILED', typeof result === 'string' ? result : null, typeof result === 'string' ? null : JSON.stringify(result)]); return r.rowCount === 1; }
   async recover() { await this.query(`UPDATE flashloan_jobs SET state='FAILED',error=$1,updated_at=now() WHERE state='RUNNING'`, [JSON.stringify({ code: 'WORKER_RESTARTED', message: 'Worker restarted; refresh state and create a new job.', retryable: true })]); }
   private async artifactTransaction<T>(action: (client: PoolClient) => Promise<T>): Promise<T> {
@@ -193,6 +196,7 @@ export class PostgresRepository implements Repository {
     });
   }
   async put(owner: string, kind: string, data: unknown) {
+    privateOwner(owner);
     return this.artifactTransaction(async (client) => {
       const artifact = await this.writeArtifact(owner, kind, data);
       await client.query(`INSERT INTO flashloan_artifacts(id,owner_id,kind,expires_at,content_hash) VALUES($1,$2,$3,now()+$4::interval,$5) ON CONFLICT(id) DO UPDATE SET expires_at=EXCLUDED.expires_at`, [artifact.id, owner, kind, retention(kind), artifact.content_hash]); return artifact.id;
@@ -222,5 +226,78 @@ export class PostgresRepository implements Repository {
     let a: Artifact; try { a = JSON.parse(await readFile(join(this.root, id + '.json'), 'utf8')); } catch { throw new ResearchError('ARTIFACT_UNAVAILABLE', 'Research artifact unavailable.'); }
     if (a.owner_id !== owner || a.id !== id || hash(a.data) !== a.content_hash || artifactId(owner, a.kind, a.content_hash, a.producer_version, a.cache_key) !== id) throw new ResearchError('ARTIFACT_CORRUPT', 'Artifact integrity check failed.');
     return a;
+  }
+}
+
+/** File 11 #16: one canonical V4 Initialize record per (chain_id, manager, pool_id); inserted only after a block-hash check. */
+export type V4InitEntry = { chain_id: number; manager: string; pool_id: string; currency0: string; currency1: string; fee: number; tickSpacing: number; hooks: string; block_number: string; block_hash: string; tx_hash: string; log_index: number };
+/** Contiguous block range already scanned for a manager's Initialize topic (incremental fill). */
+export type V4IndexCursor = { from: string; to: string };
+export interface V4InitializeIndex {
+  get(chainId: number, manager: string, poolIds: string[]): Promise<Map<string, V4InitEntry>>;
+  put(entries: V4InitEntry[]): Promise<void>;
+  /** Drops entries found non-canonical and rewinds the cursor so the next fill rescans from that block. */
+  invalidate(chainId: number, manager: string, poolIds: string[], fromBlock: bigint): Promise<void>;
+  cursor(chainId: number, manager: string): Promise<V4IndexCursor | null>;
+  advance(chainId: number, manager: string, cursor: V4IndexCursor): Promise<void>;
+}
+const indexKey = (chainId: number, manager: string, poolId?: string) => chainId + ':' + manager.toLowerCase() + (poolId === undefined ? '' : ':' + poolId.toLowerCase());
+export class MemoryV4InitializeIndex implements V4InitializeIndex {
+  private readonly entries = new Map<string, V4InitEntry>(); private readonly cursors = new Map<string, V4IndexCursor>();
+  async get(chainId: number, manager: string, poolIds: string[]) { const out = new Map<string, V4InitEntry>(); for (const id of poolIds) { const e = this.entries.get(indexKey(chainId, manager, id)); if (e) out.set(id, structuredClone(e)); } return out; }
+  async put(entries: V4InitEntry[]) { for (const e of entries) this.entries.set(indexKey(e.chain_id, e.manager, e.pool_id), structuredClone(e)); }
+  async invalidate(chainId: number, manager: string, poolIds: string[], fromBlock: bigint) { for (const id of poolIds) this.entries.delete(indexKey(chainId, manager, id)); rewind(this.cursors, indexKey(chainId, manager), fromBlock); }
+  async cursor(chainId: number, manager: string) { const c = this.cursors.get(indexKey(chainId, manager)); return c ? { ...c } : null; }
+  async advance(chainId: number, manager: string, cursor: V4IndexCursor) { this.cursors.set(indexKey(chainId, manager), { ...cursor }); }
+}
+function rewind(cursors: Map<string, V4IndexCursor>, key: string, fromBlock: bigint) {
+  const c = cursors.get(key); if (!c) return;
+  if (fromBlock <= BigInt(c.from)) cursors.delete(key); else if (fromBlock <= BigInt(c.to)) cursors.set(key, { from: c.from, to: (fromBlock - 1n).toString() });
+}
+export const V4_INITIALIZE_DDL = `
+CREATE TABLE IF NOT EXISTS flashloan_v4_initialize (
+ chain_id INTEGER NOT NULL, manager TEXT NOT NULL, pool_id TEXT NOT NULL,
+ currency0 TEXT NOT NULL, currency1 TEXT NOT NULL, fee INTEGER NOT NULL, tick_spacing INTEGER NOT NULL, hooks TEXT NOT NULL,
+ block_number NUMERIC NOT NULL, block_hash TEXT NOT NULL, tx_hash TEXT NOT NULL, log_index INTEGER NOT NULL,
+ created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+ PRIMARY KEY (chain_id, manager, pool_id)
+);
+CREATE TABLE IF NOT EXISTS flashloan_v4_initialize_cursor (
+ chain_id INTEGER NOT NULL, manager TEXT NOT NULL, scanned_from NUMERIC NOT NULL, scanned_to NUMERIC NOT NULL,
+ updated_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY (chain_id, manager)
+);`;
+/** Postgres-backed index; additive tables only, created on first use. */
+export class PostgresV4InitializeIndex implements V4InitializeIndex {
+  private initialized?: Promise<void>;
+  private async query(sql: string, values: unknown[] = []) {
+    if (!this.initialized) this.initialized = (async () => { const r = await verifiedClient(async (c) => { await c.query(V4_INITIALIZE_DDL); return true; }); if (!r) { this.initialized = undefined; throw new ResearchError('STORAGE_UNAVAILABLE', 'V4 Initialize index requires an available PostgreSQL database.', true); } })();
+    await this.initialized;
+    const result = await verifiedClient((client) => client.query(sql, values));
+    if (!result) throw new ResearchError('STORAGE_UNAVAILABLE', 'V4 Initialize index unavailable.', true);
+    return result;
+  }
+  async get(chainId: number, manager: string, poolIds: string[]) {
+    const out = new Map<string, V4InitEntry>(); if (!poolIds.length) return out;
+    const r = await this.query('SELECT * FROM flashloan_v4_initialize WHERE chain_id=$1 AND manager=$2 AND pool_id=ANY($3::text[])', [chainId, manager.toLowerCase(), poolIds.map((p) => p.toLowerCase())]);
+    for (const row of r.rows) out.set(String(row.pool_id), { chain_id: Number(row.chain_id), manager: String(row.manager), pool_id: String(row.pool_id), currency0: String(row.currency0), currency1: String(row.currency1), fee: Number(row.fee), tickSpacing: Number(row.tick_spacing), hooks: String(row.hooks), block_number: String(row.block_number), block_hash: String(row.block_hash), tx_hash: String(row.tx_hash), log_index: Number(row.log_index) });
+    return out;
+  }
+  async put(entries: V4InitEntry[]) {
+    for (const e of entries) await this.query(`INSERT INTO flashloan_v4_initialize(chain_id,manager,pool_id,currency0,currency1,fee,tick_spacing,hooks,block_number,block_hash,tx_hash,log_index) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+ ON CONFLICT(chain_id,manager,pool_id) DO UPDATE SET currency0=EXCLUDED.currency0,currency1=EXCLUDED.currency1,fee=EXCLUDED.fee,tick_spacing=EXCLUDED.tick_spacing,hooks=EXCLUDED.hooks,block_number=EXCLUDED.block_number,block_hash=EXCLUDED.block_hash,tx_hash=EXCLUDED.tx_hash,log_index=EXCLUDED.log_index`,
+      [e.chain_id, e.manager.toLowerCase(), e.pool_id.toLowerCase(), e.currency0, e.currency1, e.fee, e.tickSpacing, e.hooks, e.block_number, e.block_hash, e.tx_hash, e.log_index]);
+  }
+  async invalidate(chainId: number, manager: string, poolIds: string[], fromBlock: bigint) {
+    const m = manager.toLowerCase();
+    if (poolIds.length) await this.query('DELETE FROM flashloan_v4_initialize WHERE chain_id=$1 AND manager=$2 AND pool_id=ANY($3::text[])', [chainId, m, poolIds.map((p) => p.toLowerCase())]);
+    await this.query('DELETE FROM flashloan_v4_initialize_cursor WHERE chain_id=$1 AND manager=$2 AND scanned_from>=$3', [chainId, m, fromBlock.toString()]);
+    await this.query('UPDATE flashloan_v4_initialize_cursor SET scanned_to=$3::numeric-1,updated_at=now() WHERE chain_id=$1 AND manager=$2 AND scanned_to>=$3', [chainId, m, fromBlock.toString()]);
+  }
+  async cursor(chainId: number, manager: string) {
+    const r = await this.query('SELECT scanned_from,scanned_to FROM flashloan_v4_initialize_cursor WHERE chain_id=$1 AND manager=$2', [chainId, manager.toLowerCase()]);
+    return r.rows[0] ? { from: String(r.rows[0].scanned_from), to: String(r.rows[0].scanned_to) } : null;
+  }
+  async advance(chainId: number, manager: string, cursor: V4IndexCursor) {
+    await this.query('INSERT INTO flashloan_v4_initialize_cursor(chain_id,manager,scanned_from,scanned_to) VALUES($1,$2,$3,$4) ON CONFLICT(chain_id,manager) DO UPDATE SET scanned_from=EXCLUDED.scanned_from,scanned_to=EXCLUDED.scanned_to,updated_at=now()', [chainId, manager.toLowerCase(), cursor.from, cursor.to]);
   }
 }

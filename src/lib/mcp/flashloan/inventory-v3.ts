@@ -1,11 +1,11 @@
 import { decodeEventLog, keccak256, parseAbi, type Hex } from 'viem';
 import { z } from 'zod';
 import { ResearchError, hash } from './contracts';
-import { EvmReader, encodeCall, words, type Header, type FactoryLookup, type MembershipClaim } from './evm';
+import { EvmReader, encodeCall, words, venueLookup, type Header, type MembershipClaim } from './evm';
 import type { ResearchEngine } from './engine';
 import type { PoolInventory } from './discovery';
 import { DiscoveryRegistry, type Venue, type RegistrySeed } from './discovery-registry';
-import { canonicalPoolId } from './pool-resolution';
+import { canonicalPoolId, resolveV4PoolKeys, type V4KeyResolution } from './pool-resolution';
 import { RoundBudget, boundedEvmLogs } from './transport';
 import { quoteCapability, type QuoteFamily } from './math';
 import { CHAINS, address, evmNetwork } from './networks';
@@ -29,15 +29,6 @@ export function decimalNumber(value: number): string {
 type Prefetched = { ok: true; tokens: [string, string]; reads: Map<string, bigint[]> } | { ok: false; error: ResearchError };
 const asResearchError = (error: unknown) => error instanceof ResearchError ? error : new ResearchError('STATE_UNAVAILABLE', 'Batched state read failed.');
 function checkedDecimals(value: bigint) { const n = Number(value); if (!Number.isInteger(n) || n < 0 || n > 36) throw new ResearchError('UNSUPPORTED_DECIMALS', 'Discovery supports decimals 0 through 36.'); return n; }
-/** Factory registry lookup for a reviewed venue (the shared table lives in evm.ts `factoryLookupCall`). */
-function venueLookup(venue: Venue): FactoryLookup {
-  if (venue.family === 'V2') return 'getPair';
-  if (venue.family === 'SOLIDLY_STABLE') return 'getPoolStable';
-  if (venue.family === 'SOLIDLY_VOLATILE') return 'getPoolVolatile';
-  const lookup = venue.pool_lookup ?? (venue.family === 'ALGEBRA' ? 'poolByPair' : 'getPoolFee');
-  if (!['poolByPair', 'getPoolFee', 'getPoolSpacing'].includes(lookup)) throw new ResearchError('UNSUPPORTED_POOL_VERSION', 'Invalid concentrated-liquidity factory lookup.');
-  return lookup as FactoryLookup;
-}
 /** Per-pool Multicall3 members for a non-V4 reviewed venue; undefined when no discovery state adapter exists. */
 function statePlan(venue: Venue): string[] | undefined {
   if (['V2', 'SOLIDLY_VOLATILE', 'SOLIDLY_STABLE'].includes(venue.family)) return ['token0()', 'token1()', 'factory()', 'getReserves()'];
@@ -73,6 +64,9 @@ export class InventoryReaderV3 {
   private readonly initializationLogs = new Map<string, Promise<Log[]>>();
   private readonly prefetched = new Map<string, Prefetched>();
   private decimalsBatchFailure?: string;
+  /** Index mode (file 11 #16): selected V4 pool ids per manager, resolved together once per round. */
+  private readonly v4Wanted = new Map<string, Set<string>>();
+  private readonly v4Resolved = new Map<string, Promise<Map<string, V4KeyResolution>>>();
   constructor(readonly engine: ResearchEngine, readonly network: z.infer<typeof evmNetwork>, readonly budget: RoundBudget) {
     this.registry = engine.options.discoveryRegistry ?? new DiscoveryRegistry();
   }
@@ -113,6 +107,17 @@ export class InventoryReaderV3 {
     const log = matches[0], canonical = await this.reader.rpc.rpc<Header | null>('eth_getBlockByNumber', [log.blockNumber, false], this.budget.signal);
     if (!canonical || canonical.hash !== log.blockHash || !/^0x[0-9a-f]{64}$/.test(log.transactionHash) || !/^0x[0-9a-f]+$/.test(log.logIndex)) throw new ResearchError('BLOCK_REORG', 'Initialization provenance is not canonical.');
     return log;
+  }
+  private async indexedKey(venue: Venue, poolId: string, block: Header) {
+    const resolve = (ids: string[]) => {
+      const start = venue.initialization_block === undefined ? (BigInt(block.number) > 9999n ? BigInt(block.number) - 9999n : 0n) : BigInt(venue.initialization_block);
+      return resolveV4PoolKeys({ rpc: this.reader.rpc, index: this.engine.options.initializeIndex!, budget: this.budget, start, locators: this.engine.options.initializations?.filter((l) => l.network === this.network) }, CHAINS[this.network], venue.factory, ids, block);
+    };
+    let pending = this.v4Resolved.get(venue.factory);
+    if (!pending) { pending = resolve([...(this.v4Wanted.get(venue.factory) ?? new Set([poolId]))]); this.v4Resolved.set(venue.factory, pending); }
+    const result = (await pending).get(poolId) ?? (await resolve([poolId])).get(poolId)!;
+    if (!result.ok) throw new ResearchError(result.code, result.reason);
+    return result.entry;
   }
   /**
    * A2'': read every selected non-V4 pool in Multicall3 batches with per-member outcomes, then verify factory
@@ -171,9 +176,10 @@ export class InventoryReaderV3 {
       const ref = pool.reference;
       const id = ref.kind === 'evm_v4' ? ref.poolId : ref.kind === 'provider_opaque' ? ref.providerPoolId : '';
       if (!/^0x[0-9a-f]{64}$/.test(id)) throw new ResearchError('UNRESOLVED_POOL_KEY', 'V4 provider identity must be a pool ID.');
-      const log = await this.logs(venue, id, block), event = decodeEventLog({ abi: initializeAbi, topics: log.topics as [Hex, ...Hex[]], data: log.data });
-      const key = poolKeyV8Schema.parse({ currency0: event.args.currency0, currency1: event.args.currency1, fee: event.args.fee, tickSpacing: event.args.tickSpacing, hooks: event.args.hooks });
-      if (event.args.id !== id || canonicalPoolId(key) !== id || pool.pool_key && canonicalPoolId(pool.pool_key) !== id) throw new ResearchError('POOL_ID_MISMATCH', 'PoolKey disagrees with canonical initialization.');
+      const args = this.engine.options.initializeIndex ? await this.indexedKey(venue, id, block).then((e) => ({ ...e, id: e.pool_id }))
+        : await this.logs(venue, id, block).then((log) => decodeEventLog({ abi: initializeAbi, topics: log.topics as [Hex, ...Hex[]], data: log.data }).args);
+      const key = poolKeyV8Schema.parse({ currency0: args.currency0, currency1: args.currency1, fee: args.fee, tickSpacing: args.tickSpacing, hooks: args.hooks });
+      if (args.id !== id || canonicalPoolId(key) !== id || pool.pool_key && canonicalPoolId(pool.pool_key) !== id) throw new ResearchError('POOL_ID_MISMATCH', 'PoolKey disagrees with canonical initialization.');
       if (!venue.state_view || !venue.state_view_code_hash) throw new ResearchError('STATE_UNAVAILABLE', 'StateView evidence is missing.');
       await this.attest(venue.state_view, venue.state_view_code_hash, block);
       const [slot, liquidity] = await batch([{ to: venue.state_view, signature: 'getSlot0(bytes32)', args: [id] }, { to: venue.state_view, signature: 'getLiquidity(bytes32)', args: [id] }]);
@@ -254,6 +260,10 @@ export class InventoryReaderV3 {
     try { block = await this.header(); } catch { coverage.source_results.push({ source: 'rpc:state', status: 'FAILED', raw_count: 0, valid_count: 0, truncated: false, reason: 'STATE_UNAVAILABLE' }); }
     // A2'': one batched read pass over the selected pools; workers below only verify runtime and assemble state.
     if (block && this.budget.remainingMs() >= 1500) await this.prefetch(selected, block);
+    if (this.engine.options.initializeIndex) for (const { pool, venue } of selected) {
+      const id = pool.reference.kind === 'evm_v4' ? pool.reference.poolId : pool.reference.kind === 'provider_opaque' ? pool.reference.providerPoolId : '';
+      if (venue?.family === 'V4' && venue.status === 'reviewed' && /^0x[0-9a-f]{64}$/.test(id)) { const ids = this.v4Wanted.get(venue.factory) ?? new Set<string>(); ids.add(id); this.v4Wanted.set(venue.factory, ids); }
+    }
     let next = 0;
     await Promise.all(Array.from({ length: Math.min(4, selected.length) }, async () => {
       while (next < selected.length) {

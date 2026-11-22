@@ -5,7 +5,7 @@ import { timingSafeEqual } from 'node:crypto';
 import { resolve } from 'node:path';
 import { z } from 'zod';
 import { ResearchWorker } from '../../src/lib/mcp/flashloan/worker';
-import { PostgresRepository } from '../../src/lib/mcp/flashloan/storage';
+import { PostgresRepository, PostgresV4InitializeIndex } from '../../src/lib/mcp/flashloan/storage';
 import { suiDeploymentSchema } from '../../src/lib/mcp/flashloan/sui-contracts';
 import { researchEvidenceSchema } from '../../src/lib/mcp/flashloan/verification';
 import { deploymentSchema } from '../../src/lib/mcp/flashloan/evm';
@@ -88,7 +88,9 @@ export async function startResearchServer() {
     },
     xrplLoanPay: process.env.FINANCE_XRPL_LOAN_PAY_V1 === 'true',
   } : undefined;
-  const worker = new ResearchWorker({ repo, endpoints, deployments, evidence, sui, root, publicKey, initializations, discoveryRegistry, finance });
+  // File 11 #16: the persistent V4 Initialize index is used only with the ground-truth flag; off keeps request-scoped scans.
+  const initializeIndex = process.env.FLASHLOAN_ARB_GT_V1 === 'true' ? new PostgresV4InitializeIndex() : undefined;
+  const worker = new ResearchWorker({ repo, endpoints, deployments, evidence, sui, root, publicKey, initializations, discoveryRegistry, finance, ...(initializeIndex ? { initializeIndex } : {}) });
   const server = createResearchServer(worker, process.env.FLASHLOAN_WORKER_TOKEN ?? '');
   server.requestTimeout = 10000; server.headersTimeout = 5000;
   await new Promise<void>((done, reject) => { server.once('error', reject); server.listen(Number(process.env.FLASHLOAN_WORKER_PORT ?? 3012), '127.0.0.1', done); });

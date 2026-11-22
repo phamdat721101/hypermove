@@ -121,6 +121,81 @@ export async function boundedEvmLogs<T>(rpc: JsonClient, filter: { address: stri
     return [...left, ...right];
   }
 }
+export type TopicLog = { address: string; topics: string[]; data: string; blockNumber: string; blockHash: string; transactionHash: string; logIndex: string; transactionIndex?: string; removed?: boolean };
+export type BlockRange = { from: string; to: string };
+/** Completeness ledger (file 11 #15): every requested block is either completed or failed with a reason, never dropped. */
+export type TopicScan<T extends TopicLog = TopicLog> = { requested_ranges: BlockRange[]; completed_ranges: BlockRange[]; failed_ranges: Array<BlockRange & { reason: string }>; logs: T[]; complete: boolean };
+/** Shrinkable failures: the provider rejected or could not return this range size (#23 includes JSON-RPC errors). */
+const HALVABLE = new Set(['LOG_RESPONSE_BUDGET', 'RESPONSE_TOO_LARGE', 'RPC_METHOD_FAILED', 'RPC_REJECTED']);
+/** Round-ending failures: the rest of the request is recorded as failed with this reason. */
+const TERMINAL = new Set(['CANCELLED', 'ROUND_DEADLINE', 'RESOLUTION_BUDGET']);
+const hex = (n: bigint) => '0x' + n.toString(16);
+function mergeRanges<T extends BlockRange>(ranges: T[], same: (a: T, b: T) => boolean = () => true): T[] {
+  const out: T[] = [];
+  for (const r of ranges) { const last = out[out.length - 1]; if (last && same(last, r) && BigInt(last.to) + 1n === BigInt(r.from)) last.to = r.to; else out.push({ ...r }); }
+  return out;
+}
+/**
+ * Chain-wide topic scan with no address (file 11 #15). Pages start at `pageBlocks` and halve on oversized responses or
+ * provider range errors down to one block; a block that still fails is recorded in `failed_ranges`. Each page's logs are
+ * checked against canonical headers: a log whose blockHash differs marks its whole block failed (BLOCK_REORG).
+ * `removed:true` logs are dropped; logs outside the page or not matching the topic filter are provider noise and ignored.
+ */
+export async function boundedTopicLogs<T extends TopicLog = TopicLog>(rpc: JsonClient, filter: { topics: Array<string | string[] | null>; from: bigint; to: bigint }, budget: RoundBudget, options: { pageBlocks?: number; maxLogsPerPage?: number } = {}): Promise<TopicScan<T>> {
+  const initial = BigInt(options.pageBlocks ?? 2000), maxLogs = options.maxLogsPerPage ?? 2000;
+  if (filter.from < 0n || filter.to < filter.from || initial < 1n) throw new ResearchError('INVALID_INPUT', 'Topic scan needs a non-empty block range and a positive page size.');
+  const scan: TopicScan<T> = { requested_ranges: [{ from: filter.from.toString(), to: filter.to.toString() }], completed_ranges: [], failed_ranges: [], logs: [], complete: false };
+  const wanted = filter.topics.map((t) => t === null ? null : new Set((Array.isArray(t) ? t : [t]).map((v) => v.toLowerCase())));
+  const matches = (log: T) => wanted.every((set, i) => !set || set.has(String(log.topics?.[i] ?? '').toLowerCase()));
+  const canonical = new Map<bigint, string>();
+  const headers = async (numbers: bigint[]) => {
+    const missing = numbers.filter((n) => !canonical.has(n));
+    for (let at = 0; at < missing.length; at += 32) {
+      const chunk = missing.slice(at, at + 32);
+      const rows = chunk.length === 1 ? [await rpc.rpc<{ hash?: string } | null>('eth_getBlockByNumber', [hex(chunk[0]), false], budget.signal)]
+        : await rpc.batch<{ hash?: string } | null>(chunk.map((n) => ({ method: 'eth_getBlockByNumber', params: [hex(n), false] })), budget.signal);
+      chunk.forEach((n, i) => { const h = rows[i]?.hash; if (typeof h !== 'string') throw new ResearchError('HEADER_UNAVAILABLE', 'Canonical header missing for block ' + n + '.'); canonical.set(n, h.toLowerCase()); });
+    }
+  };
+  let cursor = filter.from, size = initial, streak = 0, streakCode = '';
+  while (cursor <= filter.to) {
+    const end = cursor + size - 1n < filter.to ? cursor + size - 1n : filter.to;
+    try {
+      budget.check();
+      const rows = await rpc.rpc<T[]>('eth_getLogs', [{ fromBlock: hex(cursor), toBlock: hex(end), topics: filter.topics }], budget.signal);
+      if (!Array.isArray(rows)) throw new ResearchError('INVALID_RESPONSE', 'RPC logs must be an array.');
+      if (rows.length > maxLogs) throw new ResearchError('LOG_RESPONSE_BUDGET', 'Log range exceeds its record budget.');
+      const kept = rows.filter((l) => l && !l.removed && typeof l.blockNumber === 'string' && typeof l.blockHash === 'string' && BigInt(l.blockNumber) >= cursor && BigInt(l.blockNumber) <= end && matches(l));
+      const blocks = [...new Set(kept.map((l) => BigInt(l.blockNumber)))].sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
+      const bad = new Map<bigint, string>();
+      try { await headers(blocks); for (const l of kept) if (canonical.get(BigInt(l.blockNumber)) !== l.blockHash.toLowerCase()) bad.set(BigInt(l.blockNumber), 'BLOCK_REORG'); }
+      catch (error) { if (error instanceof ResearchError && TERMINAL.has(error.code)) throw error; const code = error instanceof ResearchError ? error.code : 'HEADER_UNAVAILABLE'; for (const n of blocks) if (!canonical.has(n)) bad.set(n, code); }
+      for (const l of kept) if (!bad.has(BigInt(l.blockNumber))) scan.logs.push(l);
+      let from = cursor;
+      for (const [n, reason] of [...bad].sort(([a], [b]) => a < b ? -1 : 1)) {
+        if (n > from) scan.completed_ranges.push({ from: from.toString(), to: (n - 1n).toString() });
+        scan.failed_ranges.push({ from: n.toString(), to: n.toString(), reason }); from = n + 1n;
+      }
+      if (from <= end) scan.completed_ranges.push({ from: from.toString(), to: end.toString() });
+      cursor = end + 1n; size = size * 2n < initial ? size * 2n : initial; streak = 0;
+    } catch (error) {
+      const code = error instanceof ResearchError ? error.code : 'INVALID_RESPONSE';
+      if (TERMINAL.has(code)) { scan.failed_ranges.push({ from: cursor.toString(), to: filter.to.toString(), reason: code }); break; }
+      if (HALVABLE.has(code) && end > cursor) { size = (end - cursor + 2n) / 2n; continue; }
+      // A provider that refuses even single blocks repeatedly (e.g. HTTP 403 archive gate) fails the remainder at once
+      // rather than crawling block by block through the budget.
+      streak = streakCode === code ? streak + 1 : 1; streakCode = code;
+      if (streak >= 3 && end < filter.to) { scan.failed_ranges.push({ from: cursor.toString(), to: filter.to.toString(), reason: code }); break; }
+      scan.failed_ranges.push({ from: cursor.toString(), to: end.toString(), reason: code });
+      cursor = end + 1n;
+    }
+  }
+  scan.logs.sort((a, b) => { const d = BigInt(a.blockNumber) - BigInt(b.blockNumber); return d !== 0n ? (d < 0n ? -1 : 1) : Number(BigInt(a.logIndex) - BigInt(b.logIndex)); });
+  scan.completed_ranges = mergeRanges(scan.completed_ranges);
+  scan.failed_ranges = mergeRanges(scan.failed_ranges, (a, b) => a.reason === b.reason);
+  scan.complete = scan.failed_ranges.length === 0;
+  return scan;
+}
 /** Detect duplicate object keys before JSON.parse can erase the conflicting bytes. */
 export function strictJson(text: string): unknown {
   const objects: Array<Set<string> | null> = [];

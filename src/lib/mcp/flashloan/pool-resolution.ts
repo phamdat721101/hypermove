@@ -2,7 +2,9 @@ import { decodeEventLog, encodeAbiParameters, keccak256, parseAbi, parseAbiParam
 import { EvmReader, type Deployment, type Header } from './evm';
 import { ResearchError } from './contracts';
 import type { ResearchEngine } from './engine';
-import { RoundBudget } from './transport';
+import { RoundBudget, JsonClient, boundedTopicLogs, type TopicLog } from './transport';
+import type { V4InitEntry, V4InitializeIndex } from './storage';
+import { CHAINS } from './networks';
 import { assetId, currencyAddress, evidence, integrationNetwork, unsupportedSupport, validateIntegration, ZERO_ADDRESS, type EvidenceRef, type PoolKey, type PoolReference, type ResolvedPool, type ResolutionReport, type State } from './integration-contracts';
 
 const initializeAbi = parseAbi(['event Initialize(bytes32 indexed id,address indexed currency0,address indexed currency1,uint24 fee,int24 tickSpacing,address hooks,uint160 sqrtPriceX96,int24 tick)']);
@@ -59,6 +61,94 @@ async function findInitialization(engine: ResearchEngine, manager: Deployment, p
   return log;
 }
 
+export type V4KeyResolution = { ok: true; entry: V4InitEntry } | { ok: false; code: 'UNRESOLVED_POOL_KEY' | 'ARCHIVE_UNAVAILABLE' | 'CONFLICTING_INITIALIZATION' | 'BLOCK_REORG'; reason: string };
+export type V4ResolveContext = { rpc: JsonClient; index: V4InitializeIndex; budget: RoundBudget; start?: bigint; maxBlocks?: bigint; locators?: InitializationLocator[] };
+/** Canonical Initialize log → index entry; undefined when the log is malformed or its PoolKey does not hash to its id. */
+function initializeEntry(chainId: number, log: TopicLog): V4InitEntry | undefined {
+  try {
+    const a = decodeEventLog({ abi: initializeAbi, data: log.data as Hex, topics: log.topics as [Hex, ...Hex[]] }).args;
+    const key: PoolKey = { currency0: a.currency0.toLowerCase(), currency1: a.currency1.toLowerCase(), fee: a.fee, tickSpacing: a.tickSpacing, hooks: a.hooks.toLowerCase() };
+    if (BigInt(key.currency0) >= BigInt(key.currency1) || canonicalPoolId(key) !== a.id || !/^0x[0-9a-f]{64}$/.test(log.transactionHash) || !/^0x[0-9a-f]+$/.test(log.logIndex)) return undefined;
+    return { chain_id: chainId, manager: log.address.toLowerCase(), pool_id: a.id, ...key, block_number: BigInt(log.blockNumber).toString(), block_hash: log.blockHash.toLowerCase(), tx_hash: log.transactionHash, log_index: Number(BigInt(log.logIndex)) };
+  } catch { return undefined; /* reported by the caller as an unresolved key, never as an accepted identity */ }
+}
+async function canonicalHashes(rpc: JsonClient, numbers: bigint[], signal: AbortSignal) {
+  const out = new Map<bigint, string | undefined>(), unique = [...new Set(numbers)];
+  for (let at = 0; at < unique.length; at += 32) {
+    const chunk = unique.slice(at, at + 32);
+    const rows = chunk.length === 1 ? [await rpc.rpc<Header | null>('eth_getBlockByNumber', ['0x' + chunk[0].toString(16), false], signal)] : await rpc.batch<Header | null>(chunk.map((n) => ({ method: 'eth_getBlockByNumber', params: ['0x' + n.toString(16), false] })), signal);
+    chunk.forEach((n, i) => out.set(n, rows[i]?.hash?.toLowerCase()));
+  }
+  return out;
+}
+/**
+ * File 11 #16: the one V4 PoolKey resolver. Consults the persistent index first (hits are re-checked against canonical
+ * headers in one batched read), then fills it incrementally with a `boundedTopicLogs` scan of the Initialize topic from
+ * the manager's cursor (or `start`) towards `block`, bounded by `maxBlocks`. Only block-hash-verified logs are inserted.
+ * The scan is forward-only: pools initialized before the first scanned block need a reviewed locator.
+ */
+export async function resolveV4PoolKeys(ctx: V4ResolveContext, chainId: number, manager: string, poolIds: string[], block: Header): Promise<Map<string, V4KeyResolution>> {
+  const m = manager.toLowerCase(), head = BigInt(block.number), ids = [...new Set(poolIds.map((p) => p.toLowerCase()))];
+  const out = new Map<string, V4KeyResolution>();
+  const accept = async (entries: V4InitEntry[]) => {
+    const visible = entries.filter((e) => BigInt(e.block_number) <= head);
+    const hashes = await canonicalHashes(ctx.rpc, visible.map((e) => BigInt(e.block_number)), ctx.budget.signal);
+    const stale = visible.filter((e) => hashes.get(BigInt(e.block_number)) !== e.block_hash);
+    if (stale.length) await ctx.index.invalidate(chainId, m, stale.map((e) => e.pool_id), stale.reduce((low, e) => BigInt(e.block_number) < low ? BigInt(e.block_number) : low, BigInt(stale[0].block_number)));
+    for (const e of visible) if (!stale.includes(e)) out.set(e.pool_id, { ok: true, entry: e });
+    return stale.length;
+  };
+  let reorged = await accept([...(await ctx.index.get(chainId, m, ids)).values()]);
+  let missing = ids.filter((id) => !out.has(id));
+  if (!missing.length) return out;
+  const conflicts = new Set<string>(); let note = '';
+  const cursor = await ctx.index.cursor(chainId, m);
+  const from = cursor ? BigInt(cursor.to) + 1n : ctx.start;
+  if (from !== undefined && from <= head) {
+    const to = from + (ctx.maxBlocks ?? 10000n) - 1n < head ? from + (ctx.maxBlocks ?? 10000n) - 1n : head;
+    const scan = await boundedTopicLogs(ctx.rpc, { topics: [[initializeTopic]], from, to }, ctx.budget);
+    const fresh = new Map<string, V4InitEntry>(); let invalid = 0;
+    for (const log of scan.logs) {
+      if (log.address?.toLowerCase() !== m) continue;
+      const entry = initializeEntry(chainId, log);
+      if (!entry) { invalid++; continue; }
+      if (fresh.has(entry.pool_id)) conflicts.add(entry.pool_id); else fresh.set(entry.pool_id, entry);
+    }
+    await ctx.index.put([...fresh.values()].filter((e) => !conflicts.has(e.pool_id)));
+    let reached = from - 1n;
+    for (const r of scan.completed_ranges) { if (BigInt(r.from) === reached + 1n) reached = BigInt(r.to); else break; }
+    if (reached >= from) await ctx.index.advance(chainId, m, { from: cursor?.from ?? from.toString(), to: reached.toString() });
+    if (!scan.complete) note = ' Index scan incomplete: ' + scan.failed_ranges.slice(0, 4).map((r) => r.from + '-' + r.to + ' ' + r.reason).join(', ') + '.';
+    else if (to < head) note = ' Index covers through block ' + to + '; a later request continues the fill.';
+    if (invalid) note += ' ' + invalid + ' malformed or mis-hashed Initialize log(s) rejected.';
+    reorged += await accept([...(await ctx.index.get(chainId, m, missing.filter((id) => !conflicts.has(id)))).values()]);
+    missing = ids.filter((id) => !out.has(id));
+  }
+  for (const id of missing) {
+    if (conflicts.has(id)) { out.set(id, { ok: false, code: 'CONFLICTING_INITIALIZATION', reason: 'More than one matching initialization.' }); continue; }
+    const locator = ctx.locators?.find((l) => l.manager === m && l.poolId === id);
+    if (locator) {
+      const rows = await ctx.rpc.rpc<TopicLog[]>('eth_getLogs', [{ blockHash: locator.blockHash, topics: [initializeTopic, id] }], ctx.budget.signal);
+      const logs = (Array.isArray(rows) ? rows : []).filter((l) => !l.removed && l.address?.toLowerCase() === m && l.blockHash?.toLowerCase() === locator.blockHash && l.topics?.[0] === initializeTopic && l.topics?.[1] === id);
+      const entry = logs.length === 1 ? initializeEntry(chainId, logs[0]) : undefined;
+      if (!entry) { out.set(id, { ok: false, code: logs.length > 1 ? 'CONFLICTING_INITIALIZATION' : 'BLOCK_REORG', reason: 'Locator does not yield exactly one canonical initialization; refresh it.' }); continue; }
+      if (await accept([entry]) || !out.has(id)) { out.set(id, { ok: false, code: 'BLOCK_REORG', reason: 'Locator initialization is not canonical.' }); continue; }
+      await ctx.index.put([entry]);
+      continue;
+    }
+    out.set(id, from === undefined ? { ok: false, code: 'ARCHIVE_UNAVAILABLE', reason: 'Supply a reviewed initialization locator or manager scan start block.' }
+      : { ok: false, code: reorged ? 'BLOCK_REORG' : 'UNRESOLVED_POOL_KEY', reason: 'No canonical initialization in the indexed blocks.' + note });
+  }
+  return out;
+}
+/** Index-backed form of `findInitialization` for one manager and pool (engine option `initializeIndex`). */
+export async function indexedInitialization(engine: ResearchEngine, manager: { network: string; address: string; initialization_block?: string }, poolId: string, block: Header, budget: RoundBudget, start?: bigint): Promise<V4InitEntry> {
+  const network = manager.network as keyof typeof CHAINS;
+  const result = (await resolveV4PoolKeys({ rpc: engine.rpc(network), index: engine.options.initializeIndex!, budget, start: start ?? (manager.initialization_block === undefined ? undefined : BigInt(manager.initialization_block)), locators: engine.options.initializations?.filter((l) => l.network === manager.network) }, CHAINS[network], manager.address, [poolId], block)).get(poolId.toLowerCase())!;
+  if (!result.ok) throw new ResearchError(result.code, result.reason);
+  return result.entry;
+}
+
 /** Resolve identity independently of full research admission; never issue snapshot proofs here. */
 export async function resolveInventory(engine: ResearchEngine, chainId: string, roundId: string, references: PoolReference[], mappingRef: EvidenceRef | null, atBlock: string | null, budget: RoundBudget, maxPools: number): Promise<ResolutionReport> {
   // Same root cause as inventory D1: reserve capacity so the export's canonicality check is not starved.
@@ -91,20 +181,19 @@ async function resolveRound(engine: ResearchEngine, chainId: string, roundId: st
       }
       if (unique.size >= maxPools) throw new ResearchError('RESOLUTION_BUDGET', 'Canonical pool selection limit reached.');
       block ??= await reader.header(budget.signal, atBlock ?? undefined);
-      const found: Array<{ manager: Deployment; log: InitLog }> = [];
+      const found: Array<{ manager: Deployment; log?: InitLog; entry?: V4InitEntry }> = [];
       const failures: ResearchError[] = [];
       for (const manager of managers) {
         try {
           await reader.attest(manager.address, 'UNISWAP_V4', block, budget.signal);
-          found.push({ manager, log: await findInitialization(engine, manager, ref.providerPoolId, block, budget) });
+          found.push(engine.options.initializeIndex ? { manager, entry: await indexedInitialization(engine, manager, ref.providerPoolId, block, budget) } : { manager, log: await findInitialization(engine, manager, ref.providerPoolId, block, budget) });
         } catch (e) { if (!(e instanceof ResearchError)) throw e; if (['CANCELLED', 'ROUND_DEADLINE', 'RESOLUTION_BUDGET'].includes(e.code)) throw e; failures.push(e); }
       }
       if (found.length > 1) throw new ResearchError('CONFLICTING_INITIALIZATION', 'Pool ID exists under multiple reviewed managers.');
       if (!found.length) throw failures[0] ?? new ResearchError('UNRESOLVED_POOL_KEY', 'No canonical initialization found.');
       if (failures.length) throw new ResearchError('UNRESOLVED_POOL_KEY', 'A reviewed manager could not be checked; resolve ambiguity before admitting identity.');
-      const { manager, log } = found[0];
-      const event = decodeEventLog({ abi: initializeAbi, data: log.data, topics: log.topics as [Hex, ...Hex[]] });
-      const a = event.args;
+      const { manager, log, entry } = found[0];
+      const a = entry ? { id: entry.pool_id, currency0: entry.currency0, currency1: entry.currency1, fee: entry.fee, tickSpacing: entry.tickSpacing, hooks: entry.hooks } : decodeEventLog({ abi: initializeAbi, data: log!.data, topics: log!.topics as [Hex, ...Hex[]] }).args;
       const key: PoolKey = { currency0: a.currency0.toLowerCase(), currency1: a.currency1.toLowerCase(), fee: a.fee, tickSpacing: a.tickSpacing, hooks: a.hooks.toLowerCase() };
       if (BigInt(key.currency0) >= BigInt(key.currency1) || canonicalPoolId(key) !== ref.providerPoolId || a.id !== ref.providerPoolId) throw new ResearchError('POOL_ID_MISMATCH', 'Initialization PoolKey does not match canonical pool identity.');
       if (new Set(ref.assetIds).size !== 2 || !ref.assetIds.includes(assetId(chainId, key.currency0)) || !ref.assetIds.includes(assetId(chainId, key.currency1))) throw new ResearchError('CURRENCY_MISMATCH', 'Provider currencies differ from initialized PoolKey.');
@@ -119,7 +208,7 @@ async function resolveRound(engine: ResearchEngine, chainId: string, roundId: st
       };
       const asset0 = await metadata(key.currency0), asset1 = await metadata(key.currency1);
       const supported = key.hooks === ZERO_ADDRESS && key.fee < 1000000 && Number(slot[3]) === key.fee && asset0.decimals <= 36 && asset1.decimals <= 36;
-      const record: ResolvedPool = { schema: 'resolved-pool/1', chainId, protocol: 'uniswap-v4', provider: ref.provider, providerPoolId: ref.providerPoolId, manager: manager.address, managerCodeHash: manager.code_hash, poolId: ref.providerPoolId, key, asset0, asset1, state: stateIdentity(chainId, block, { block, manager: manager.address, key, slot: slot.map(String) }), initializationRef: evidence('canonical-state', log, 'rpc:initialize/' + log.transactionHash + '/' + log.logIndex, roundId), mappingRef: expectedMapping, support: { ...unsupportedSupport(...supported ? [] : ['UNSUPPORTED_HOOK_OR_FEE']), read: true, quote: supported }, sourceRefs: [evidence('source', ref, 'provider:' + ref.provider, roundId)] };
+      const record: ResolvedPool = { schema: 'resolved-pool/1', chainId, protocol: 'uniswap-v4', provider: ref.provider, providerPoolId: ref.providerPoolId, manager: manager.address, managerCodeHash: manager.code_hash, poolId: ref.providerPoolId, key, asset0, asset1, state: stateIdentity(chainId, block, { block, manager: manager.address, key, slot: slot.map(String) }), initializationRef: entry ? evidence('canonical-state', entry, 'index:initialize/' + entry.tx_hash + '/0x' + entry.log_index.toString(16), roundId) : evidence('canonical-state', log, 'rpc:initialize/' + log!.transactionHash + '/' + log!.logIndex, roundId), mappingRef: expectedMapping, support: { ...unsupportedSupport(...supported ? [] : ['UNSUPPORTED_HOOK_OR_FEE']), read: true, quote: supported }, sourceRefs: [evidence('source', ref, 'provider:' + ref.provider, roundId)] };
       validateIntegration('ResolvedPool', record);
       const canonical = manager.address + ':' + ref.providerPoolId;
       const previous = report.resolved.find((p) => p.manager === manager.address && p.poolId === ref.providerPoolId);

@@ -4,6 +4,7 @@ import { evmNetwork, bytes32 } from './networks';
 import { address, CHAINS, ResearchError, hash, type EvmNetwork, type Input, type PoolRef } from './contracts';
 import { poolSchema, bitmapPosition, initializedTicks, quoteCapability, saltKind, canonicalityProofSchema, type Pool, type CanonicalityProof } from './math';
 import { JsonClient } from './transport';
+import type { Venue } from './discovery-registry';
 
 export const deploymentSchema = z.object({ network: evmNetwork, address, adapter: z.enum(['UNISWAP_V2', 'UNISWAP_V3', 'UNISWAP_V4', 'WRAPPED_NATIVE', 'ALGEBRA', 'AERODROME_VOLATILE', 'AERODROME_STABLE', 'AERODROME_CLMM', 'AAVE_V3', 'BALANCER_V2', 'UNISWAP_V3_FLASH', 'MORPHO_BLUE']), factory: address.optional(), factory_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), state_view: address.optional(), state_view_code_hash: z.string().regex(/^0x[0-9a-f]{64}$/).optional(), code_hash: z.string().regex(/^0x[0-9a-f]{64}$/), version: z.string().min(1), fee_pips: z.number().int().min(0).max(999999).optional(), initialization_block: z.string().regex(/^(0|[1-9][0-9]{0,77})$/).optional(),
   // Factory template (A5'): a pool not pinned by address is sized only when the factory registers it AND it is the CREATE2 image of these values.
@@ -43,6 +44,28 @@ export function factoryLookupCall(claim: MembershipClaim): BatchCall {
   }
 }
 export const saltLookup: Record<SaltKind, FactoryLookup> = { V3_FEE: 'getPoolFee', SPACING: 'getPoolSpacing', ALGEBRA: 'poolByPair', V2_PACKED: 'getPair' };
+/** Factory registry lookup for a reviewed (non-V4) discovery venue; shared by discovery and emitter authentication. */
+export function venueLookup(venue: Venue): FactoryLookup {
+  if (venue.family === 'V2') return 'getPair';
+  if (venue.family === 'SOLIDLY_STABLE') return 'getPoolStable';
+  if (venue.family === 'SOLIDLY_VOLATILE') return 'getPoolVolatile';
+  const lookup = venue.pool_lookup ?? (venue.family === 'ALGEBRA' ? 'poolByPair' : 'getPoolFee');
+  if (!['poolByPair', 'getPoolFee', 'getPoolSpacing'].includes(lookup)) throw new ResearchError('UNSUPPORTED_POOL_VERSION', 'Invalid concentrated-liquidity factory lookup.');
+  return lookup as FactoryLookup;
+}
+export type EmitterProof = { kind: 'create2' | 'factory_membership' | 'v4_manager'; factory: string; code_hash?: string; lookup?: FactoryLookup; deployer?: string; init_code_hash?: string; salt_kind?: SaltKind; salt?: string; salt_args?: string[]; adapter_version?: string };
+/** File 11 #15: a Swap log counts only when its emitter authenticates; every rejection carries a reason code. */
+export type EmitterAuth = { ok: true; venue_id: string; family: Venue['family']; proof: EmitterProof } | { ok: false; reason: 'INVALID_ADDRESS' | 'NOT_A_POOL' | 'UNREVIEWED_FACTORY' | 'FACTORY_CODE_MISMATCH' | 'PARAM_UNAVAILABLE' | 'DEPLOYMENT_MISMATCH' | 'MULTICALL_MEMBER_FAILED' | 'CREATE2_MISMATCH' | 'INVALID_POOL' };
+/** Bounded process-level LRU of positive proofs only (pool identity is immutable; rejections may change, e.g. a later deploy). */
+class Lru<V> {
+  private readonly map = new Map<string, V>();
+  constructor(readonly limit: number) {}
+  get(key: string) { const v = this.map.get(key); if (v !== undefined) { this.map.delete(key); this.map.set(key, v); } return v; }
+  set(key: string, value: V) { this.map.delete(key); this.map.set(key, value); if (this.map.size > this.limit) this.map.delete(this.map.keys().next().value!); }
+  get size() { return this.map.size; }
+  clear() { this.map.clear(); }
+}
+export const emitterProofCache = new Lru<EmitterAuth>(5000);
 /**
  * A5' CREATE2 derivation: recompute the pool address from a reviewed template and compare.
  * V3_FEE abi.encode(t0,t1,fee) · SPACING abi.encode(t0,t1,tickSpacing) (Slipstream: EIP-1167 clone, hash of the clone init code) ·
@@ -103,6 +126,66 @@ export class EvmReader {
     if (keccak256(code) !== factoryCodeHash) throw new ResearchError('DEPLOYMENT_MISMATCH', 'Factory runtime changed.');
     const [result] = await this.verifyFactoryMembership([claim], block, signal);
     if (!result.ok) throw new ResearchError(result.code, result.reason);
+  }
+  private readonly emitterCache = new Map<string, EmitterAuth>();
+  private readonly runtimeHashes = new Map<string, Promise<string>>();
+  private runtimeHash(to: string, block: Header, signal?: AbortSignal) {
+    let pending = this.runtimeHashes.get(to);
+    if (!pending) { pending = this.rpc.rpc<Hex>('eth_getCode', [to, { blockHash: block.hash, requireCanonical: true }], signal).then((code) => keccak256(code)); this.runtimeHashes.set(to, pending); }
+    return pending;
+  }
+  /**
+   * File 11 #15 emitter authentication. A V4 emitter must be a reviewed PoolManager (the pool identity is then the poolId
+   * topic). Any other emitter must report a reviewed factory, that factory's runtime must match, the factory must register
+   * it (M3 `verifyFactoryMembership`) and, when a reviewed template exists, it must be the template's CREATE2 image
+   * (`verifyCreate2Derivation`). One batched read for all emitters; results cached per reader and, when positive, process-wide.
+   */
+  async authenticateEmitters(addresses: string[], block: Header, venues: Venue[], signal?: AbortSignal): Promise<Map<string, EmitterAuth>> {
+    const reviewed = venues.filter((v) => v.status === 'reviewed');
+    const templates = this.deployments.filter((d) => d.network === this.network && d.init_code_hash);
+    const scope = hash({ network: this.network, venues: reviewed.map((v) => [v.id, v.family, v.factory, v.factory_code_hash, v.pool_lookup ?? null]), templates: templates.map((t) => [t.factory, t.deployer, t.init_code_hash, t.salt_kind, t.adapter_version ?? t.version]) });
+    const out = new Map<string, EmitterAuth>(), pending: string[] = [];
+    const settle = (emitter: string, result: EmitterAuth) => { out.set(emitter, result); this.emitterCache.set(scope + emitter, result); if (result.ok) emitterProofCache.set(scope + emitter, result); };
+    for (const emitter of new Set(addresses.map((a) => a.toLowerCase()))) {
+      if (!/^0x[0-9a-f]{40}$/.test(emitter)) { out.set(emitter, { ok: false, reason: 'INVALID_ADDRESS' }); continue; }
+      const cached = this.emitterCache.get(scope + emitter) ?? emitterProofCache.get(scope + emitter);
+      if (cached) out.set(emitter, cached); else pending.push(emitter);
+    }
+    const factoryRuntime = async (venue: Venue) => (await this.runtimeHash(venue.factory, block, signal)) === venue.factory_code_hash;
+    const pools: string[] = [];
+    for (const emitter of pending) {
+      const manager = reviewed.find((v) => v.family === 'V4' && v.factory === emitter);
+      if (!manager) { pools.push(emitter); continue; }
+      settle(emitter, await factoryRuntime(manager) ? { ok: true, venue_id: manager.id, family: 'V4', proof: { kind: 'v4_manager', factory: emitter, code_hash: manager.factory_code_hash } } : { ok: false, reason: 'FACTORY_CODE_MISMATCH' });
+    }
+    if (!pools.length) return out;
+    const sigs = ['token0()', 'token1()', 'factory()', 'fee()', 'tickSpacing()'];
+    const reads = await this.batchSettled(pools.flatMap((to) => sigs.map((signature) => ({ to, signature }))), block, signal);
+    const claims: Array<{ emitter: string; venue: Venue; claim: MembershipClaim; template?: Deployment; saltParam?: bigint }> = [];
+    for (const [i, emitter] of pools.entries()) {
+      const [t0, t1, f, fee, spacing] = reads.slice(i * sigs.length, (i + 1) * sigs.length);
+      if (!t0.ok || !t1.ok || !f.ok) { settle(emitter, { ok: false, reason: 'NOT_A_POOL' }); continue; }
+      const token0 = wordAddress(t0.words[0]), token1 = wordAddress(t1.words[0]), factory = wordAddress(f.words[0]);
+      if (BigInt(token0) >= BigInt(token1)) { settle(emitter, { ok: false, reason: 'INVALID_POOL' }); continue; }
+      const venue = reviewed.find((v) => v.family !== 'V4' && v.factory === factory);
+      if (!venue) { settle(emitter, { ok: false, reason: 'UNREVIEWED_FACTORY' }); continue; }
+      if (!await factoryRuntime(venue)) { settle(emitter, { ok: false, reason: 'FACTORY_CODE_MISMATCH' }); continue; }
+      const lookup = venueLookup(venue), template = templates.find((t) => t.factory === factory);
+      const pick = (kind: 'fee' | 'spacing') => { const r = kind === 'fee' ? fee : spacing; return r.ok ? r.words[0] : undefined; };
+      const param = lookup === 'getPoolFee' ? pick('fee') : lookup === 'getPoolSpacing' ? pick('spacing') : undefined;
+      const saltParam = template?.salt_kind === 'V3_FEE' ? pick('fee') : template?.salt_kind === 'SPACING' ? pick('spacing') : undefined;
+      if ((lookup === 'getPoolFee' || lookup === 'getPoolSpacing') && param === undefined || (template?.salt_kind === 'V3_FEE' || template?.salt_kind === 'SPACING') && saltParam === undefined) { settle(emitter, { ok: false, reason: 'PARAM_UNAVAILABLE' }); continue; }
+      claims.push({ emitter, venue, template, saltParam, claim: { pool: emitter, factory, lookup, token0, token1, param } });
+    }
+    const membership = claims.length ? await this.verifyFactoryMembership(claims.map((c) => c.claim), block, signal) : [];
+    claims.forEach(({ emitter, venue, claim, template, saltParam }, i) => {
+      const member = membership[i];
+      if (!member.ok) { settle(emitter, { ok: false, reason: member.code }); return; }
+      if (!template) { settle(emitter, { ok: true, venue_id: venue.id, family: venue.family, proof: { kind: 'factory_membership', factory: claim.factory, code_hash: venue.factory_code_hash, lookup: claim.lookup } }); return; }
+      const derivation = verifyCreate2Derivation({ deployer: template.deployer!, init_code_hash: template.init_code_hash!, salt_kind: template.salt_kind! }, emitter, claim.token0, claim.token1, saltParam);
+      settle(emitter, !derivation.matches ? { ok: false, reason: 'CREATE2_MISMATCH' } : { ok: true, venue_id: venue.id, family: venue.family, proof: { kind: 'create2', factory: claim.factory, code_hash: venue.factory_code_hash, lookup: claim.lookup, deployer: template.deployer, init_code_hash: template.init_code_hash, salt_kind: template.salt_kind, salt: derivation.salt, salt_args: derivation.salt_args, adapter_version: template.adapter_version ?? template.version } });
+    });
+    return out;
   }
   async attest(to: string, adapter: Deployment['adapter'], block: Header, signal?: AbortSignal): Promise<Deployment> {
     const found = this.deployments.find((d) => d.network === this.network && d.address === to && d.adapter === adapter && !d.init_code_hash);
